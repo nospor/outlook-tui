@@ -16,11 +16,11 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 ## Directory Structure
 
 The project is structured as follows:
-* [main.go](file:///home/robertn/projects/vag1/html/outlook-tui/main.go) - Application launcher & Bubble Tea configuration.
-* [config.go](file:///home/robertn/projects/vag1/html/outlook-tui/config.go) - Manages application settings (`~/.config/outlook-tui/config.json`).
-* [auth.go](file:///home/robertn/projects/vag1/html/outlook-tui/auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers.
-* [graph.go](file:///home/robertn/projects/vag1/html/outlook-tui/graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading.
-* [tui.go](file:///home/robertn/projects/vag1/html/outlook-tui/tui.go) - Contains the layout rendering, key bindings, and user interface updates.
+* [main.go](main.go) - Application launcher & Bubble Tea configuration.
+* [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`).
+* [auth.go](auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers.
+* [graph.go](graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading.
+* [tui.go](tui.go) - Contains the layout rendering, key bindings, and user interface updates.
 
 ---
 
