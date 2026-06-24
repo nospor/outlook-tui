@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -273,6 +274,9 @@ func saveAttachmentCmd(att Attachment) tea.Cmd {
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
 		}
+		
+		// Open the file with xdg-open in the background
+		_ = exec.Command("xdg-open", path).Start()
 		
 		return attachmentSavedMsg(path)
 	}

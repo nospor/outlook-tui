@@ -7,10 +7,10 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 - 📂 **Multi-Pane Layout**: Standard desktop/web email layout split into folders, message lists, and message detail views.
 - 🔑 **Device Code Flow Authentication**: Authenticate securely using Microsoft's standard OAuth2 device flow (no app credentials/passwords stored locally, only access/refresh tokens).
 - 🔄 **Automatic Token Refresh**: The client automatically handles token expiration and refreshes OAuth2 access tokens in the background.
-- 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages every 30 seconds.
+- 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages in the background (configurable interval, defaults to every 5 minutes).
 - ✉️ **Send & Compose Mail**: Press `N` to open a full compose screen to draft and send new emails.
 - 🗑️ **Delete Messages**: Press `D` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook.
-- 📎 **Attachments Support**: Press `A` to view a list of attachments on the current email and download them locally to your `Downloads` directory.
+- 📎 **Attachments Support**: Press `A` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`.
 - 📜 **Smooth Navigation**: Tab between panes, scroll using arrow keys, page up/down, or the mouse wheel.
 
 ## Directory Structure
@@ -77,6 +77,14 @@ If you want to log in with a different account or reset your client configuratio
 ./outlook-tui --reset
 ```
 
+## Configuration
+
+Configuration settings are stored in `~/.config/outlook-tui/config.json`. The supported parameters are:
+
+* `client_id`: The Microsoft Azure App Registration Application (client) ID.
+* `tenant_id`: The Microsoft Entra Tenant ID (defaults to `"common"`, which works for both corporate/school and personal Outlook accounts).
+* `refresh_time_min`: The background refresh/fetching interval in minutes (defaults to `5`).
+
 ---
 
 ## Key Bindings
@@ -91,6 +99,6 @@ If you want to log in with a different account or reset your client configuratio
 | `D` (or `Delete`) | Move the selected message to Deleted Items (Trash) |
 | `R` | Toggle the selected message's Read/Unread status |
 | `A` | View and select attachments on the current email |
-| `Enter` (in Attachments list) | Download the selected attachment to your local `Downloads` directory |
+| `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open` |
 | `Esc` | Go back (cancel compose, close attachments list, or go back to config) |
 | `Q` (or `Ctrl+C`) | Quit the application |
