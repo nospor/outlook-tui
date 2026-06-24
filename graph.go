@@ -88,7 +88,7 @@ func (gc *GraphClient) GetFolders() ([]MailFolder, error) {
 }
 
 func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
-	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients&$top=50&$orderby=receivedDateTime desc", graphBaseURL, url.PathEscape(folderID))
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients&$top=50&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID))
 	resp, err := gc.client.Get(reqURL)
 	if err != nil {
 		return nil, err

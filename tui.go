@@ -281,24 +281,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		
-		// Adjust viewport dimensions
-		// Columns: Folders (25 chars), Messages (35 chars), Details (remaining)
-		detailWidth := m.width - 25 - 35 - 6 // margins and borders
-		detailHeight := m.height - 7         // headers and status
-		
-		if detailWidth < 20 {
-			detailWidth = 20
-		}
-		if detailHeight < 5 {
-			detailHeight = 5
-		}
-		
-		m.detailViewport.Width = detailWidth
-		m.detailViewport.Height = detailHeight
-		
+		m = m.updateViewportSize()
 		if m.detailMessage != nil {
 			m.detailViewport.SetContent(formatBodyContent(m.detailMessage.Body.Content))
+		}
+		if m.state == stateCompose {
+			h := m.height - 18
+			if h < 3 {
+				h = 3
+			}
+			m.composeBody.SetHeight(h)
 		}
 
 	case spinner.TickMsg:
@@ -357,32 +349,57 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchFoldersCmd(m.graphClient)
 
 	case foldersFetchedMsg:
-		m.folders = msg
-		m.state = stateMain
-		m.activePane = paneFolders
-		m.selectedFolder = 0
-		
-		// Start fetching messages for the first folder if folders are present
-		if len(m.folders) > 0 {
-			m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
-			return m, tea.Batch(
-				fetchMessagesCmd(m.graphClient, m.folders[0].ID),
-				tickCmd(), // Start background refreshing
-			)
+		if m.state != stateMain {
+			// Initial load: set up navigation state
+			m.folders = msg
+			m.state = stateMain
+			m.activePane = paneFolders
+			m.selectedFolder = 0
+			if len(m.folders) > 0 {
+				m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
+				return m, tea.Batch(
+					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
+					tickCmd(),
+				)
+			}
+			m.statusMsg = "Ready"
+		} else {
+			// Background refresh: only update folder data (unread counts etc.)
+			// Preserve selectedFolder — clamp if folders list shrank
+			m.folders = msg
+			if m.selectedFolder >= len(m.folders) {
+				m.selectedFolder = max(0, len(m.folders)-1)
+			}
 		}
-		m.statusMsg = "Ready"
 
 	case messagesFetchedMsg:
-		// Check if we are still on the same folder before updating
-		if len(m.folders) > 0 && m.folders[m.selectedFolder].ID == msg.FolderID {
-			m.messages = msg.Messages
+		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
+			break
+		}
+		// Preserve the currently selected message if it still exists in the new list
+		currentID := ""
+		if m.selectedMessage < len(m.messages) {
+			currentID = m.messages[m.selectedMessage].ID
+		}
+		m.messages = msg.Messages
+		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
+
+		preserved := false
+		if currentID != "" {
+			for i, em := range m.messages {
+				if em.ID == currentID {
+					m.selectedMessage = i
+					preserved = true
+					break
+				}
+			}
+		}
+		if !preserved {
+			// Previously selected message gone — reset to top
 			m.selectedMessage = 0
 			m.detailMessage = nil
 			m.attachments = nil
 			m.detailViewport.SetContent("")
-			m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
-			
-			// Auto fetch details for first message if any
 			if len(m.messages) > 0 {
 				m.statusMsg = "Loading message details..."
 				return m, fetchMessageDetailCmd(m.graphClient, m.messages[0].ID)
@@ -396,6 +413,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
 			
+			m = m.updateViewportSize()
 			m.detailViewport.SetContent(formatBodyContent(msg.Message.Body.Content))
 			m.detailViewport.GotoTop()
 			
@@ -512,7 +530,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.activePane < paneDetail {
 				m.activePane++
 			}
-		case "up", "k":
+		case "up":
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder > 0 {
@@ -530,7 +548,45 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneDetail:
 				m.detailViewport.LineUp(1)
 			}
-		case "down", "j":
+		case "k":
+			// vim-key: only navigates lists in folders/messages, scrolls detail
+			switch m.activePane {
+			case paneFolders:
+				if m.selectedFolder > 0 {
+					m.selectedFolder--
+					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+				}
+			case paneMessages:
+				if m.selectedMessage > 0 {
+					m.selectedMessage--
+					m.detailMessage = nil
+					m.statusMsg = "Loading message details..."
+					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+				}
+			case paneDetail:
+				m.detailViewport.LineUp(1)
+			}
+		case "down":
+			switch m.activePane {
+			case paneFolders:
+				if m.selectedFolder < len(m.folders)-1 {
+					m.selectedFolder++
+					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+				}
+			case paneMessages:
+				if m.selectedMessage < len(m.messages)-1 {
+					m.selectedMessage++
+					m.detailMessage = nil
+					m.statusMsg = "Loading message details..."
+					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+				}
+			case paneDetail:
+				m.detailViewport.LineDown(1)
+			}
+		case "j":
+			// vim-key: only navigates lists in folders/messages, scrolls detail
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
@@ -679,6 +735,37 @@ func (m *mainModel) updateComposeFocus() {
 	}
 }
 
+func (m mainModel) updateViewportSize() mainModel {
+	// Empirically measured Lipgloss v1.1.0 semantics:
+	//   Width(n) with Padding(0,1)+Border → outer = n+2  (Width includes padding; border adds 2)
+	//   Height(n) with Border             → outer = n+2  (Height is inner content)
+	//   fView outer=25, mView outer=35 → dView outer must = m.width-60 → Width = m.width-62
+	//   Content area inside padding = Width - 2 = m.width-64 (viewport width)
+	paneHeight := m.height - 6 // inner content; outer = paneHeight+2 (border top+bottom)
+	if paneHeight < 5 {
+		paneHeight = 5
+	}
+
+	detailWidth := m.width - 64 // viewport content area = pane Width(m.width-62) - 2 padding
+	if detailWidth < 20 {
+		detailWidth = 20
+	}
+
+	metaHeight := 6 // header(2) + Subject+From+Date(3) + separator(1)
+	if m.detailMessage != nil && len(m.attachments) > 0 {
+		metaHeight = 7
+	}
+
+	viewportHeight := paneHeight - metaHeight
+	if viewportHeight < 3 {
+		viewportHeight = 3
+	}
+	
+	m.detailViewport.Width = detailWidth
+	m.detailViewport.Height = viewportHeight
+	return m
+}
+
 // Rendering Views
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -754,10 +841,15 @@ func (m mainModel) View() string {
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
 	case stateMain:
-		// Left: Folders
-		foldersView := m.renderFoldersView()
+		paneHeight := m.height - 6
+		if paneHeight < 5 {
+			paneHeight = 5
+		}
+
+		// Left: Folders (paneHeight = inner content area, header handled inside)
+		foldersView := m.renderFoldersView(paneHeight)
 		// Middle: Messages
-		messagesView := m.renderMessagesView()
+		messagesView := m.renderMessagesView(paneHeight)
 		// Right: Details
 		detailView := m.renderDetailView()
 
@@ -779,16 +871,10 @@ func (m mainModel) View() string {
 			dStyle = paneNormalStyle
 		}
 
-		// Fixed widths: Folders (25 chars width), Messages (35 chars width), Detail (rest)
-		// Height: screen height minus top/bottom bars (approx 6 chars)
-		paneHeight := m.height - 6
-		if paneHeight < 5 {
-			paneHeight = 5
-		}
-
 		fView := fStyle.Width(23).Height(paneHeight).Render(foldersView)
 		mView := mStyle.Width(33).Height(paneHeight).Render(messagesView)
-		dView := dStyle.Width(m.width - 25 - 35 - 6).Height(paneHeight).Render(detailView)
+		// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
+		dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(detailView)
 
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, fView, mView, dView))
 		s.WriteString("\n")
@@ -820,7 +906,7 @@ func (m mainModel) View() string {
 		for i, att := range m.attachments {
 			indicator := "  "
 			if i == m.selectedAttach {
-				indicator = "👉"
+				indicator = "> "
 			}
 			
 			sizeKB := att.Size / 1024
@@ -850,10 +936,22 @@ func (m mainModel) View() string {
 		s.WriteString("\n" + statusStyle.Width(m.width).Render(m.statusMsg))
 	}
 
+	// Guarantee exactly m.height output lines so BubbleTea's cursor tracking
+	// is never off. Clip if too tall, pad with blank lines if too short.
+	if m.height > 0 && m.state == stateMain {
+		lines := strings.Split(s.String(), "\n")
+		for len(lines) < m.height {
+			lines = append(lines, "")
+		}
+		if len(lines) > m.height {
+			lines = lines[:m.height]
+		}
+		return strings.Join(lines, "\n")
+	}
 	return s.String()
 }
 
-func (m mainModel) renderFoldersView() string {
+func (m mainModel) renderFoldersView(availHeight int) string {
 	var s strings.Builder
 	s.WriteString(headerStyle.Render("FOLDERS") + "\n\n")
 	
@@ -862,14 +960,36 @@ func (m mainModel) renderFoldersView() string {
 		return s.String()
 	}
 
-	for i, f := range m.folders {
+	start := 0
+	end := len(m.folders)
+	
+	maxItems := availHeight - 2
+	if maxItems < 1 {
+		maxItems = 1
+	}
+
+	if len(m.folders) > maxItems {
+		start = m.selectedFolder - (maxItems / 2)
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxItems
+		if end > len(m.folders) {
+			end = len(m.folders)
+			start = end - maxItems
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+
+	for i := start; i < end; i++ {
+		f := m.folders[i]
 		displayName := f.DisplayName
-		// Make names shorter if they overflow pane width
 		if len(displayName) > 17 {
 			displayName = displayName[:15] + ".."
 		}
 		
-		// Add unread count indicator
 		var countStr string
 		if f.UnreadItemCount > 0 {
 			countStr = fmt.Sprintf(" (%d)", f.UnreadItemCount)
@@ -888,7 +1008,7 @@ func (m mainModel) renderFoldersView() string {
 	return s.String()
 }
 
-func (m mainModel) renderMessagesView() string {
+func (m mainModel) renderMessagesView(availHeight int) string {
 	var s strings.Builder
 	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
 
@@ -897,7 +1017,32 @@ func (m mainModel) renderMessagesView() string {
 		return s.String()
 	}
 
-	for i, msg := range m.messages {
+	start := 0
+	end := len(m.messages)
+
+	// Each message takes 3 lines
+	maxItems := (availHeight - 2) / 3
+	if maxItems < 1 {
+		maxItems = 1
+	}
+
+	if len(m.messages) > maxItems {
+		start = m.selectedMessage - (maxItems / 2)
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxItems
+		if end > len(m.messages) {
+			end = len(m.messages)
+			start = end - maxItems
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+
+	for i := start; i < end; i++ {
+		msg := m.messages[i]
 		fromName := msg.From.EmailAddress.Name
 		if fromName == "" {
 			fromName = msg.From.EmailAddress.Address
@@ -914,7 +1059,6 @@ func (m mainModel) renderMessagesView() string {
 			subject = subject[:18] + ".."
 		}
 
-		// Icon indicators
 		unreadMarker := " "
 		if !msg.IsRead {
 			unreadMarker = "●"
@@ -922,7 +1066,7 @@ func (m mainModel) renderMessagesView() string {
 		
 		attachMarker := " "
 		if msg.HasAttachments {
-			attachMarker = "📎"
+			attachMarker = "@"
 		}
 
 		line1 := fmt.Sprintf("%s %s", unreadMarker, fromName)
