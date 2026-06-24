@@ -8,9 +8,9 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 - 🔑 **Device Code Flow Authentication**: Authenticate securely using Microsoft's standard OAuth2 device flow (no app credentials/passwords stored locally, only access/refresh tokens).
 - 🔄 **Automatic Token Refresh**: The client automatically handles token expiration and refreshes OAuth2 access tokens in the background.
 - 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages in the background (configurable interval, defaults to every 5 minutes).
-- ✉️ **Send & Compose Mail**: Press `N` to open a full compose screen to draft and send new emails.
-- 🗑️ **Delete Messages**: Press `D` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook.
-- 📎 **Attachments Support**: Press `A` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`.
+- ✉️ **Send & Compose Mail**: Press `n` to open a full compose screen to draft and send new emails.
+- 🗑️ **Delete Messages**: Press `d` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook.
+- 📎 **Attachments Support**: Press `a` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`.
 - 📜 **Smooth Navigation**: Tab between panes, scroll using arrow keys, page up/down, or the mouse wheel.
 
 ## Directory Structure
@@ -95,10 +95,10 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 | `Shift+Tab` | Switch focus in reverse order |
 | `Up` / `Down` (or `k` / `j`) | Navigate selection in the focused pane |
 | `PageUp` / `PageDown` | Scroll message body up/down |
-| `N` | Compose a new email |
-| `D` (or `Delete`) | Move the selected message to Deleted Items (Trash) |
-| `R` | Toggle the selected message's Read/Unread status |
-| `A` | View and select attachments on the current email |
+| `n` | Compose a new email |
+| `d` (or `Delete`) | Move the selected message to Deleted Items (Trash) |
+| `r` | Toggle the selected message's Read/Unread status |
+| `a` | View and select attachments on the current email |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open` |
 | `Esc` | Go back (cancel compose, close attachments list, or go back to config) |
-| `Q` (or `Ctrl+C`) | Quit the application |
+| `q` (or `Ctrl+C`) | Quit the application |

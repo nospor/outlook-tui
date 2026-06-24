@@ -1018,7 +1018,7 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [N] Compose | [D] Delete/Trash | [R] Read/Unread | [A] Attachments | [Q] Quit"
+		keysText := "[Tab] Switch Pane | [n] Compose | [d] Delete/Trash | [r] Read/Unread | [a] Attachments | [q] Quit"
 		
 		availableWidth := m.width - lipgloss.Width(keysText) - 4
 		if availableWidth > 5 {
@@ -1198,7 +1198,7 @@ func (m mainModel) renderDetailView() string {
 	
 	if len(m.attachments) > 0 {
 		s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))))
-		s.WriteString(dimStyle.Render("Press [A] to view/download attachments\n"))
+		s.WriteString(dimStyle.Render("Press [a] to view/download attachments\n"))
 	}
 	
 	s.WriteString(dimStyle.Render("--------------------------------------------------------------------") + "\n")
