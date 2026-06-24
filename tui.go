@@ -110,7 +110,7 @@ func initialModel() mainModel {
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 
 	return mainModel{
 		state:      stateLoading,
@@ -840,45 +840,58 @@ func (m mainModel) updateViewportSize() mainModel {
 }
 
 // Rendering Views
+// Colors (Catppuccin Mocha palette adapted from yt-tui)
+const (
+	ColorBg      = "#1E1E2E"
+	ColorText    = "#CDD6F4"
+	ColorSubtext = "#A6ADC8"
+	ColorViolet  = "#CBA6F7" // Primary accent
+	ColorCyan    = "#89B4FA" // Secondary accent
+	ColorGreen   = "#A6E3A1" // Success
+	ColorYellow  = "#F9E2AF" // Warning
+	ColorRed     = "#F38BA8" // Error
+	ColorSurface = "#313244" // Panel background
+	ColorOverlay = "#45475A" // Highlight border
+)
+
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#ffffff")).
-			Background(lipgloss.Color("#0f6cbd")).
+			Foreground(lipgloss.Color(ColorBg)).
+			Background(lipgloss.Color(ColorViolet)).
 			Padding(0, 2).
 			Height(1)
 
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#3b82f6")).
-			PaddingLeft(1).
-			Underline(true)
+			Foreground(lipgloss.Color(ColorViolet)).
+			PaddingLeft(1)
 
 	paneNormalStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("#3f3f46")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(ColorOverlay)).
 			Padding(0, 1)
 
 	paneActiveStyle = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(lipgloss.Color("#3b82f6")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(ColorViolet)).
 			Padding(0, 1)
 
 	selectedItemStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(lipgloss.Color("#2563eb"))
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorCyan))
 
 	unreadStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#22d3ee"))
+			Foreground(lipgloss.Color(ColorViolet))
 
 	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#a1a1aa"))
+			Foreground(lipgloss.Color(ColorSubtext))
 
 	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#e4e4e7")).
-			Background(lipgloss.Color("#27272a")).
+			Foreground(lipgloss.Color(ColorText)).
+			Background(lipgloss.Color(ColorSurface)).
 			Padding(0, 1)
 )
 
@@ -901,9 +914,9 @@ func (m mainModel) View() string {
 		s.WriteString("   " + headerStyle.Render("MICROSOFT GRAPH AUTHENTICATION") + "\n\n")
 		if m.deviceCode != nil {
 			s.WriteString("   1. Open the following URL in your browser:\n")
-			s.WriteString("      " + lipgloss.NewStyle().Foreground(lipgloss.Color("#38bdf8")).Underline(true).Render(m.deviceCode.VerificationURI) + "\n\n")
+			s.WriteString("      " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Underline(true).Render(m.deviceCode.VerificationURI) + "\n\n")
 			s.WriteString("   2. Enter the following activation code:\n")
-			s.WriteString("      " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f59e0b")).Render(m.deviceCode.UserCode) + "\n\n")
+			s.WriteString("      " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorYellow)).Render(m.deviceCode.UserCode) + "\n\n")
 			s.WriteString("   " + m.spinner.View() + " " + m.statusMsg + "\n\n")
 		} else {
 			s.WriteString("   " + m.spinner.View() + " Preparing device authentication...\n\n")
@@ -955,17 +968,17 @@ func (m mainModel) View() string {
 	case stateCompose:
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
 		
-		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color("#3f3f46"))
-		subjBorder := lipgloss.NewStyle().Foreground(lipgloss.Color("#3f3f46"))
-		bodyBorder := lipgloss.NewStyle().Foreground(lipgloss.Color("#3f3f46"))
+		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
+		subjBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
+		bodyBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 
 		switch m.composeStep {
 		case 0:
-			toBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
+			toBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		case 1:
-			subjBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
+			subjBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		case 2:
-			bodyBorder = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b82f6"))
+			bodyBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		}
 
 		s.WriteString("   To:\n   " + toBorder.Render(m.composeTo.View()) + "\n\n")
@@ -1071,7 +1084,7 @@ func (m mainModel) renderFoldersView(availHeight int) string {
 		line := fmt.Sprintf(" %s%s", displayName, countStr)
 		
 		if i == m.selectedFolder {
-			s.WriteString(selectedItemStyle.Render(line) + "\n")
+			s.WriteString(selectedItemStyle.Copy().Width(21).Render(line) + "\n")
 		} else if f.UnreadItemCount > 0 {
 			s.WriteString(unreadStyle.Render(line) + "\n")
 		} else {
@@ -1146,7 +1159,7 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 		line2 := fmt.Sprintf("  %s %s", attachMarker, subject)
 
 		if i == m.selectedMessage {
-			s.WriteString(selectedItemStyle.Render(fmt.Sprintf("%-28s\n%-28s", line1, line2)) + "\n\n")
+			s.WriteString(selectedItemStyle.Copy().Width(31).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
 		} else {
 			if !msg.IsRead {
 				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
@@ -1176,7 +1189,7 @@ func (m mainModel) renderDetailView() string {
 	s.WriteString(lipgloss.NewStyle().Bold(true).Render("Date:    ") + dateStr + "\n")
 	
 	if len(m.attachments) > 0 {
-		s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#3b82f6")).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))))
+		s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))))
 		s.WriteString(dimStyle.Render("Press [A] to view/download attachments\n"))
 	}
 	
