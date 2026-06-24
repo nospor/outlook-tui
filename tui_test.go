@@ -110,3 +110,26 @@ func TestFormatBodyContent(t *testing.T) {
 	}
 }
 
+func TestStripANSICodes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "Some \x1b[1mbold\x1b[22m and \x1b[3mitalicized\x1b[23m text",
+			expected: "Some bold and italicized text",
+		},
+		{
+			input:    "Plain text",
+			expected: "Plain text",
+		},
+	}
+
+	for _, tt := range tests {
+		actual := stripANSICodes(tt.input)
+		if actual != tt.expected {
+			t.Errorf("stripANSICodes(%q) = %q; expected %q", tt.input, actual, tt.expected)
+		}
+	}
+}
+

@@ -96,6 +96,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 | `Up` / `Down` (or `k` / `j`) | Navigate selection in the focused pane |
 | `PageUp` / `PageDown` | Scroll message body up/down |
 | `n` | Compose a new email |
+| `A` | Reply / Answer to the currently selected message (pre-fills sender, subject with Re:, quotes body, and focuses body field at the beginning) |
 | `d` (or `Delete`) | Move the selected message to Deleted Items (Trash) |
 | `r` | Toggle the selected message's Read/Unread status |
 | `a` | View and select attachments on the current email |

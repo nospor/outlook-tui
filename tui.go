@@ -734,6 +734,71 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateAttachments
 				m.selectedAttach = 0
 			}
+		case "A":
+			// Reply / Answer to current message
+			if len(m.messages) > 0 && m.selectedMessage < len(m.messages) {
+				origMsg := m.messages[m.selectedMessage]
+				
+				var bodyText string
+				senderName := origMsg.From.EmailAddress.Name
+				senderAddr := origMsg.From.EmailAddress.Address
+				receivedTime := origMsg.ReceivedDateTime
+				
+				if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
+					bodyText = m.detailMessage.Body.Content
+					if m.detailMessage.From.EmailAddress.Address != "" {
+						senderName = m.detailMessage.From.EmailAddress.Name
+						senderAddr = m.detailMessage.From.EmailAddress.Address
+						receivedTime = m.detailMessage.ReceivedDateTime
+					}
+				} else {
+					bodyText = origMsg.BodyPreview
+				}
+
+				m.state = stateCompose
+				m.composeStep = 2 // Focus body field
+				
+				m.composeTo = textinput.New()
+				m.composeTo.Placeholder = "recipient@domain.com"
+				m.composeTo.SetValue(senderAddr)
+				m.composeTo.Width = m.width - 20
+				
+				subject := origMsg.Subject
+				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
+					subject = "Re: " + subject
+				}
+				m.composeSubject = textinput.New()
+				m.composeSubject.Placeholder = "Email subject..."
+				m.composeSubject.SetValue(subject)
+				m.composeSubject.Width = m.width - 20
+				
+				m.composeBody = textarea.New()
+				m.composeBody.Placeholder = "Type email body here..."
+				m.composeBody.SetWidth(m.width - 20)
+				m.composeBody.SetHeight(10)
+				
+				var quotedBody strings.Builder
+				quotedBody.WriteString("\n\n")
+				formattedTime := receivedTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
+				if senderName != "" {
+					quotedBody.WriteString(fmt.Sprintf("On %s, %s <%s> wrote:\n", formattedTime, senderName, senderAddr))
+				} else {
+					quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
+				}
+				
+				plainBody := stripANSICodes(formatBodyContent(bodyText))
+				lines := strings.Split(plainBody, "\n")
+				for _, line := range lines {
+					quotedBody.WriteString("> " + line + "\n")
+				}
+				
+				m.composeBody.SetValue(quotedBody.String())
+				for i := 0; i < m.composeBody.LineCount(); i++ {
+					m.composeBody.CursorUp()
+				}
+				m.composeBody.CursorStart()
+				m.updateComposeFocus()
+			}
 		}
 
 	case stateCompose:
@@ -1018,7 +1083,7 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [n] Compose | [d] Delete/Trash | [r] Read/Unread | [a] Attachments | [q] Quit"
+		keysText := "[Tab] Switch Pane | [n] Compose | [A] Reply | [d] Delete/Trash | [r] Read/Unread | [a] Attachments | [q] Quit"
 		
 		availableWidth := m.width - lipgloss.Width(keysText) - 4
 		if availableWidth > 5 {
@@ -1260,6 +1325,12 @@ func formatBodyContent(htmlContent string) string {
 		}
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// stripANSICodes removes ANSI escape sequences from a string
+func stripANSICodes(s string) string {
+	re := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	return re.ReplaceAllString(s, "")
 }
 
 func sortFolders(folders []MailFolder) []MailFolder {
