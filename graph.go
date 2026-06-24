@@ -19,6 +19,7 @@ type MailFolder struct {
 	ChildFolderCount int    `json:"childFolderCount"`
 	UnreadItemCount  int    `json:"unreadItemCount"`
 	TotalItemCount   int    `json:"totalItemCount"`
+	WellKnownName    string `json:"wellKnownName"`
 }
 
 type Message struct {

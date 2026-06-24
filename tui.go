@@ -365,9 +365,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchFoldersCmd(m.graphClient)
 
 	case foldersFetchedMsg:
+		sortedFolders := sortFolders(msg)
 		if m.state != stateMain {
 			// Initial load: set up navigation state
-			m.folders = msg
+			m.folders = sortedFolders
 			m.state = stateMain
 			m.activePane = paneFolders
 			m.selectedFolder = 0
@@ -383,7 +384,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			// Background refresh: only update folder data (unread counts etc.)
 			// Preserve selectedFolder — clamp if folders list shrank
-			m.folders = msg
+			m.folders = sortedFolders
 			if m.selectedFolder >= len(m.folders) {
 				m.selectedFolder = max(0, len(m.folders)-1)
 			}
@@ -1221,4 +1222,34 @@ func formatBodyContent(htmlContent string) string {
 		}
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+func sortFolders(folders []MailFolder) []MailFolder {
+	var inbox *MailFolder
+	var sentItems *MailFolder
+	var others []MailFolder
+
+	for _, f := range folders {
+		lowerName := strings.ToLower(f.DisplayName)
+		lowerWellKnown := strings.ToLower(f.WellKnownName)
+		if lowerWellKnown == "inbox" || lowerName == "inbox" {
+			fCopy := f
+			inbox = &fCopy
+		} else if lowerWellKnown == "sentitems" || lowerName == "sent items" || lowerName == "sentitems" || lowerName == "sent" {
+			fCopy := f
+			sentItems = &fCopy
+		} else {
+			others = append(others, f)
+		}
+	}
+
+	result := make([]MailFolder, 0, len(folders))
+	if inbox != nil {
+		result = append(result, *inbox)
+	}
+	if sentItems != nil {
+		result = append(result, *sentItems)
+	}
+	result = append(result, others...)
+	return result
 }
