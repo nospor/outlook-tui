@@ -278,10 +278,14 @@ func saveAttachmentCmd(att Attachment) tea.Cmd {
 	}
 }
 
-// Tick command for background refresh every 30s
+// Tick command for background refresh
 type tickMsg time.Time
-func tickCmd() tea.Cmd {
-	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg {
+func (m mainModel) tickCmd() tea.Cmd {
+	interval := 5 * time.Minute
+	if m.config.RefreshTimeMin > 0 {
+		interval = time.Duration(m.config.RefreshTimeMin) * time.Minute
+	}
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -379,7 +383,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(
 					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
 					fetchInboxMessagesCmd(m.graphClient),
-					tickCmd(),
+					m.tickCmd(),
 				)
 			}
 			m.statusMsg = "Ready"
@@ -525,7 +529,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			
 			return m, tea.Batch(
 				tea.Batch(bgCmds...),
-				tickCmd(), // Schedule next tick
+				m.tickCmd(), // Schedule next tick
 			)
 		}
 	}
