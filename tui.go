@@ -395,14 +395,24 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !preserved {
-			// Previously selected message gone — reset to top
-			m.selectedMessage = 0
-			m.detailMessage = nil
-			m.attachments = nil
-			m.detailViewport.SetContent("")
+			// Previously selected message gone — try to keep the same index (clamped to the new list)
 			if len(m.messages) > 0 {
+				if m.selectedMessage >= len(m.messages) {
+					m.selectedMessage = len(m.messages) - 1
+				}
+				if m.selectedMessage < 0 {
+					m.selectedMessage = 0
+				}
+				m.detailMessage = nil
+				m.attachments = nil
+				m.detailViewport.SetContent("")
 				m.statusMsg = "Loading message details..."
-				return m, fetchMessageDetailCmd(m.graphClient, m.messages[0].ID)
+				return m, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID)
+			} else {
+				m.selectedMessage = 0
+				m.detailMessage = nil
+				m.attachments = nil
+				m.detailViewport.SetContent("")
 			}
 		}
 
@@ -535,6 +545,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder > 0 {
 					m.selectedFolder--
+					m.selectedMessage = 0
+					m.detailMessage = nil
+					m.attachments = nil
+					m.detailViewport.SetContent("")
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
@@ -554,6 +568,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder > 0 {
 					m.selectedFolder--
+					m.selectedMessage = 0
+					m.detailMessage = nil
+					m.attachments = nil
+					m.detailViewport.SetContent("")
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
@@ -572,6 +590,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
 					m.selectedFolder++
+					m.selectedMessage = 0
+					m.detailMessage = nil
+					m.attachments = nil
+					m.detailViewport.SetContent("")
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
@@ -591,6 +613,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
 					m.selectedFolder++
+					m.selectedMessage = 0
+					m.detailMessage = nil
+					m.attachments = nil
+					m.detailViewport.SetContent("")
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
