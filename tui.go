@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1186,10 +1188,21 @@ func (m mainModel) renderDetailView() string {
 
 // formatBodyContent strips/cleans up HTML email bodies to readable plain text
 func formatBodyContent(htmlContent string) string {
+	res := htmlContent
+
+	// Convert formatting tags to ANSI escape sequences before stripping HTML tags
+	res = regexp.MustCompile(`(?i)<(b|strong)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[1m")
+	res = regexp.MustCompile(`(?i)</(b|strong)\s*>`).ReplaceAllString(res, "\x1b[22m")
+	
+	res = regexp.MustCompile(`(?i)<(i|em)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[3m")
+	res = regexp.MustCompile(`(?i)</(i|em)\s*>`).ReplaceAllString(res, "\x1b[23m")
+	
+	res = regexp.MustCompile(`(?i)<u(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[4m")
+	res = regexp.MustCompile(`(?i)</u\s*>`).ReplaceAllString(res, "\x1b[24m")
+
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
 	// We'll replace simple tags to preserve readability.
-	res := htmlContent
 	res = strings.ReplaceAll(res, "<br>", "\n")
 	res = strings.ReplaceAll(res, "<br/>", "\n")
 	res = strings.ReplaceAll(res, "</p>", "\n\n")
@@ -1212,8 +1225,12 @@ func formatBodyContent(htmlContent string) string {
 		}
 	}
 	
+	unescaped := html.UnescapeString(builder.String())
+	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
+	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
+	
 	// Clean up whitespace
-	lines := strings.Split(builder.String(), "\n")
+	lines := strings.Split(unescaped, "\n")
 	var cleaned []string
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)

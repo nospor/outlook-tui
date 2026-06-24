@@ -78,3 +78,35 @@ func TestSortFolders_CaseInsensitiveAndFallback(t *testing.T) {
 		t.Errorf("expected third folder to be 'drafts', got '%s'", sorted[2].DisplayName)
 	}
 }
+
+func TestFormatBodyContent(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "ofpo <b>dfdfd</b>&nbsp; ddfdf",
+			expected: "ofpo \x1b[1mdfdfd\x1b[22m  ddfdf",
+		},
+		{
+			input:    "<p>Line 1</p><br/>Line 2 &amp; Line 3",
+			expected: "Line 1\n\nLine 2 & Line 3",
+		},
+		{
+			input:    "&lt;tag&gt; \"quote\" and 'apos' &#39;",
+			expected: "<tag> \"quote\" and 'apos' '",
+		},
+		{
+			input:    "Some <STRONG style=\"font-weight:bold;\">bold</strong   > and <EM>italicized</EM> text with <u class='underline'>underline</u>.",
+			expected: "Some \x1b[1mbold\x1b[22m and \x1b[3mitalicized\x1b[23m text with \x1b[4munderline\x1b[24m.",
+		},
+	}
+
+	for _, tt := range tests {
+		actual := formatBodyContent(tt.input)
+		if actual != tt.expected {
+			t.Errorf("formatBodyContent(%q) = %q; expected %q", tt.input, actual, tt.expected)
+		}
+	}
+}
+
