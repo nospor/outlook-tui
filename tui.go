@@ -43,6 +43,9 @@ type (
 		FolderID string
 		Messages []Message
 	}
+	inboxMessagesFetchedMsg struct {
+		Messages []Message
+	}
 	messageDetailFetchedMsg struct {
 		Message     *Message
 		Attachments []Attachment
@@ -91,6 +94,9 @@ type mainModel struct {
 	composeSubject  textinput.Model
 	composeBody     textarea.Model
 	composeStep     int // 0 = To, 1 = Subject, 2 = Body
+
+	// Notification tracking
+	inboxKnownIDs map[string]bool
 }
 
 func initialModel() mainModel {
@@ -175,6 +181,16 @@ func fetchMessagesCmd(gc *GraphClient, folderID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return messagesFetchedMsg{FolderID: folderID, Messages: msgs}
+	}
+}
+
+func fetchInboxMessagesCmd(gc *GraphClient) tea.Cmd {
+	return func() tea.Msg {
+		msgs, err := gc.GetMessages("inbox")
+		if err != nil {
+			return nil // ignore background error
+		}
+		return inboxMessagesFetchedMsg{Messages: msgs}
 	}
 }
 
@@ -359,6 +375,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
 				return m, tea.Batch(
 					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
+					fetchInboxMessagesCmd(m.graphClient),
 					tickCmd(),
 				)
 			}
@@ -432,6 +449,30 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Message details loaded"
 		}
 
+	case inboxMessagesFetchedMsg:
+		if m.inboxKnownIDs == nil {
+			m.inboxKnownIDs = make(map[string]bool)
+			for _, em := range msg.Messages {
+				m.inboxKnownIDs[em.ID] = true
+			}
+			break
+		}
+
+		for _, em := range msg.Messages {
+			if !m.inboxKnownIDs[em.ID] {
+				if !em.IsRead {
+					SendSystemNotification(em)
+				}
+				m.inboxKnownIDs[em.ID] = true
+			}
+		}
+
+		newMap := make(map[string]bool)
+		for _, em := range msg.Messages {
+			newMap[em.ID] = true
+		}
+		m.inboxKnownIDs = newMap
+
 	case mailSentMsg:
 		m.state = stateMain
 		m.statusMsg = "Email sent successfully!"
@@ -475,6 +516,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return nil
 				})
 			}
+
+			// Fetch inbox messages for notification tracking
+			bgCmds = append(bgCmds, fetchInboxMessagesCmd(m.graphClient))
 			
 			return m, tea.Batch(
 				tea.Batch(bgCmds...),
