@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -416,6 +417,104 @@ func TestExtractURLsFromMainMessage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLayout2Heights(t *testing.T) {
+	m := mainModel{
+		state:      stateMain,
+		activePane: paneMessages,
+		config:     Config{Layout: 2},
+		width:      100,
+		height:     30,
+	}
+	m.folders = []MailFolder{{DisplayName: "Inbox", ID: "inbox"}}
+	msg := Message{
+		ID:             "msg1ID",
+		ConversationID: "conv1ID",
+		Subject:        "Hello",
+		IsRead:         true,
+		Body:           ItemBody{Content: "Body 1"},
+	}
+	m.threadGroups = []ThreadGroup{
+		{
+			ConversationID: "conv1ID",
+			Members:        []Message{msg},
+		},
+	}
+	m.virtualList = []MessageListItem{
+		{ThreadIdx: 0, MemberIdx: 0, IsHeader: true},
+	}
+	m.virtualSelected = 0
+
+	// We want to test under three conditions:
+	// 1. detailMessage is nil
+	// 2. detailMessage has a short subject
+	// 3. detailMessage has a long subject
+	// 4. Virtual list has different sizes (1, 5, 10 items)
+
+	runLayoutCheck := func(desc string, detailMsg *Message, listSize int) (int, int, int) {
+		m.detailMessage = detailMsg
+		
+		// Setup virtual list of specified size
+		m.virtualList = nil
+		for i := 0; i < listSize; i++ {
+			m.virtualList = append(m.virtualList, MessageListItem{ThreadIdx: 0, MemberIdx: 0, IsHeader: true})
+		}
+		
+		m = m.updateViewportSize()
+		
+		// Replicate layout calculations from renderLayout2
+		totalHeight := m.height - 6
+		if totalHeight < 10 {
+			totalHeight = 10
+		}
+		foldersHeight := totalHeight * 30 / 100
+		if foldersHeight < 4 {
+			foldersHeight = 4
+		}
+		messagesHeight := totalHeight - foldersHeight - 4
+		if messagesHeight < 4 {
+			messagesHeight = 4
+		}
+		leftColInner := 46
+
+		foldersView := m.renderFoldersViewWide(foldersHeight, leftColInner)
+		messagesView := m.renderMessagesViewWide(messagesHeight, leftColInner)
+		detailView := m.renderDetailView()
+
+		fStyle := paneNormalStyle
+		mStyle := paneNormalStyle
+		dStyle := paneNormalStyle
+
+		fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(foldersView)
+		mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(messagesView)
+		dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
+
+		fH := lipgloss.Height(fView)
+		mH := lipgloss.Height(mView)
+		dH := lipgloss.Height(dView)
+		
+		nlCount := strings.Count(dView, "\n")
+		
+		t.Logf("%s (list size %d): fView=%d, mView=%d, dView=%d, dView newlines=%d",
+			desc, listSize, fH, mH, dH, nlCount)
+		return fH, mH, dH
+	}
+
+	// 1. Nil message, list size 1
+	fH1, mH1, dH1 := runLayoutCheck("nil msg", nil, 1)
+
+	// 2. Short subject message, list size 5
+	fH2, mH2, dH2 := runLayoutCheck("short msg", &msg, 5)
+
+	// 3. Long subject message, list size 10
+	longMsg := msg
+	longMsg.Subject = "This is an extremely long subject line that will wrap to multiple lines and increase the height of the metadata block significantly in the detail view."
+	fH3, mH3, dH3 := runLayoutCheck("long msg", &longMsg, 10)
+
+	if fH1 != fH2 || fH2 != fH3 || mH1 != mH2 || mH2 != mH3 || dH1 != dH2 || dH2 != dH3 {
+		t.Errorf("Heights are not constant across selections/list sizes!")
 	}
 }
 

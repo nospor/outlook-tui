@@ -526,9 +526,10 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	}
 
 	// 3. Fallback: Load from API
-	m.detailMessage = nil
+	m.detailMessage = am
 	m.attachments = nil
-	m.detailViewport.SetContent("")
+	m = m.updateViewportSize()
+	m.detailViewport.SetContent("Loading message body...")
 	m.statusMsg = "Loading message details..."
 	return m, fetchMessageDetailCmd(m.graphClient, am.ID)
 }
@@ -1957,14 +1958,18 @@ func (m mainModel) renderLayout1() string {
 		dStyle = paneNormalStyle
 	}
 
-	fView := fStyle.Width(23).Height(paneHeight).Render(foldersView)
-	mView := mStyle.Width(33).Height(paneHeight).Render(messagesView)
+	fView := fStyle.Width(23).Height(paneHeight).Render(cropLines(foldersView, paneHeight))
+	mView := mStyle.Width(33).Height(paneHeight).Render(cropLines(messagesView, paneHeight))
 	// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
-	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(detailView)
+	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(cropLines(detailView, paneHeight))
 
 	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
 	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
 	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
+
+	fView = cropLines(fView, paneHeight+2)
+	mView = cropLines(mView, paneHeight+2)
+	dView = cropLines(dView, paneHeight+2)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, fView, mView, dView) + "\n"
 }
@@ -2015,20 +2020,25 @@ func (m mainModel) renderLayout2() string {
 	}
 
 	// Stack folders above messages in the left column
-	fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(foldersView)
-	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(messagesView)
+	fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(cropLines(foldersView, foldersHeight))
+	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(cropLines(messagesView, messagesHeight))
 
 	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
 	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
 
+	fView = cropLines(fView, foldersHeight+2)
+	mView = cropLines(mView, messagesHeight+2)
+
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, fView, mView)
+	leftCol = cropLines(leftCol, totalHeight)
 
 	// Right detail pane spans the full height; outer = totalHeight + 2 (borders)
 	// left col outer = leftColInner+4=50; right pane Width = m.width - 50 - 4 = m.width - 54
 	// dView outer height must match left column outer height (= totalHeight).
 	// .Height(n) sets inner content; outer = n+2 (borders). So use totalHeight-2.
-	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(detailView)
+	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
 	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
+	dView = cropLines(dView, totalHeight)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
 }
@@ -2869,4 +2879,17 @@ func extractURLsFromMainMessage(htmlContent string) []string {
 		}
 	}
 	return urls
+}
+
+func cropLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	s = strings.TrimSuffix(s, "\n")
+	s = strings.TrimSuffix(s, "\r")
+	lines := strings.Split(s, "\n")
+	if len(lines) > maxLines {
+		return strings.Join(lines[:maxLines], "\n")
+	}
+	return strings.Join(lines, "\n")
 }
