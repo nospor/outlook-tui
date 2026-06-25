@@ -1832,7 +1832,7 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [r] Read/Unread | [a] Attachments | [q] Quit"
+		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [r] Read/Unread | [a] Attachments | [u] Copy URL | [q] Quit"
 		
 		availableWidth := m.width - lipgloss.Width(keysText) - 4
 		if availableWidth > 5 {
@@ -2449,7 +2449,7 @@ func (m mainModel) renderMetaBlock(width int) string {
 	fromVal := fmt.Sprintf("%s <%s>", m.detailMessage.From.EmailAddress.Name, m.detailMessage.From.EmailAddress.Address)
 	dateStr := m.detailMessage.ReceivedDateTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
 
-	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Subject: ") + m.detailMessage.Subject, width) + "\n")
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Subject: "+m.detailMessage.Subject), width) + "\n")
 	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("From:    ") + fromVal, width) + "\n")
 
 	toVal := formatRecipients(m.detailMessage.ToRecipients)
