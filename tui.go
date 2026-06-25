@@ -80,6 +80,7 @@ type (
 	mailDeletedMsg      struct{ MessageID string }
 	attachmentSavedMsg  string
 	userEmailFetchedMsg string
+	editorBodyLoadedMsg string // body text returned after external editor exits
 )
 
 type mainModel struct {
@@ -341,6 +342,52 @@ func saveAttachmentCmd(att Attachment) tea.Cmd {
 		
 		return attachmentSavedMsg(path)
 	}
+}
+
+// openEditorCmd writes the current compose body to a temp file and opens the
+// user's preferred $EDITOR (falling back to $VISUAL, then vi). BubbleTea
+// suspends the TUI while the editor is running and restores it on exit. The
+// updated file content is returned as editorBodyLoadedMsg.
+func openEditorCmd(currentBody string) tea.Cmd {
+	// Determine editor binary
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vi"
+	}
+
+	// Write current body to a temp file
+	tmpFile, err := os.CreateTemp("", "outlook-tui-body-*.txt")
+	if err != nil {
+		return func() tea.Msg { return editorBodyLoadedMsg(currentBody) }
+	}
+	if _, err := tmpFile.WriteString(currentBody); err != nil {
+		_ = tmpFile.Close()
+		return func() tea.Msg { return editorBodyLoadedMsg(currentBody) }
+	}
+	_ = tmpFile.Close()
+	tmpPath := tmpFile.Name()
+
+	// Build the editor command. The editor value may contain arguments
+	// (e.g. "nvim -u NONE"), so split on whitespace.
+	parts := strings.Fields(editor)
+	args := append(parts[1:], tmpPath)
+	c := exec.Command(parts[0], args...) //nolint:gosec
+
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		defer os.Remove(tmpPath)
+		if err != nil {
+			// Editor returned non-zero; keep original body
+			return editorBodyLoadedMsg(currentBody)
+		}
+		data, readErr := os.ReadFile(tmpPath)
+		if readErr != nil {
+			return editorBodyLoadedMsg(currentBody)
+		}
+		return editorBodyLoadedMsg(string(data))
+	})
 }
 
 // Tick command for background refresh
@@ -843,6 +890,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.inboxKnownIDs = newMap
 
+	case editorBodyLoadedMsg:
+		// External editor exited; load returned content into compose body
+		m.composeBody.SetValue(string(msg))
+		// Ensure cursor is at end of body
+		m.composeBody.CursorEnd()
+		// Switch focus to body field
+		m.composeStep = 3
+		m.updateComposeFocus()
+		m.statusMsg = "Body loaded from editor"
+
 	case mailSentMsg:
 		m.state = stateMain
 		m.statusMsg = "Email sent successfully!"
@@ -1258,6 +1315,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.composeStep = (m.composeStep - 1 + 4) % 4
 			m.updateComposeFocus()
+		case "ctrl+g":
+			// Open compose body in external editor ($EDITOR / $VISUAL / vi)
+			m.statusMsg = "Opening external editor…"
+			return m, openEditorCmd(m.composeBody.Value())
 		case "ctrl+s", "ctrl+S", "ctrl+x":
 			// Send!
 			m.statusMsg = "Sending email..."
@@ -1819,7 +1880,7 @@ func (m mainModel) View() string {
 		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
 		s.WriteString("   Body:\n   " + bodyBorder.Render(m.composeBody.View()) + "\n\n")
 		
-		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
+		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
 	case stateAttachments:
 		s.WriteString("   " + headerStyle.Render("ATTACHMENTS IN CURRENT EMAIL") + "\n\n")

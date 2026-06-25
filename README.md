@@ -121,6 +121,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `n`                           | Compose a new email                                                                                                                         |
 | `A`                           | Reply / Answer to the currently selected message (pre-fills sender, subject with Re:, quotes body, and focuses body field at the beginning) |
 | `Ctrl+s` (or `Ctrl+x`)        | Send the message (when in Compose view)                                                                                                     |
+| `Ctrl+g`                      | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view. |
 | `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
 | `r`                           | Toggle the selected message's Read/Unread status                                                                                            |
 | `a`                           | View and select attachments on the current email                                                                                            |
@@ -128,3 +129,28 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
 | `Esc`                         | Go back (cancel compose, close attachments list, or go back to config)                                                                      |
 | `q` (or `Ctrl+C`)             | Quit the application                                                                                                                        |
+
+---
+
+## External Editor for Compose Body
+
+Press **`Ctrl+g`** while in the Compose view to open the email body in your preferred text editor. The TUI is cleanly suspended while the editor is active and restored after you quit the editor. This is ideal for writing long messages in your full-featured editor.
+
+The editor is resolved in priority order:
+1. `$EDITOR` environment variable
+2. `$VISUAL` environment variable
+3. `vi` (built-in fallback)
+
+Example — configure neovim as the editor:
+
+```sh
+export EDITOR='/home/robertn/.local/share/bob/nvim-bin/nvim'
+```
+
+You can also pass extra arguments:
+
+```sh
+export EDITOR='nvim -u NONE'   # open without user config
+```
+
+Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
