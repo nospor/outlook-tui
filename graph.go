@@ -228,6 +228,82 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 	return nil
 }
 
+// ReplyMessage sends a reply to a specific message, linking it to the original thread.
+// It calls POST /me/messages/{id}/reply on the Graph API.
+func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string) error {
+	reqURL := fmt.Sprintf("%s/me/messages/%s/reply", graphBaseURL, url.PathEscape(messageID))
+
+	replyReq := struct {
+		Message struct {
+			ToRecipients []Recipient `json:"toRecipients,omitempty"`
+		} `json:"message"`
+		Comment string `json:"comment"`
+	}{}
+
+	replyReq.Comment = bodyText
+	if toAddress != "" {
+		replyReq.Message.ToRecipients = parseAddressStringToRecipients(toAddress)
+	}
+
+	jsonBytes, err := json.Marshal(replyReq)
+	if err != nil {
+		return err
+	}
+
+	resp, err := gc.client.Post(reqURL, "application/json", bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to reply to message: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// ReplyAllMessage sends a reply-all to a specific message, linking it to the original thread.
+// It calls POST /me/messages/{id}/replyAll on the Graph API.
+func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string) error {
+	reqURL := fmt.Sprintf("%s/me/messages/%s/replyAll", graphBaseURL, url.PathEscape(messageID))
+
+	replyReq := struct {
+		Message struct {
+			ToRecipients []Recipient `json:"toRecipients,omitempty"`
+			CcRecipients []Recipient `json:"ccRecipients,omitempty"`
+		} `json:"message"`
+		Comment string `json:"comment"`
+	}{}
+
+	replyReq.Comment = bodyText
+	if toAddress != "" {
+		replyReq.Message.ToRecipients = parseAddressStringToRecipients(toAddress)
+	}
+	if ccAddress != "" {
+		replyReq.Message.CcRecipients = parseAddressStringToRecipients(ccAddress)
+	}
+
+	jsonBytes, err := json.Marshal(replyReq)
+	if err != nil {
+		return err
+	}
+
+	resp, err := gc.client.Post(reqURL, "application/json", bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to reply-all to message: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
 func (gc *GraphClient) GetMe() (string, error) {
 	reqURL := fmt.Sprintf("%s/me", graphBaseURL)
 	resp, err := gc.client.Get(reqURL)

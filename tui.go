@@ -120,14 +120,16 @@ type mainModel struct {
 	spinner        spinner.Model
 
 	// Compose state
-	composeTo        textinput.Model
-	composeCc        textinput.Model
-	composeSubject   textinput.Model
-	composeBody      textarea.Model
-	composeStep      int // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
-	contacts         []Contact
-	filteredContacts []Contact
-	contactsSelected int
+	composeTo          textinput.Model
+	composeCc          textinput.Model
+	composeSubject     textinput.Model
+	composeBody        textarea.Model
+	composeStep        int // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
+	composeReplyToID   string // non-empty when composing a reply; holds the original message ID
+	composeIsReplyAll  bool   // true when replying to all
+	contacts           []Contact
+	filteredContacts   []Contact
+	contactsSelected   int
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -268,9 +270,19 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func sendMailCmd(gc *GraphClient, to, cc, subject, body string) tea.Cmd {
+func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool) tea.Cmd {
 	return func() tea.Msg {
-		err := gc.SendMessage(subject, body, to, cc)
+		var err error
+		if replyToID != "" {
+			// Use the proper Graph reply endpoint so the message is threaded correctly.
+			if replyAll {
+				err = gc.ReplyAllMessage(replyToID, body, to, cc)
+			} else {
+				err = gc.ReplyMessage(replyToID, body, to)
+			}
+		} else {
+			err = gc.SendMessage(subject, body, to, cc)
+		}
 		if err != nil {
 			return errMsg(err)
 		}
@@ -1096,6 +1108,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Compose new email
 			m.state = stateCompose
 			m.composeStep = 0
+			m.composeReplyToID = ""  // not a reply
+			m.composeIsReplyAll = false
 			m.loadContacts()
 			
 			m.composeTo = textinput.New()
@@ -1247,12 +1261,24 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s", "ctrl+S", "ctrl+x":
 			// Send!
 			m.statusMsg = "Sending email..."
+			bodyToSend := m.composeBody.Value()
+			// When replying, the compose body is pre-filled with a quoted original
+			// message for reference. The Graph API reply endpoint appends its own
+			// quoted thread automatically, so we must strip our local quote before
+			// sending to avoid the recipient seeing a doubled quotation.
+			if m.composeReplyToID != "" {
+				if idx := strings.Index(bodyToSend, "\n\nOn "); idx >= 0 {
+					bodyToSend = bodyToSend[:idx]
+				}
+			}
 			cmds = append(cmds, sendMailCmd(
 				m.graphClient,
 				m.composeTo.Value(),
 				m.composeCc.Value(),
 				m.composeSubject.Value(),
-				m.composeBody.Value(),
+				bodyToSend,
+				m.composeReplyToID,
+				m.composeIsReplyAll,
 			))
 		default:
 			// Update the focused compose input
@@ -1367,6 +1393,8 @@ func (m *mainModel) initiateReply(replyAll bool) {
 
 	m.state = stateCompose
 	m.composeStep = 3 // Focus body field
+	m.composeReplyToID = origMsg.ID   // remember original message so we use the reply endpoint
+	m.composeIsReplyAll = replyAll
 	m.loadContacts()
 	
 	m.composeTo = textinput.New()
