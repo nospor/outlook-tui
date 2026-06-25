@@ -161,4 +161,22 @@ func TestDBUpsertMessagesTransaction(t *testing.T) {
 	if retrieved[0].ID != "msg-2" {
 		t.Errorf("expected newest message first, got %s", retrieved[0].ID)
 	}
+
+	// Test pruning: upserting only msg-2 should delete msg-1
+	err = db.UpsertMessages("archive", []Message{msgs[1]})
+	if err != nil {
+		t.Fatalf("failed transaction upsert with prune: %v", err)
+	}
+
+	retrieved, err = db.GetMessages("archive")
+	if err != nil {
+		t.Fatalf("failed get: %v", err)
+	}
+
+	if len(retrieved) != 1 {
+		t.Fatalf("expected 1 message after pruning, got %d", len(retrieved))
+	}
+	if retrieved[0].ID != "msg-2" {
+		t.Errorf("expected msg-2 to remain, got %s", retrieved[0].ID)
+	}
 }

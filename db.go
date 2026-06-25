@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -183,6 +184,28 @@ func (d *DB) UpsertMessages(folderID string, msgs []Message) error {
 			return err
 		}
 	}
+
+	// Delete any cached messages in this folder that are not in the new messages list
+	if len(msgs) == 0 {
+		_, err = tx.Exec(`DELETE FROM messages WHERE folder_id = ?`, folderID)
+		if err != nil {
+			return err
+		}
+	} else {
+		placeholders := make([]string, len(msgs))
+		args := make([]interface{}, len(msgs)+1)
+		args[0] = folderID
+		for i, msg := range msgs {
+			placeholders[i] = "?"
+			args[i+1] = msg.ID
+		}
+		query := fmt.Sprintf(`DELETE FROM messages WHERE folder_id = ? AND id NOT IN (%s)`, strings.Join(placeholders, ","))
+		_, err = tx.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
 }
 
