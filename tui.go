@@ -36,6 +36,7 @@ const (
 	stateMain
 	stateCompose
 	stateAttachments
+	stateReplyConfirm
 )
 
 // Messages
@@ -59,6 +60,7 @@ type (
 	mailSentMsg         struct{}
 	mailDeletedMsg      struct{ MessageID string }
 	attachmentSavedMsg  string
+	userEmailFetchedMsg string
 )
 
 type mainModel struct {
@@ -100,6 +102,7 @@ type mainModel struct {
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
+	userEmail     string
 }
 
 func initialModel() mainModel {
@@ -174,6 +177,16 @@ func fetchFoldersCmd(gc *GraphClient) tea.Cmd {
 			return errMsg(err)
 		}
 		return foldersFetchedMsg(folders)
+	}
+}
+
+func fetchUserEmailCmd(gc *GraphClient) tea.Cmd {
+	return func() tea.Msg {
+		email, err := gc.GetMe()
+		if err != nil {
+			return userEmailFetchedMsg("")
+		}
+		return userEmailFetchedMsg(email)
 	}
 }
 
@@ -372,7 +385,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg))
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
 		
-		return m, fetchFoldersCmd(m.graphClient)
+		return m, tea.Batch(
+			fetchFoldersCmd(m.graphClient),
+			fetchUserEmailCmd(m.graphClient),
+		)
 
 	case foldersFetchedMsg:
 		sortedFolders := sortFolders(msg)
@@ -459,6 +475,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages[m.selectedMessage].IsRead = true
 			m.statusMsg = "Message details loaded"
 		}
+
+	case userEmailFetchedMsg:
+		m.userEmail = string(msg)
 
 	case inboxMessagesFetchedMsg:
 		if m.inboxKnownIDs == nil {
@@ -735,69 +754,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedAttach = 0
 			}
 		case "A":
-			// Reply / Answer to current message
+			// Ask if user wants to reply to sender or all
 			if len(m.messages) > 0 && m.selectedMessage < len(m.messages) {
-				origMsg := m.messages[m.selectedMessage]
-				
-				var bodyText string
-				senderName := origMsg.From.EmailAddress.Name
-				senderAddr := origMsg.From.EmailAddress.Address
-				receivedTime := origMsg.ReceivedDateTime
-				
-				if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
-					bodyText = m.detailMessage.Body.Content
-					if m.detailMessage.From.EmailAddress.Address != "" {
-						senderName = m.detailMessage.From.EmailAddress.Name
-						senderAddr = m.detailMessage.From.EmailAddress.Address
-						receivedTime = m.detailMessage.ReceivedDateTime
-					}
-				} else {
-					bodyText = origMsg.BodyPreview
-				}
-
-				m.state = stateCompose
-				m.composeStep = 2 // Focus body field
-				
-				m.composeTo = textinput.New()
-				m.composeTo.Placeholder = "recipient@domain.com"
-				m.composeTo.SetValue(senderAddr)
-				m.composeTo.Width = m.width - 20
-				
-				subject := origMsg.Subject
-				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
-					subject = "Re: " + subject
-				}
-				m.composeSubject = textinput.New()
-				m.composeSubject.Placeholder = "Email subject..."
-				m.composeSubject.SetValue(subject)
-				m.composeSubject.Width = m.width - 20
-				
-				m.composeBody = textarea.New()
-				m.composeBody.Placeholder = "Type email body here..."
-				m.composeBody.SetWidth(m.width - 20)
-				m.composeBody.SetHeight(10)
-				
-				var quotedBody strings.Builder
-				quotedBody.WriteString("\n\n")
-				formattedTime := receivedTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
-				if senderName != "" {
-					quotedBody.WriteString(fmt.Sprintf("On %s, %s <%s> wrote:\n", formattedTime, senderName, senderAddr))
-				} else {
-					quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
-				}
-				
-				plainBody := stripANSICodes(formatBodyContent(bodyText))
-				lines := strings.Split(plainBody, "\n")
-				for _, line := range lines {
-					quotedBody.WriteString("> " + line + "\n")
-				}
-				
-				m.composeBody.SetValue(quotedBody.String())
-				for i := 0; i < m.composeBody.LineCount(); i++ {
-					m.composeBody.CursorUp()
-				}
-				m.composeBody.CursorStart()
-				m.updateComposeFocus()
+				m.state = stateReplyConfirm
+				m.statusMsg = "Select reply option (s/a/c)"
 			}
 		}
 
@@ -862,9 +822,162 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Downloading attachment..."
 			cmds = append(cmds, saveAttachmentCmd(m.attachments[m.selectedAttach]))
 		}
+
+	case stateReplyConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "c", "q":
+			m.state = stateMain
+			m.statusMsg = "Reply cancelled"
+		case "s":
+			m.initiateReply(false)
+		case "a":
+			m.initiateReply(true)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m *mainModel) initiateReply(replyAll bool) {
+	if len(m.messages) == 0 || m.selectedMessage >= len(m.messages) {
+		m.state = stateMain
+		return
+	}
+	origMsg := m.messages[m.selectedMessage]
+	
+	var bodyText string
+	senderName := origMsg.From.EmailAddress.Name
+	senderAddr := origMsg.From.EmailAddress.Address
+	receivedTime := origMsg.ReceivedDateTime
+	
+	if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
+		bodyText = m.detailMessage.Body.Content
+		if m.detailMessage.From.EmailAddress.Address != "" {
+			senderName = m.detailMessage.From.EmailAddress.Name
+			senderAddr = m.detailMessage.From.EmailAddress.Address
+			receivedTime = m.detailMessage.ReceivedDateTime
+		}
+	} else {
+		bodyText = origMsg.BodyPreview
+	}
+
+	m.state = stateCompose
+	m.composeStep = 2 // Focus body field
+	
+	m.composeTo = textinput.New()
+	m.composeTo.Placeholder = "recipient@domain.com"
+	m.composeTo.Width = m.width - 20
+	
+	var recipients []string
+	if senderAddr != "" {
+		if senderName != "" {
+			recipients = append(recipients, fmt.Sprintf("%s <%s>", senderName, senderAddr))
+		} else {
+			recipients = append(recipients, senderAddr)
+		}
+	}
+
+	if replyAll {
+		var origTo []Recipient
+		var origCc []Recipient
+		if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
+			origTo = m.detailMessage.ToRecipients
+			origCc = m.detailMessage.CcRecipients
+		} else {
+			origTo = origMsg.ToRecipients
+			origCc = origMsg.CcRecipients
+		}
+
+		hasEmail := func(addr string) bool {
+			addr = strings.ToLower(strings.TrimSpace(addr))
+			if addr == "" {
+				return true
+			}
+			if m.userEmail != "" && strings.ToLower(m.userEmail) == addr {
+				return true
+			}
+			for _, r := range recipients {
+				checkAddr := strings.ToLower(strings.TrimSpace(r))
+				if strings.Contains(checkAddr, "<") && strings.Contains(checkAddr, ">") {
+					start := strings.Index(checkAddr, "<")
+					end := strings.Index(checkAddr, ">")
+					if start < end {
+						checkAddr = checkAddr[start+1 : end]
+					}
+				}
+				if checkAddr == addr {
+					return true
+				}
+			}
+			return false
+		}
+
+		for _, r := range origTo {
+			addr := r.EmailAddress.Address
+			name := r.EmailAddress.Name
+			if !hasEmail(addr) {
+				if name != "" {
+					recipients = append(recipients, fmt.Sprintf("%s <%s>", name, addr))
+				} else {
+					recipients = append(recipients, addr)
+				}
+			}
+		}
+
+		for _, r := range origCc {
+			addr := r.EmailAddress.Address
+			name := r.EmailAddress.Name
+			if !hasEmail(addr) {
+				if name != "" {
+					recipients = append(recipients, fmt.Sprintf("%s <%s>", name, addr))
+				} else {
+					recipients = append(recipients, addr)
+				}
+			}
+		}
+	}
+
+	m.composeTo.SetValue(strings.Join(recipients, ", "))
+	
+	subject := origMsg.Subject
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
+		subject = "Re: " + subject
+	}
+	m.composeSubject = textinput.New()
+	m.composeSubject.Placeholder = "Email subject..."
+	m.composeSubject.SetValue(subject)
+	m.composeSubject.Width = m.width - 20
+	
+	m.composeBody = textarea.New()
+	m.composeBody.Placeholder = "Type email body here..."
+	m.composeBody.SetWidth(m.width - 20)
+	m.composeBody.SetHeight(10)
+	
+	var quotedBody strings.Builder
+	quotedBody.WriteString("\n\n")
+	formattedTime := receivedTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
+	if senderName != "" {
+		quotedBody.WriteString(fmt.Sprintf("On %s, %s <%s> wrote:\n", formattedTime, senderName, senderAddr))
+	} else {
+		quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
+	}
+	
+	plainBody := stripANSICodes(formatBodyContent(bodyText))
+	lines := strings.Split(plainBody, "\n")
+	for _, line := range lines {
+		quotedBody.WriteString("> " + line + "\n")
+	}
+	
+	m.composeBody.SetValue(quotedBody.String())
+	for i := 0; i < m.composeBody.LineCount(); i++ {
+		m.composeBody.CursorUp()
+	}
+	m.composeBody.CursorStart()
+	m.updateComposeFocus()
 }
 
 func (m *mainModel) updateComposeFocus() {
@@ -978,6 +1091,13 @@ func (m mainModel) View() string {
 	s.WriteString("\n\n")
 
 	switch m.state {
+	case stateReplyConfirm:
+		s.WriteString("   " + headerStyle.Render("REPLY OPTIONS") + "\n\n")
+		s.WriteString("   Do you want to reply to the sender only or reply all?\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("[s]") + " Reply to Sender Only\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render("[a]") + " Reply All\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorOverlay)).Render("[c]") + " Cancel / Go Back\n")
+
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
 		s.WriteString("   To build this app, we register a client in Microsoft Azure Entra.\n")

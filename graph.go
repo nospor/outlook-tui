@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -173,13 +174,32 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress string) e
 		ContentType: "Text",
 		Content:     bodyText,
 	}
-	sendReq.Message.ToRecipients = []Recipient{
-		{
+
+	var toRecipients []Recipient
+	emails := strings.Split(recipientAddress, ",")
+	for _, email := range emails {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			continue
+		}
+		addr := email
+		name := ""
+		if strings.Contains(email, "<") && strings.Contains(email, ">") {
+			start := strings.Index(email, "<")
+			end := strings.Index(email, ">")
+			if start < end {
+				name = strings.TrimSpace(email[:start])
+				addr = strings.TrimSpace(email[start+1 : end])
+			}
+		}
+		toRecipients = append(toRecipients, Recipient{
 			EmailAddress: EmailAddress{
-				Address: recipientAddress,
+				Name:    name,
+				Address: addr,
 			},
-		},
+		})
 	}
+	sendReq.Message.ToRecipients = toRecipients
 	sendReq.SaveToSentItems = "true"
 
 	jsonBytes, err := json.Marshal(sendReq)
@@ -199,6 +219,34 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress string) e
 	}
 
 	return nil
+}
+
+func (gc *GraphClient) GetMe() (string, error) {
+	reqURL := fmt.Sprintf("%s/me", graphBaseURL)
+	resp, err := gc.client.Get(reqURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to get user info: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Mail              string `json:"mail"`
+		UserPrincipalName string `json:"userPrincipalName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	email := result.Mail
+	if email == "" {
+		email = result.UserPrincipalName
+	}
+	return email, nil
 }
 
 func (gc *GraphClient) DeleteMessage(messageID string) error {
