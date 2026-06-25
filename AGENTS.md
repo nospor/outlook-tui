@@ -15,10 +15,13 @@ Welcome! This workspace contains **Outlook TUI**, a gorgeous, responsive, and fu
 ## Codebase Architecture
 
 - [main.go](main.go) - Application launcher & Bubble Tea program entrypoint.
-- [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`), including Client ID, Tenant ID, and refresh interval settings.
+- [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`), including Client ID, Tenant ID, refresh interval, and layout selection.
 - [auth.go](auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers (background token refresh).
 - [graph.go](graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading.
 - [tui.go](tui.go) - Contains layout rendering, multi-pane UI focus, navigation key bindings, and user interface updates.
+  - **Layout 1** (default): Three panes side-by-side — `[Folders | Messages | Detail]`. Rendered via `renderLayout1()`.
+  - **Layout 2**: Left column stacks Folders (~30% height) above Messages (~70% height); right column holds the Detail pane. Rendered via `renderLayout2()`, `renderFoldersViewWide()`, `renderMessagesViewWide()`.
+  - Viewport sizing is split into `updateViewportSizeLayout1()` and `updateViewportSizeLayout2()`, dispatched by `updateViewportSize()` based on `config.Layout`.
 - [notification.go](notification.go) - Triggers OS desktop notifications using `notify-send` for new messages.
 
 ---

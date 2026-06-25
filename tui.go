@@ -995,6 +995,13 @@ func (m *mainModel) updateComposeFocus() {
 }
 
 func (m mainModel) updateViewportSize() mainModel {
+	if m.config.Layout == 2 {
+		return m.updateViewportSizeLayout2()
+	}
+	return m.updateViewportSizeLayout1()
+}
+
+func (m mainModel) updateViewportSizeLayout1() mainModel {
 	// Empirically measured Lipgloss v1.1.0 semantics:
 	//   Width(n) with Padding(0,1)+Border → outer = n+2  (Width includes padding; border adds 2)
 	//   Height(n) with Border             → outer = n+2  (Height is inner content)
@@ -1021,7 +1028,40 @@ func (m mainModel) updateViewportSize() mainModel {
 	if viewportHeight < 3 {
 		viewportHeight = 3
 	}
-	
+
+	m.detailViewport.Width = detailWidth
+	m.detailViewport.Height = viewportHeight
+	return m
+}
+
+func (m mainModel) updateViewportSizeLayout2() mainModel {
+	// Layout 2: left column = Folders (top ~30%) stacked above Messages (~70%).
+	//           Right column = Detail pane (full height).
+	//
+	// Left column: leftColInner=46 → leftColOuter=50 (inner + 2 padding + 2 border)
+	// Right detail pane content width = m.width - leftColOuter - 4 (its own pad+border) = m.width - 54
+	totalHeight := m.height - 6
+	if totalHeight < 10 {
+		totalHeight = 10
+	}
+
+	detailWidth := m.width - 54
+	if detailWidth < 20 {
+		detailWidth = 20
+	}
+
+	metaHeight := 6
+	if m.detailMessage != nil {
+		metaBlock := m.renderMetaBlock(detailWidth)
+		metaLines := strings.Split(metaBlock, "\n")
+		metaHeight = len(metaLines) - 1 + 2
+	}
+
+	viewportHeight := totalHeight - metaHeight
+	if viewportHeight < 3 {
+		viewportHeight = 3
+	}
+
 	m.detailViewport.Width = detailWidth
 	m.detailViewport.Height = viewportHeight
 	return m
@@ -1122,43 +1162,11 @@ func (m mainModel) View() string {
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
 	case stateMain:
-		paneHeight := m.height - 6
-		if paneHeight < 5 {
-			paneHeight = 5
-		}
-
-		// Left: Folders (paneHeight = inner content area, header handled inside)
-		foldersView := m.renderFoldersView(paneHeight)
-		// Middle: Messages
-		messagesView := m.renderMessagesView(paneHeight)
-		// Right: Details
-		detailView := m.renderDetailView()
-
-		// Layout
-		var fStyle, mStyle, dStyle lipgloss.Style
-		if m.activePane == paneFolders {
-			fStyle = paneActiveStyle
+		if m.config.Layout == 2 {
+			s.WriteString(m.renderLayout2())
 		} else {
-			fStyle = paneNormalStyle
+			s.WriteString(m.renderLayout1())
 		}
-		if m.activePane == paneMessages {
-			mStyle = paneActiveStyle
-		} else {
-			mStyle = paneNormalStyle
-		}
-		if m.activePane == paneDetail {
-			dStyle = paneActiveStyle
-		} else {
-			dStyle = paneNormalStyle
-		}
-
-		fView := fStyle.Width(23).Height(paneHeight).Render(foldersView)
-		mView := mStyle.Width(33).Height(paneHeight).Render(messagesView)
-		// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
-		dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(detailView)
-
-		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, fView, mView, dView))
-		s.WriteString("\n")
 
 	case stateCompose:
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
@@ -1232,14 +1240,254 @@ func (m mainModel) View() string {
 	return s.String()
 }
 
-func (m mainModel) renderFoldersView(availHeight int) string {
+// renderLayout1 renders the default side-by-side three-pane layout:
+//   [Folders | Messages | Detail]
+func (m mainModel) renderLayout1() string {
+	paneHeight := m.height - 6
+	if paneHeight < 5 {
+		paneHeight = 5
+	}
+
+	foldersView := m.renderFoldersView(paneHeight)
+	messagesView := m.renderMessagesView(paneHeight)
+	detailView := m.renderDetailView()
+
+	var fStyle, mStyle, dStyle lipgloss.Style
+	if m.activePane == paneFolders {
+		fStyle = paneActiveStyle
+	} else {
+		fStyle = paneNormalStyle
+	}
+	if m.activePane == paneMessages {
+		mStyle = paneActiveStyle
+	} else {
+		mStyle = paneNormalStyle
+	}
+	if m.activePane == paneDetail {
+		dStyle = paneActiveStyle
+	} else {
+		dStyle = paneNormalStyle
+	}
+
+	fView := fStyle.Width(23).Height(paneHeight).Render(foldersView)
+	mView := mStyle.Width(33).Height(paneHeight).Render(messagesView)
+	// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
+	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(detailView)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, fView, mView, dView) + "\n"
+}
+
+// renderLayout2 renders the alternative stacked layout:
+//   Left column: [Folders (~30%)] stacked above [Messages (~70%)]
+//   Right column: [Detail] (full height)
+//
+// Left column inner width = 46 → outer = 50 (2 padding + 2 border on each side).
+// Right column inner width = m.width - 54.
+func (m mainModel) renderLayout2() string {
+	totalHeight := m.height - 6
+	if totalHeight < 10 {
+		totalHeight = 10
+	}
+
+	// Heights for the two left panes (inner content, border not counted here)
+	foldersHeight := totalHeight * 30 / 100
+	if foldersHeight < 4 {
+		foldersHeight = 4
+	}
+	messagesHeight := totalHeight - foldersHeight - 4 // -4 for the two border pairs
+	if messagesHeight < 4 {
+		messagesHeight = 4
+	}
+
+	leftColInner := 46 // inner content width of each left pane
+
+	foldersView := m.renderFoldersViewWide(foldersHeight, leftColInner)
+	messagesView := m.renderMessagesViewWide(messagesHeight, leftColInner)
+	detailView := m.renderDetailView()
+
+	var fStyle, mStyle, dStyle lipgloss.Style
+	if m.activePane == paneFolders {
+		fStyle = paneActiveStyle
+	} else {
+		fStyle = paneNormalStyle
+	}
+	if m.activePane == paneMessages {
+		mStyle = paneActiveStyle
+	} else {
+		mStyle = paneNormalStyle
+	}
+	if m.activePane == paneDetail {
+		dStyle = paneActiveStyle
+	} else {
+		dStyle = paneNormalStyle
+	}
+
+	// Stack folders above messages in the left column
+	fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(foldersView)
+	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(messagesView)
+	leftCol := lipgloss.JoinVertical(lipgloss.Left, fView, mView)
+
+	// Right detail pane spans the full height; outer = totalHeight + 2 (borders)
+	// left col outer = leftColInner+4=50; right pane Width = m.width - 50 - 4 = m.width - 54
+	dView := dStyle.Width(m.width - 54).Height(totalHeight).Render(detailView)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
+}
+
+// renderFoldersViewWide is a variant of renderFoldersView that uses a wider display name limit.
+func (m mainModel) renderFoldersViewWide(availHeight, availWidth int) string {
 	var s strings.Builder
 	s.WriteString(headerStyle.Render("FOLDERS") + "\n\n")
-	
+
 	if len(m.folders) == 0 {
 		s.WriteString(dimStyle.Render(" No folders"))
 		return s.String()
 	}
+
+	maxName := availWidth - 8
+	if maxName < 5 {
+		maxName = 5
+	}
+
+	start := 0
+	end := len(m.folders)
+	maxItems := availHeight - 2
+	if maxItems < 1 {
+		maxItems = 1
+	}
+
+	if len(m.folders) > maxItems {
+		start = m.selectedFolder - (maxItems / 2)
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxItems
+		if end > len(m.folders) {
+			end = len(m.folders)
+			start = end - maxItems
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+
+	for i := start; i < end; i++ {
+		f := m.folders[i]
+		displayName := f.DisplayName
+		if len(displayName) > maxName {
+			displayName = displayName[:maxName-2] + ".."
+		}
+		var countStr string
+		if f.UnreadItemCount > 0 {
+			countStr = fmt.Sprintf(" (%d)", f.UnreadItemCount)
+		}
+		line := fmt.Sprintf(" %s%s", displayName, countStr)
+		if i == m.selectedFolder {
+			s.WriteString(selectedItemStyle.Copy().Width(availWidth - 2).Render(line) + "\n")
+		} else if f.UnreadItemCount > 0 {
+			s.WriteString(unreadStyle.Render(line) + "\n")
+		} else {
+			s.WriteString(" " + line[1:] + "\n")
+		}
+	}
+	return s.String()
+}
+
+// renderMessagesViewWide is a variant of renderMessagesView that fits a wider column.
+func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
+	var s strings.Builder
+	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
+
+	if len(m.messages) == 0 {
+		s.WriteString(dimStyle.Render(" No messages"))
+		return s.String()
+	}
+
+	start := 0
+	end := len(m.messages)
+
+	// Each message takes 3 lines
+	maxItems := (availHeight - 2) / 3
+	if maxItems < 1 {
+		maxItems = 1
+	}
+
+	if len(m.messages) > maxItems {
+		start = m.selectedMessage - (maxItems / 2)
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxItems
+		if end > len(m.messages) {
+			end = len(m.messages)
+			start = end - maxItems
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+
+	// line1: "● fromName"  — prefix is 2 chars ("● " or "  ")
+	maxFrom := availWidth - 4
+	if maxFrom < 8 {
+		maxFrom = 8
+	}
+	// line2: "  @ subject" — prefix is 4 chars ("  @ " or "    ")
+	// Subject gets the full remaining width of its own line.
+	maxSubj := availWidth - 4
+	if maxSubj < 8 {
+		maxSubj = 8
+	}
+
+	for i := start; i < end; i++ {
+		msg := m.messages[i]
+		fromName := msg.From.EmailAddress.Name
+		if fromName == "" {
+			fromName = msg.From.EmailAddress.Address
+		}
+		if len(fromName) > maxFrom {
+			fromName = fromName[:maxFrom-2] + ".."
+		}
+		subject := msg.Subject
+		if subject == "" {
+			subject = "(No Subject)"
+		}
+		if len(subject) > maxSubj {
+			subject = subject[:maxSubj-2] + ".."
+		}
+		unreadMarker := " "
+		if !msg.IsRead {
+			unreadMarker = "●"
+		}
+		attachMarker := " "
+		if msg.HasAttachments {
+			attachMarker = "@"
+		}
+		line1 := fmt.Sprintf("%s %s", unreadMarker, fromName)
+		line2 := fmt.Sprintf("  %s %s", attachMarker, subject)
+
+		if i == m.selectedMessage {
+			s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+		} else {
+			if !msg.IsRead {
+				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else {
+				s.WriteString(line1 + "\n" + dimStyle.Render(line2) + "\n\n")
+			}
+		}
+	}
+	return s.String()
+}
+
+func (m mainModel) renderFoldersView(availHeight int) string {
+	var s strings.Builder
+	s.WriteString(headerStyle.Render("FOLDERS") + "\n\n")
+
+	if len(m.folders) == 0 {
+		s.WriteString(dimStyle.Render(" No folders"))
+		return s.String()
+	}
+
 
 	start := 0
 	end := len(m.folders)
@@ -1375,7 +1623,14 @@ func (m mainModel) renderDetailView() string {
 		return s.String()
 	}
 
-	detailWidth := m.width - 64
+	// Layout 1: left 60 cols used by Folders+Messages panes (outer 25+35)
+	// Layout 2: left 50 cols used by the stacked left column
+	var detailWidth int
+	if m.config.Layout == 2 {
+		detailWidth = m.width - 54 // m.width - leftColOuter(50) - ownPad(4)
+	} else {
+		detailWidth = m.width - 64 // m.width - outerF(25) - outerM(35) - ownPad(4)
+	}
 	if detailWidth < 20 {
 		detailWidth = 20
 	}

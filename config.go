@@ -10,6 +10,7 @@ type Config struct {
 	ClientID       string `json:"client_id"`
 	TenantID       string `json:"tenant_id"`        // defaults to "common"
 	RefreshTimeMin int    `json:"refresh_time_min"` // defaults to 5
+	Layout         int    `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
 }
 
 func GetConfigDir() (string, error) {
@@ -35,6 +36,7 @@ func LoadConfig() (Config, error) {
 			ClientID:       "",
 			TenantID:       "common",
 			RefreshTimeMin: 5,
+			Layout:         1,
 		}, nil
 	}
 	
@@ -51,6 +53,12 @@ func LoadConfig() (Config, error) {
 		cfg.RefreshTimeMin = 5
 		_ = SaveConfig(cfg)
 	}
+
+	if cfg.Layout != 1 && cfg.Layout != 2 {
+		cfg.Layout = 1
+		_ = SaveConfig(cfg)
+	}
+
 	return cfg, nil
 }
 

@@ -84,6 +84,19 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `client_id`: The Microsoft Azure App Registration Application (client) ID.
 * `tenant_id`: The Microsoft Entra Tenant ID (defaults to `"common"`, which works for both corporate/school and personal Outlook accounts).
 * `refresh_time_min`: The background refresh/fetching interval in minutes (defaults to `5`).
+* `layout`: The UI layout mode (defaults to `1`).
+  - **`1` (default) — Side-by-side**: Three panes arranged horizontally: `[Folders | Messages | Detail]`.
+  - **`2` — Stacked left column**: Folders and Messages are stacked vertically on the left (~30% / ~70% height split), with the Detail pane occupying the wider right column.
+
+Example `~/.config/outlook-tui/config.json` to use Layout 2:
+```json
+{
+  "client_id": "your-azure-client-id",
+  "tenant_id": "common",
+  "refresh_time_min": 5,
+  "layout": 2
+}
+```
 
 ---
 
