@@ -1183,6 +1183,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeSubject.Width = m.width - 20
 			
 			m.composeBody = textarea.New()
+			m.composeBody.ShowLineNumbers = false
 			m.composeBody.Placeholder = "Type email body here..."
 			m.composeBody.SetWidth(m.width - 20)
 			m.composeBody.SetHeight(10)
@@ -1550,6 +1551,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeSubject.Width = m.width - 20
 	
 	m.composeBody = textarea.New()
+	m.composeBody.ShowLineNumbers = false
 	m.composeBody.Placeholder = "Type email body here..."
 	m.composeBody.SetWidth(m.width - 20)
 	m.composeBody.SetHeight(10)
@@ -1878,7 +1880,15 @@ func (m mainModel) View() string {
 		}
 
 		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
-		s.WriteString("   Body:\n   " + bodyBorder.Render(m.composeBody.View()) + "\n\n")
+		{
+			renderedBody := bodyBorder.Render(m.composeBody.View())
+			bodyLines := strings.Split(renderedBody, "\n")
+			s.WriteString("   Body:\n")
+			for _, bl := range bodyLines {
+				s.WriteString("   " + bl + "\n")
+			}
+			s.WriteString("\n")
+		}
 		
 		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
