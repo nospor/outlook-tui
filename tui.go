@@ -1401,11 +1401,11 @@ func (m mainModel) updateViewportSizeLayout1() mainModel {
 		detailWidth = 20
 	}
 
-	metaHeight := 6 // fallback
+	metaHeight := 4 // fallback
 	if m.detailMessage != nil {
 		metaBlock := m.renderMetaBlock(detailWidth)
 		metaLines := strings.Split(metaBlock, "\n")
-		metaHeight = len(metaLines) - 1 + 2
+		metaHeight = len(metaLines) - 1
 	}
 
 	viewportHeight := paneHeight - metaHeight
@@ -1434,11 +1434,11 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 		detailWidth = 20
 	}
 
-	metaHeight := 6
+	metaHeight := 4
 	if m.detailMessage != nil {
 		metaBlock := m.renderMetaBlock(detailWidth)
 		metaLines := strings.Split(metaBlock, "\n")
-		metaHeight = len(metaLines) - 1 + 2
+		metaHeight = len(metaLines) - 1
 	}
 
 	viewportHeight := totalHeight - 2 - metaHeight
@@ -1658,6 +1658,10 @@ func (m mainModel) renderLayout1() string {
 	// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
 	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(detailView)
 
+	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
+	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
+	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
+
 	return lipgloss.JoinHorizontal(lipgloss.Top, fView, mView, dView) + "\n"
 }
 
@@ -1709,6 +1713,10 @@ func (m mainModel) renderLayout2() string {
 	// Stack folders above messages in the left column
 	fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(foldersView)
 	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(messagesView)
+
+	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
+	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
+
 	leftCol := lipgloss.JoinVertical(lipgloss.Left, fView, mView)
 
 	// Right detail pane spans the full height; outer = totalHeight + 2 (borders)
@@ -1716,6 +1724,7 @@ func (m mainModel) renderLayout2() string {
 	// dView outer height must match left column outer height (= totalHeight).
 	// .Height(n) sets inner content; outer = n+2 (borders). So use totalHeight-2.
 	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(detailView)
+	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
 }
@@ -1723,7 +1732,6 @@ func (m mainModel) renderLayout2() string {
 // renderFoldersViewWide is a variant of renderFoldersView that uses a wider display name limit.
 func (m mainModel) renderFoldersViewWide(availHeight, availWidth int) string {
 	var s strings.Builder
-	s.WriteString(headerStyle.Render("FOLDERS") + "\n\n")
 
 	if len(m.folders) == 0 {
 		s.WriteString(dimStyle.Render(" No folders"))
@@ -1737,7 +1745,7 @@ func (m mainModel) renderFoldersViewWide(availHeight, availWidth int) string {
 
 	start := 0
 	end := len(m.folders)
-	maxItems := availHeight - 2
+	maxItems := availHeight
 	if maxItems < 1 {
 		maxItems = 1
 	}
@@ -1782,7 +1790,6 @@ func (m mainModel) renderFoldersViewWide(availHeight, availWidth int) string {
 // renderMessagesViewWide is a variant of renderMessagesView that fits a wider column.
 func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 	var s strings.Builder
-	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
 
 	if len(m.virtualList) == 0 {
 		s.WriteString(dimStyle.Render(" No messages"))
@@ -1790,7 +1797,7 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 	}
 
 	// Each item takes 3 lines (header or member row)
-	maxItems := (availHeight - 2) / 3
+	maxItems := availHeight / 3
 	if maxItems < 1 {
 		maxItems = 1
 	}
@@ -1915,7 +1922,6 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 
 func (m mainModel) renderFoldersView(availHeight int) string {
 	var s strings.Builder
-	s.WriteString(headerStyle.Render("FOLDERS") + "\n\n")
 
 	if len(m.folders) == 0 {
 		s.WriteString(dimStyle.Render(" No folders"))
@@ -1926,7 +1932,7 @@ func (m mainModel) renderFoldersView(availHeight int) string {
 	start := 0
 	end := len(m.folders)
 	
-	maxItems := availHeight - 2
+	maxItems := availHeight
 	if maxItems < 1 {
 		maxItems = 1
 	}
@@ -1973,7 +1979,6 @@ func (m mainModel) renderFoldersView(availHeight int) string {
 
 func (m mainModel) renderMessagesView(availHeight int) string {
 	var s strings.Builder
-	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
 
 	if len(m.virtualList) == 0 {
 		s.WriteString(dimStyle.Render(" No messages"))
@@ -1981,7 +1986,7 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 	}
 
 	// Each item takes 3 lines
-	maxItems := (availHeight - 2) / 3
+	maxItems := availHeight / 3
 	if maxItems < 1 {
 		maxItems = 1
 	}
@@ -2091,7 +2096,6 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 
 func (m mainModel) renderDetailView() string {
 	var s strings.Builder
-	s.WriteString(headerStyle.Render("MESSAGE DETAIL") + "\n\n")
 
 	if m.detailMessage == nil {
 		s.WriteString(dimStyle.Render(" Select a message to view details"))
@@ -2403,4 +2407,71 @@ func wrapText(text string, width int) string {
 		lines[i] = strings.TrimRight(line, " ")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func applyPaneTitle(rendered string, title string, active bool) string {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		return rendered
+	}
+	// Get visual width of the first line (the top border)
+	width := lipgloss.Width(lines[0])
+	if width <= 0 {
+		return rendered
+	}
+	lines[0] = renderTopBorderWithTitle(width, title, active)
+	return strings.Join(lines, "\n")
+}
+
+func renderTopBorderWithTitle(width int, title string, active bool) string {
+	topLeft := "┌"
+	topRight := "┐"
+	horiz := "─"
+
+	borderColor := ColorOverlay
+	if active {
+		borderColor = ColorViolet
+	}
+	borderLipglossStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(borderColor))
+
+	var titleStyle lipgloss.Style
+	if active {
+		titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet))
+	} else {
+		titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+	}
+
+	titleLen := len(title)
+	if width < titleLen+6 {
+		if width < 6 {
+			if width > 0 {
+				return borderLipglossStyle.Render(topLeft + strings.Repeat(horiz, max(0, width-2)) + topRight)
+			}
+			return ""
+		}
+		allowedTitleLen := width - 6
+		if allowedTitleLen > 2 {
+			title = title[:allowedTitleLen-2] + ".."
+		} else {
+			title = ""
+		}
+		titleLen = len(title)
+	}
+
+	var leftPart, middleText, rightPart string
+	leftPart = borderLipglossStyle.Render(topLeft+horiz) + " "
+	if title != "" {
+		middleText = titleStyle.Render(title)
+	}
+	rightDashesCount := width - 3 - titleLen - 1 - 1 // 3 for leftPart, titleLen for middle, 1 for space, 1 for topRight
+	if title == "" {
+		rightDashesCount = width - 2 // just the corners and dashes
+		return borderLipglossStyle.Render(topLeft + strings.Repeat(horiz, rightDashesCount) + topRight)
+	}
+	if rightDashesCount < 1 {
+		rightDashesCount = 1
+	}
+	rightPart = " " + borderLipglossStyle.Render(strings.Repeat(horiz, rightDashesCount)+topRight)
+
+	return leftPart + middleText + rightPart
 }
