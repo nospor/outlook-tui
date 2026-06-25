@@ -2,6 +2,9 @@ package main
 
 import (
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func TestSortFolders(t *testing.T) {
@@ -80,6 +83,9 @@ func TestSortFolders_CaseInsensitiveAndFallback(t *testing.T) {
 }
 
 func TestFormatBodyContent(t *testing.T) {
+	// Force Lipgloss to output ANSI colors in headless test environments
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
 	tests := []struct {
 		input    string
 		expected string
@@ -99,6 +105,14 @@ func TestFormatBodyContent(t *testing.T) {
 		{
 			input:    "Some <STRONG style=\"font-weight:bold;\">bold</strong   > and <EM>italicized</EM> text with <u class='underline'>underline</u>.",
 			expected: "Some \x1b[1mbold\x1b[22m and \x1b[3mitalicized\x1b[23m text with \x1b[4munderline\x1b[24m.",
+		},
+		{
+			input:    "How does Ben specify that?\n\nFrom: Dana Glaser &lt;dana.glaser@adwanted.com&gt;\nSent: 24 June 2026 20:50\nTo: Robert Nodzewski\n\nHi All,\nI spoke to Ben",
+			expected: "How does Ben specify that?\n\n\x1b[38;2;166;173;200mFrom: Dana Glaser <dana.glaser@adwanted.com>\x1b[0m\n\x1b[38;2;166;173;200mSent: 24 June 2026 20:50\x1b[0m\n\x1b[38;2;166;173;200mTo: Robert Nodzewski\x1b[0m\n\n\x1b[38;2;166;173;200mHi All,\x1b[0m\n\x1b[38;2;166;173;200mI spoke to Ben\x1b[0m",
+		},
+		{
+			input:    "New line\n&gt; Quoted line\nAnother new line",
+			expected: "New line\n\x1b[38;2;166;173;200m> Quoted line\x1b[0m\nAnother new line",
 		},
 	}
 

@@ -2181,16 +2181,57 @@ func formatBodyContent(htmlContent string) string {
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
 	
-	// Clean up whitespace
+	// Clean up whitespace and apply dimming to original/quoted messages
 	lines := strings.Split(unescaped, "\n")
 	var cleaned []string
+	inOriginal := false
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
 		if trimmed != "" || (len(cleaned) > 0 && cleaned[len(cleaned)-1] != "") {
-			cleaned = append(cleaned, l)
+			plainLine := stripANSICodes(l)
+			if !inOriginal && isOriginalMessageStart(plainLine) {
+				inOriginal = true
+			}
+			
+			if l != "" && (inOriginal || strings.HasPrefix(strings.TrimSpace(plainLine), ">")) {
+				cleaned = append(cleaned, dimStyle.Render(l))
+			} else {
+				cleaned = append(cleaned, l)
+			}
 		}
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// isOriginalMessageStart returns true if the plain text line indicates the start of an original or forwarded email block.
+func isOriginalMessageStart(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	
+	// Check for common headers with colons
+	if strings.HasPrefix(lower, "from:") ||
+		strings.HasPrefix(lower, "von:") ||
+		strings.HasPrefix(lower, "de:") {
+		return true
+	}
+	
+	// Check for common email thread split markers
+	if strings.Contains(lower, "original message") ||
+		strings.Contains(lower, "forwarded message") {
+		return true
+	}
+	
+	// Check for line divider (typically used by Outlook web/desktop)
+	if strings.HasPrefix(trimmed, "________________________________") {
+		return true
+	}
+	
+	// Check for "On ... wrote:" pattern
+	if strings.HasPrefix(lower, "on ") && strings.HasSuffix(lower, "wrote:") {
+		return true
+	}
+	
+	return false
 }
 
 // stripANSICodes removes ANSI escape sequences from a string
