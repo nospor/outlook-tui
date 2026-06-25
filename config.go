@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -11,6 +12,7 @@ type Config struct {
 	TenantID       string `json:"tenant_id"`        // defaults to "common"
 	RefreshTimeMin int    `json:"refresh_time_min"` // defaults to 5
 	Layout         int    `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
+	UseSQLite      int    `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
 }
 
 func GetConfigDir() (string, error) {
@@ -37,6 +39,7 @@ func LoadConfig() (Config, error) {
 			TenantID:       "common",
 			RefreshTimeMin: 5,
 			Layout:         1,
+			UseSQLite:      0,
 		}, nil
 	}
 	
@@ -56,6 +59,10 @@ func LoadConfig() (Config, error) {
 
 	if cfg.Layout != 1 && cfg.Layout != 2 {
 		cfg.Layout = 1
+		_ = SaveConfig(cfg)
+	}
+
+	if !strings.Contains(string(data), "use_sqlite") {
 		_ = SaveConfig(cfg)
 	}
 

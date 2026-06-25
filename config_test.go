@@ -27,6 +27,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.RefreshTimeMin != 5 {
 		t.Errorf("expected default RefreshTimeMin to be 5, got %d", cfg.RefreshTimeMin)
 	}
+	if cfg.UseSQLite != 0 {
+		t.Errorf("expected default UseSQLite to be 0, got %d", cfg.UseSQLite)
+	}
 
 	// Case 2: Config file exists but is missing refresh_time_min
 	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
@@ -73,8 +76,13 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have RefreshTimeMin 5, got %d", savedCfg.RefreshTimeMin)
 	}
 
-	// Case 3: Config file exists and has custom non-zero refresh_time_min
+	if savedCfg.UseSQLite != 0 {
+		t.Errorf("expected saved config to have UseSQLite 0, got %d", savedCfg.UseSQLite)
+	}
+
+	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
+	cfg.UseSQLite = 1
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -87,5 +95,8 @@ func TestConfigDefaults(t *testing.T) {
 
 	if cfg.RefreshTimeMin != 10 {
 		t.Errorf("expected custom RefreshTimeMin to be 10, got %d", cfg.RefreshTimeMin)
+	}
+	if cfg.UseSQLite != 1 {
+		t.Errorf("expected custom UseSQLite to be 1, got %d", cfg.UseSQLite)
 	}
 }

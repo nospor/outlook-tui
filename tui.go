@@ -126,6 +126,9 @@ type mainModel struct {
 	// Notification tracking
 	inboxKnownIDs map[string]bool
 	userEmail     string
+
+	// SQLite cache (nil when use_sqlite == 0)
+	db *DB
 }
 
 func initialModel() mainModel {
@@ -426,6 +429,100 @@ func (m mainModel) activeMessage() *Message {
 	return &tg.Members[item.MemberIdx]
 }
 
+// loadCachedFolderMessages loads cached messages from SQLite for the currently
+// selected folder and updates the model's message list and thread groups.
+// It is a no-op when SQLite is disabled or no cache exists for the folder.
+// Returns the (possibly updated) model and the status message to display.
+func (m mainModel) loadCachedFolderMessages() (mainModel, string) {
+	if m.db == nil || len(m.folders) == 0 {
+		status := "Loading messages..."
+		if len(m.folders) > 0 {
+			status = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+		}
+		return m, status
+	}
+	folderID := m.folders[m.selectedFolder].ID
+	cached, err := m.db.GetMessages(folderID)
+	if err == nil && len(cached) > 0 {
+		m.messages = cached
+		m.buildThreadGroups()
+		return m, fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
+	}
+	return m, fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+}
+
+// loadMessageDetail loads the message detail (including body and attachments).
+// If the message body is already cached in the database or in memory, it renders it instantly.
+// If the message is unread, it still triggers fetchMessageDetailCmd to mark it as read.
+// Otherwise, it starts the network fetch.
+func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
+	if am == nil {
+		m.detailMessage = nil
+		m.attachments = nil
+		m.detailViewport.SetContent("")
+		return m, nil
+	}
+
+	// 1. Check if the body content is already loaded in the memory model
+	if am.Body.Content != "" {
+		m.detailMessage = am
+		m.attachments = nil
+		m = m.updateViewportSize()
+		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content), m.detailViewport.Width))
+		m.detailViewport.GotoTop()
+
+		if am.IsRead {
+			m.statusMsg = "Message details loaded"
+			return m, nil
+		}
+		// If unread, fetch from Graph to mark read
+		m.statusMsg = "Marking read..."
+		return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+	}
+
+	// 2. Check if the body content is cached in SQLite
+	if m.db != nil {
+		if cached, err := m.db.GetMessage(am.ID); err == nil && cached != nil && cached.Body.Content != "" {
+			m.detailMessage = cached
+			m.attachments = nil
+			m = m.updateViewportSize()
+			m.detailViewport.SetContent(wrapText(formatBodyContent(cached.Body.Content), m.detailViewport.Width))
+			m.detailViewport.GotoTop()
+
+			// Update in-memory collections so they have the loaded body too
+			for i, msg := range m.messages {
+				if msg.ID == am.ID {
+					m.messages[i].Body = cached.Body
+					break
+				}
+			}
+			for ti := range m.threadGroups {
+				for mi := range m.threadGroups[ti].Members {
+					if m.threadGroups[ti].Members[mi].ID == am.ID {
+						m.threadGroups[ti].Members[mi].Body = cached.Body
+						break
+					}
+				}
+			}
+
+			if cached.IsRead {
+				m.statusMsg = "Message details loaded (cached)"
+				return m, nil
+			}
+			// If unread, fetch from Graph to mark read
+			m.statusMsg = "Marking read..."
+			return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+		}
+	}
+
+	// 3. Fallback: Load from API
+	m.detailMessage = nil
+	m.attachments = nil
+	m.detailViewport.SetContent("")
+	m.statusMsg = "Loading message details..."
+	return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+}
+
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -500,6 +597,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		// Cache token
 		_ = SaveToken(TokenCache(msg))
+
+		// Open SQLite cache if enabled
+		if m.config.UseSQLite == 1 && m.db == nil {
+			if sqlDB, err := OpenDB(); err == nil {
+				m.db = sqlDB
+			} else {
+				m.statusMsg = fmt.Sprintf("SQLite warning: %v", err)
+			}
+		}
 		
 		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg))
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
@@ -518,7 +624,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activePane = paneFolders
 			m.selectedFolder = 0
 			if len(m.folders) > 0 {
-				m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
+				// Load from SQLite cache first for instant display
+				if m.db != nil {
+					if cached, err := m.db.GetMessages(m.folders[0].ID); err == nil && len(cached) > 0 {
+						m.messages = cached
+						m.buildThreadGroups()
+						m.statusMsg = fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
+					} else {
+						m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
+					}
+				} else {
+					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
+				}
 				return m, tea.Batch(
 					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
 					fetchInboxMessagesCmd(m.graphClient),
@@ -538,6 +655,27 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messagesFetchedMsg:
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
+		}
+		// Populate any cached bodies into the newly fetched message list to avoid losing them in memory
+		for i, newMsg := range msg.Messages {
+			// Check current in-memory messages
+			for _, oldMsg := range m.messages {
+				if oldMsg.ID == newMsg.ID && oldMsg.Body.Content != "" {
+					msg.Messages[i].Body = oldMsg.Body
+					break
+				}
+			}
+			// Fallback to SQLite check if still empty
+			if msg.Messages[i].Body.Content == "" && m.db != nil {
+				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
+					msg.Messages[i].Body = cached.Body
+				}
+			}
+		}
+
+		// Persist messages to SQLite cache (preserving bodies via ON CONFLICT DO UPDATE)
+		if m.db != nil {
+			_ = m.db.UpsertMessages(msg.FolderID, msg.Messages)
 		}
 		// Remember the currently active message ID so we can re-select it
 		currentID := ""
@@ -576,13 +714,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.virtualSelected < 0 {
 					m.virtualSelected = 0
 				}
-				m.detailMessage = nil
-				m.attachments = nil
-				m.detailViewport.SetContent("")
-				m.statusMsg = "Loading message details..."
-				if am := m.activeMessage(); am != nil {
-					return m, fetchMessageDetailCmd(m.graphClient, am.ID)
-				}
+				var cmd tea.Cmd
+				m, cmd = m.loadMessageDetail(m.activeMessage())
+				return m, cmd
 			} else {
 				m.virtualSelected = 0
 				m.detailMessage = nil
@@ -602,18 +736,25 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 			
-			// Mark as read in local UI — update in messages slice and thread groups
+			// Mark as read and cache body in local UI — update in messages slice and thread groups
 			for i, em := range m.messages {
 				if em.ID == msg.Message.ID {
 					m.messages[i].IsRead = true
+					m.messages[i].Body = msg.Message.Body
 				}
 			}
 			for ti := range m.threadGroups {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == msg.Message.ID {
 						m.threadGroups[ti].Members[mi].IsRead = true
+						m.threadGroups[ti].Members[mi].Body = msg.Message.Body
 					}
 				}
+			}
+			// Upsert message detail (body + read status) into cache
+			if m.db != nil && len(m.folders) > 0 {
+				_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *msg.Message)
+				_ = m.db.UpdateReadStatus(msg.Message.ID, true)
 			}
 			m.statusMsg = "Message details loaded"
 		}
@@ -655,6 +796,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mailDeletedMsg:
 		m.statusMsg = "Message moved to Deleted Items"
+		// Remove from SQLite cache
+		if m.db != nil {
+			_ = m.db.DeleteMessage(msg.MessageID)
+		}
 		// Reload messages
 		if len(m.folders) > 0 {
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
@@ -765,16 +910,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
-					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					m, m.statusMsg = m.loadCachedFolderMessages()
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
 				if m.virtualSelected > 0 {
 					m.virtualSelected--
-					m.detailMessage = nil
-					m.statusMsg = "Loading message details..."
-					if am := m.activeMessage(); am != nil {
-						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 				}
 			case paneDetail:
@@ -790,16 +935,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
-					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					m, m.statusMsg = m.loadCachedFolderMessages()
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
 				if m.virtualSelected > 0 {
 					m.virtualSelected--
-					m.detailMessage = nil
-					m.statusMsg = "Loading message details..."
-					if am := m.activeMessage(); am != nil {
-						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 				}
 			case paneDetail:
@@ -814,16 +959,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
-					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					m, m.statusMsg = m.loadCachedFolderMessages()
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
 				if m.virtualSelected < len(m.virtualList)-1 {
 					m.virtualSelected++
-					m.detailMessage = nil
-					m.statusMsg = "Loading message details..."
-					if am := m.activeMessage(); am != nil {
-						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 				}
 			case paneDetail:
@@ -839,16 +984,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
-					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					m, m.statusMsg = m.loadCachedFolderMessages()
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
 				if m.virtualSelected < len(m.virtualList)-1 {
 					m.virtualSelected++
-					m.detailMessage = nil
-					m.statusMsg = "Loading message details..."
-					if am := m.activeMessage(); am != nil {
-						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 				}
 			case paneDetail:

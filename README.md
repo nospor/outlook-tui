@@ -8,6 +8,7 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 - 🔑 **Device Code Flow Authentication**: Authenticate securely using Microsoft's standard OAuth2 device flow (no app credentials/passwords stored locally, only access/refresh tokens).
 - 🔄 **Automatic Token Refresh**: The client automatically handles token expiration and refreshes OAuth2 access tokens in the background.
 - 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages in the background (configurable interval, defaults to every 5 minutes).
+- 🗄️ **SQLite Message Cache** *(opt-in)*: When `use_sqlite` is set to `1`, messages are stored locally in `~/.cache/outlook-tui/db.db`. On next launch, cached messages display instantly while the API refreshes in the background. Deleting a message and marking it read are also reflected in the cache.
 - 🧵 **Conversation Threading**: Messages are automatically grouped into conversation threads by Microsoft's `conversationId`. Threads with multiple messages are collapsed by default (showing the most recent), and can be expanded/collapsed with `Space`. Expanded threads show each reply indented with a `└` tree connector, sender name, and date. A `▶`/`▼` indicator and reply-count badge `[N]` mark collapsible threads.
 - ✉️ **Send & Compose Mail**: Press `n` to open a full compose screen to draft and send new emails.
 - 🗑️ **Delete Messages**: Press `d` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook.
@@ -21,6 +22,7 @@ The project is structured as follows:
 * [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`).
 * [auth.go](auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers.
 * [graph.go](graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading.
+* [db.go](db.go) - Optional SQLite cache layer (`~/.cache/outlook-tui/db.db`): stores messages per folder for instant display on startup.
 * [tui.go](tui.go) - Contains the layout rendering, key bindings, and user interface updates.
 
 ---
@@ -88,14 +90,18 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `layout`: The UI layout mode (defaults to `1`).
   - **`1` (default) — Side-by-side**: Three panes arranged horizontally: `[Folders | Messages | Detail]`.
   - **`2` — Stacked left column**: Folders and Messages are stacked vertically on the left (~30% / ~70% height split), with the Detail pane occupying the wider right column.
+* `use_sqlite`: Enable the local SQLite message cache (defaults to `0` — disabled).
+  - **`0` (default)** — No local cache; messages are always fetched fresh from the Microsoft Graph API.
+  - **`1`** — Cache messages in `~/.cache/outlook-tui/db.db`. On subsequent launches, cached messages for the first folder are displayed immediately while a fresh fetch runs in the background. Switching folders also shows cached messages instantly. Deleting a message or opening it (marking read) updates the cache.
 
-Example `~/.config/outlook-tui/config.json` to use Layout 2:
+Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 ```json
 {
   "client_id": "your-azure-client-id",
   "tenant_id": "common",
   "refresh_time_min": 5,
-  "layout": 2
+  "layout": 2,
+  "use_sqlite": 1
 }
 ```
 
