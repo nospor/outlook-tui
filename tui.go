@@ -2627,7 +2627,12 @@ func replaceAnchorTags(htmlContent string) string {
 			return displayURL
 		}
 
-		return fmt.Sprintf("%s (%s)", text, displayURL)
+		// Append a trailing space so that text immediately following </a> (with no
+		// whitespace) cannot be absorbed into the URL by the greedy URL regex used
+		// in styleURLs / extractURLsFromMainMessage.  E.g. without the space,
+		// `<a href="…/SR-14">SR-14</a>Created` → `SR-14 (…/SR-14)Created` which
+		// makes the regex capture `…/SR-14)Created` as the URL.
+		return fmt.Sprintf("%s (%s) ", text, displayURL)
 	})
 }
 

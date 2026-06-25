@@ -128,7 +128,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    "<a href=\"https://github.com\">GitHub website</a>",
-			expected: "GitHub website (\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m)",
+			expected: "GitHub website (\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m) ",
 		},
 		{
 			input:    "<a href=\"https://github.com\">https://github.com</a>",
@@ -136,7 +136,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    "<a href=\"mailto:test@example.com\">Email Us</a>",
-			expected: "Email Us (test@example.com)",
+			expected: "Email Us (test@example.com) ",
 		},
 		{
 			input:    "> Please visit https://example.com/.",
