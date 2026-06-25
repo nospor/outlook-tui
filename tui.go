@@ -523,6 +523,32 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	return m, fetchMessageDetailCmd(m.graphClient, am.ID)
 }
 
+// selectFolder changes the currently selected folder to the given index,
+// loads cached messages for it, initiates a fetch for the latest messages,
+// and loads/clears message detail views appropriately.
+func (m mainModel) selectFolder(idx int) (mainModel, tea.Cmd) {
+	if idx < 0 || idx >= len(m.folders) {
+		return m, nil
+	}
+	m.selectedFolder = idx
+	m.virtualSelected = 0
+	m.detailMessage = nil
+	m.attachments = nil
+	m.detailViewport.SetContent("")
+
+	var detailCmd tea.Cmd
+	m, m.statusMsg = m.loadCachedFolderMessages()
+	if am := m.activeMessage(); am != nil {
+		m, detailCmd = m.loadMessageDetail(am)
+	}
+
+	fetchCmd := fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
+	if detailCmd != nil {
+		return m, tea.Batch(detailCmd, fetchCmd)
+	}
+	return m, fetchCmd
+}
+
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -625,22 +651,30 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedFolder = 0
 			if len(m.folders) > 0 {
 				// Load from SQLite cache first for instant display
+				var detailCmd tea.Cmd
 				if m.db != nil {
 					if cached, err := m.db.GetMessages(m.folders[0].ID); err == nil && len(cached) > 0 {
 						m.messages = cached
 						m.buildThreadGroups()
 						m.statusMsg = fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
+						if am := m.activeMessage(); am != nil {
+							m, detailCmd = m.loadMessageDetail(am)
+						}
 					} else {
 						m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
 					}
 				} else {
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
 				}
-				return m, tea.Batch(
+				cmds := []tea.Cmd{
 					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
 					fetchInboxMessagesCmd(m.graphClient),
 					m.tickCmd(),
-				)
+				}
+				if detailCmd != nil {
+					cmds = append(cmds, detailCmd)
+				}
+				return m, tea.Batch(cmds...)
 			}
 			m.statusMsg = "Ready"
 		} else {
@@ -706,7 +740,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if !preserved {
+		if !preserved || m.detailMessage == nil || m.detailMessage.ID != currentID {
 			if len(m.virtualList) > 0 {
 				if m.virtualSelected >= len(m.virtualList) {
 					m.virtualSelected = len(m.virtualList) - 1
@@ -905,13 +939,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder > 0 {
-					m.selectedFolder--
-					m.virtualSelected = 0
-					m.detailMessage = nil
-					m.attachments = nil
-					m.detailViewport.SetContent("")
-					m, m.statusMsg = m.loadCachedFolderMessages()
-					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+					var cmd tea.Cmd
+					m, cmd = m.selectFolder(m.selectedFolder - 1)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case paneMessages:
 				if m.virtualSelected > 0 {
@@ -930,13 +962,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder > 0 {
-					m.selectedFolder--
-					m.virtualSelected = 0
-					m.detailMessage = nil
-					m.attachments = nil
-					m.detailViewport.SetContent("")
-					m, m.statusMsg = m.loadCachedFolderMessages()
-					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+					var cmd tea.Cmd
+					m, cmd = m.selectFolder(m.selectedFolder - 1)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case paneMessages:
 				if m.virtualSelected > 0 {
@@ -954,13 +984,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
-					m.selectedFolder++
-					m.virtualSelected = 0
-					m.detailMessage = nil
-					m.attachments = nil
-					m.detailViewport.SetContent("")
-					m, m.statusMsg = m.loadCachedFolderMessages()
-					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+					var cmd tea.Cmd
+					m, cmd = m.selectFolder(m.selectedFolder + 1)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case paneMessages:
 				if m.virtualSelected < len(m.virtualList)-1 {
@@ -979,13 +1007,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.activePane {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
-					m.selectedFolder++
-					m.virtualSelected = 0
-					m.detailMessage = nil
-					m.attachments = nil
-					m.detailViewport.SetContent("")
-					m, m.statusMsg = m.loadCachedFolderMessages()
-					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+					var cmd tea.Cmd
+					m, cmd = m.selectFolder(m.selectedFolder + 1)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			case paneMessages:
 				if m.virtualSelected < len(m.virtualList)-1 {
