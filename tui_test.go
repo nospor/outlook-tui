@@ -114,6 +114,30 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "New line\n&gt; Quoted line\nAnother new line",
 			expected: "New line\n\x1b[38;2;166;173;200m> Quoted line\x1b[0m\nAnother new line",
 		},
+		{
+			input:    "Visit https://example.com/foo for more info.",
+			expected: "Visit \x1b[38;2;137;180;250;4mhttps://example.com/foo\x1b[24;39m for more info.",
+		},
+		{
+			input:    "Check (https://google.com) or go to http://yahoo.com.",
+			expected: "Check (\x1b[38;2;137;180;250;4mhttps://google.com\x1b[24;39m) or go to \x1b[38;2;137;180;250;4mhttp://yahoo.com\x1b[24;39m.",
+		},
+		{
+			input:    "<a href=\"https://github.com\">GitHub website</a>",
+			expected: "GitHub website (\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m)",
+		},
+		{
+			input:    "<a href=\"https://github.com\">https://github.com</a>",
+			expected: "\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m",
+		},
+		{
+			input:    "<a href=\"mailto:test@example.com\">Email Us</a>",
+			expected: "Email Us (test@example.com)",
+		},
+		{
+			input:    "> Please visit https://example.com/.",
+			expected: "\x1b[38;2;166;173;200m> Please visit \x1b[38;2;137;180;250;4mhttps://example.com/\x1b[24;38;2;166;173;200m.\x1b[0m",
+		},
 	}
 
 	for _, tt := range tests {

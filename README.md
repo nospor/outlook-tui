@@ -5,6 +5,7 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 ## Features
 
 - 📂 **Multi-Pane Layout**: Standard desktop/web email layout split into folders, message lists, and message detail views. Quoted original/forwarded messages and inline quotes are automatically detected and grayed out (dimmed) in the detail pane to separate new content from conversation history.
+- 🔗 **URL & Link Highlighting**: Automatically parses HTML links (converting them to `Text (URL)`) and styles all URLs in the message details view in a distinct cyan/blue with an underline to make them easily recognizable.
 - 🔑 **Device Code Flow Authentication**: Authenticate securely using Microsoft's standard OAuth2 device flow (no app credentials/passwords stored locally, only access/refresh tokens).
 - 🔄 **Automatic Token Refresh**: The client automatically handles token expiration and refreshes OAuth2 access tokens in the background.
 - 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages in the background (configurable interval, defaults to every 5 minutes).

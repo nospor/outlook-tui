@@ -2140,7 +2140,8 @@ func (m mainModel) renderMetaBlock(width int) string {
 
 // formatBodyContent strips/cleans up HTML email bodies to readable plain text
 func formatBodyContent(htmlContent string) string {
-	res := htmlContent
+	// First, replace <a> tags so that URLs are preserved before tag stripping
+	res := replaceAnchorTags(htmlContent)
 
 	// Convert formatting tags to ANSI escape sequences before stripping HTML tags
 	res = regexp.MustCompile(`(?i)<(b|strong)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[1m")
@@ -2169,8 +2170,10 @@ func formatBodyContent(htmlContent string) string {
 			continue
 		}
 		if r == '>' {
-			inTag = false
-			continue
+			if inTag {
+				inTag = false
+				continue
+			}
 		}
 		if !inTag {
 			builder.WriteRune(r)
@@ -2181,16 +2184,147 @@ func formatBodyContent(htmlContent string) string {
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
 	
-	// Clean up whitespace
+	// Clean up whitespace and apply dimming/URL styling to lines
 	lines := strings.Split(unescaped, "\n")
 	var cleaned []string
+	inOriginal := false
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
 		if trimmed != "" || (len(cleaned) > 0 && cleaned[len(cleaned)-1] != "") {
-			cleaned = append(cleaned, l)
+			plainLine := stripANSICodes(l)
+			if !inOriginal && isOriginalMessageStart(plainLine) {
+				inOriginal = true
+			}
+			
+			isDimmed := l != "" && (inOriginal || strings.HasPrefix(strings.TrimSpace(plainLine), ">"))
+			
+			// Apply URL styling
+			lineWithURLs := styleURLs(l, isDimmed)
+			
+			if isDimmed {
+				cleaned = append(cleaned, dimStyle.Render(lineWithURLs))
+			} else {
+				cleaned = append(cleaned, lineWithURLs)
+			}
 		}
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// replaceAnchorTags finds <a> tags with hrefs and replaces them in-place with:
+// - "text (url)" if text and url are substantially different.
+// - "url" if they are the same or if text is empty.
+func replaceAnchorTags(htmlContent string) string {
+	anchorRx := regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)</a>`)
+	return anchorRx.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		submatches := anchorRx.FindStringSubmatch(match)
+		if len(submatches) < 3 {
+			return match
+		}
+		url := strings.TrimSpace(submatches[1])
+		text := strings.TrimSpace(submatches[2])
+
+		// Handle empty or self-referential links
+		if url == "" {
+			return text
+		}
+		if text == "" {
+			return url
+		}
+
+		// Strip mailto: or tel: prefixes for clean display
+		displayURL := url
+		if strings.HasPrefix(strings.ToLower(displayURL), "mailto:") {
+			displayURL = displayURL[7:]
+		} else if strings.HasPrefix(strings.ToLower(displayURL), "tel:") {
+			displayURL = displayURL[4:]
+		}
+
+		// Compare cleaned versions to avoid redundancy (e.g. <a href="http://google.com">google.com</a>)
+		cleanText := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(text), "https://"), "http://"), "/")
+		cleanURL := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(displayURL), "https://"), "http://"), "/")
+
+		if cleanText == cleanURL {
+			return displayURL
+		}
+
+		return fmt.Sprintf("%s (%s)", text, displayURL)
+	})
+}
+
+// styleURLs finds URLs in a string and colors them in Cyan/Blue with underline.
+// It restores the correct style at the end of each URL depending on whether the line is dimmed.
+func styleURLs(line string, isDimmed bool) string {
+	urlRx := regexp.MustCompile(`https?://[^\s<>"\x1b]+`)
+	
+	// Start code: Cyan foreground (#89B4FA) and Underline (4)
+	startCode := "\x1b[38;2;137;180;250;4m"
+	
+	// End code: Turn off underline (24), and restore correct color
+	var endCode string
+	if isDimmed {
+		// Restore subtext/dim color (#A6ADC8)
+		endCode = "\x1b[24;38;2;166;173;200m"
+	} else {
+		// Revert to default foreground
+		endCode = "\x1b[24;39m"
+	}
+
+	return urlRx.ReplaceAllStringFunc(line, func(match string) string {
+		trimmed := match
+		var trailing string
+		for len(trimmed) > 0 {
+			last := trimmed[len(trimmed)-1]
+			if last == '.' || last == ',' || last == ')' || last == ']' || last == '}' || last == '!' || last == '?' || last == ':' || last == ';' {
+				// Special check: if it's a closing parenthesis, only trim it if there is no matching opening parenthesis in the URL.
+				if last == ')' && strings.Count(trimmed, "(") > strings.Count(trimmed, ")")-1 {
+					break
+				}
+				if last == ']' && strings.Count(trimmed, "[") > strings.Count(trimmed, "]")-1 {
+					break
+				}
+				if last == '}' && strings.Count(trimmed, "{") > strings.Count(trimmed, "}")-1 {
+					break
+				}
+				trailing = string(last) + trailing
+				trimmed = trimmed[:len(trimmed)-1]
+			} else {
+				break
+			}
+		}
+		return startCode + trimmed + endCode + trailing
+	})
+}
+
+// isOriginalMessageStart returns true if the plain text line indicates the start of an original or forwarded email block.
+func isOriginalMessageStart(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	
+	// Check for common headers with colons
+	if strings.HasPrefix(lower, "from:") ||
+		strings.HasPrefix(lower, "von:") ||
+		strings.HasPrefix(lower, "de:") {
+		return true
+	}
+	
+	// Check for common email thread split markers
+	if strings.Contains(lower, "original message") ||
+		strings.Contains(lower, "forwarded message") {
+		return true
+	}
+	
+	// Check for line divider (typically used by Outlook web/desktop)
+	if strings.HasPrefix(trimmed, "________________________________") {
+		return true
+	}
+	
+	// Check for "On ... wrote:" pattern
+	if strings.HasPrefix(lower, "on ") && strings.HasSuffix(lower, "wrote:") {
+		return true
+	}
+	
+	return false
 }
 
 // stripANSICodes removes ANSI escape sequences from a string
