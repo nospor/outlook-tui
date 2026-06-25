@@ -118,10 +118,13 @@ type mainModel struct {
 	spinner        spinner.Model
 
 	// Compose state
-	composeTo       textinput.Model
-	composeSubject  textinput.Model
-	composeBody     textarea.Model
-	composeStep     int // 0 = To, 1 = Subject, 2 = Body
+	composeTo        textinput.Model
+	composeSubject   textinput.Model
+	composeBody      textarea.Model
+	composeStep      int // 0 = To, 1 = Subject, 2 = Body
+	contacts         []Contact
+	filteredContacts []Contact
+	contactsSelected int
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -1085,6 +1088,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Compose new email
 			m.state = stateCompose
 			m.composeStep = 0
+			m.loadContacts()
 			
 			m.composeTo = textinput.New()
 			m.composeTo.Placeholder = "recipient@domain.com"
@@ -1150,6 +1154,39 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
+			switch key.String() {
+			case "down":
+				m.contactsSelected = (m.contactsSelected + 1) % len(m.filteredContacts)
+				return m, nil
+			case "up":
+				m.contactsSelected = (m.contactsSelected - 1 + len(m.filteredContacts)) % len(m.filteredContacts)
+				return m, nil
+			case "enter":
+				selected := m.filteredContacts[m.contactsSelected]
+				parts := strings.Split(m.composeTo.Value(), ",")
+				if len(parts) > 0 {
+					var newAddress string
+					if selected.Name != "" {
+						newAddress = fmt.Sprintf("%s <%s>", selected.Name, selected.Address)
+					} else {
+						newAddress = selected.Address
+					}
+					parts[len(parts)-1] = " " + newAddress
+					newValue := strings.TrimLeft(strings.Join(parts, ","), " ")
+					m.composeTo.SetValue(newValue + ", ")
+					m.composeTo.SetCursor(len(m.composeTo.Value()))
+				}
+				m.filteredContacts = nil
+				m.contactsSelected = 0
+				return m, nil
+			case "esc":
+				m.filteredContacts = nil
+				m.contactsSelected = 0
+				return m, nil
+			}
+		}
+
 		switch key.String() {
 		case "esc":
 			m.state = stateMain
@@ -1175,6 +1212,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.composeStep {
 			case 0:
 				m.composeTo, cmd = m.composeTo.Update(msg)
+				m.updateFilteredContacts()
 			case 1:
 				m.composeSubject, cmd = m.composeSubject.Update(msg)
 			case 2:
@@ -1251,6 +1289,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 
 	m.state = stateCompose
 	m.composeStep = 2 // Focus body field
+	m.loadContacts()
 	
 	m.composeTo = textinput.New()
 	m.composeTo.Placeholder = "recipient@domain.com"
@@ -1377,6 +1416,58 @@ func (m *mainModel) updateComposeFocus() {
 		m.composeBody.Focus()
 	}
 }
+
+func (m *mainModel) loadContacts() {
+	m.contacts = nil
+	m.filteredContacts = nil
+	m.contactsSelected = 0
+	if m.config.UseSQLite != 0 && m.db != nil {
+		if contacts, err := m.db.GetContacts(); err == nil {
+			m.contacts = contacts
+		}
+	}
+}
+
+func (m *mainModel) updateFilteredContacts() {
+	if m.config.UseSQLite == 0 || len(m.contacts) == 0 {
+		m.filteredContacts = nil
+		m.contactsSelected = 0
+		return
+	}
+
+	val := m.composeTo.Value()
+	parts := strings.Split(val, ",")
+	if len(parts) == 0 {
+		m.filteredContacts = nil
+		m.contactsSelected = 0
+		return
+	}
+	query := strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
+
+	// Don't show dropdown for empty query
+	if query == "" {
+		m.filteredContacts = nil
+		m.contactsSelected = 0
+		return
+	}
+
+	var filtered []Contact
+	for _, c := range m.contacts {
+		if strings.Contains(strings.ToLower(c.Name), query) || strings.Contains(strings.ToLower(c.Address), query) {
+			filtered = append(filtered, c)
+		}
+	}
+	m.filteredContacts = filtered
+
+	// Clamp selected index
+	if m.contactsSelected >= len(m.filteredContacts) {
+		m.contactsSelected = 0
+	}
+	if m.contactsSelected < 0 {
+		m.contactsSelected = 0
+	}
+}
+
 
 func (m mainModel) updateViewportSize() mainModel {
 	if m.config.Layout == 2 {
@@ -1568,7 +1659,19 @@ func (m mainModel) View() string {
 			bodyBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		}
 
-		s.WriteString("   To:\n   " + toBorder.Render(m.composeTo.View()) + "\n\n")
+		s.WriteString("   To:\n   " + toBorder.Render(m.composeTo.View()) + "\n")
+		if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
+			popupContent := m.renderContactsPopup()
+			lines := strings.Split(popupContent, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					s.WriteString("   " + line + "\n")
+				}
+			}
+			s.WriteString("\n")
+		} else {
+			s.WriteString("\n")
+		}
 		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
 		s.WriteString("   Body:\n   " + bodyBorder.Render(m.composeBody.View()) + "\n\n")
 		
@@ -1622,6 +1725,75 @@ func (m mainModel) View() string {
 		return strings.Join(lines, "\n")
 	}
 	return s.String()
+}
+
+func (m mainModel) renderContactsPopup() string {
+	if len(m.filteredContacts) == 0 {
+		return ""
+	}
+
+	var rows []string
+	
+	// Display up to 5 matching contacts
+	maxContacts := 5
+	if len(m.filteredContacts) < maxContacts {
+		maxContacts = len(m.filteredContacts)
+	}
+
+	for i := 0; i < maxContacts; i++ {
+		contact := m.filteredContacts[i]
+		
+		var line string
+		if contact.Name != "" {
+			line = fmt.Sprintf(" %s <%s>", contact.Name, contact.Address)
+		} else {
+			line = fmt.Sprintf(" %s", contact.Address)
+		}
+
+		// pad the line to align with popup width
+		width := m.width - 26
+		if width < 40 {
+			width = 40
+		}
+		if len(line) < width {
+			line = line + strings.Repeat(" ", width-len(line))
+		} else if len(line) > width {
+			line = line[:width-3] + "..."
+		}
+
+		if i == m.contactsSelected {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorCyan)).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	if len(m.filteredContacts) > maxContacts {
+		moreText := fmt.Sprintf(" ... and %d more ...", len(m.filteredContacts)-maxContacts)
+		width := m.width - 26
+		if width < 40 {
+			width = 40
+		}
+		if len(moreText) < width {
+			moreText = moreText + strings.Repeat(" ", width-len(moreText))
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(moreText))
+	}
+
+	joined := strings.Join(rows, "\n")
+	
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorCyan)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
 }
 
 // renderLayout1 renders the default side-by-side three-pane layout:

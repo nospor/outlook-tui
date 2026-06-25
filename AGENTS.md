@@ -18,12 +18,13 @@ Welcome! This workspace contains **Outlook TUI**, a gorgeous, responsive, and fu
 - [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`), including Client ID, Tenant ID, refresh interval, and layout selection.
 - [auth.go](auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers (background token refresh).
 - [graph.go](graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading.
-- [db.go](db.go) - Optional SQLite caching Layer (`~/.cache/outlook-tui/db.db`). When enabled, caches downloaded messages per folder, provides offline/startup loading, handles database queries/transactions, updates read status locally, and processes message deletions.
+- [db.go](db.go) - Optional SQLite caching Layer (`~/.cache/outlook-tui/db.db`). When enabled, caches downloaded messages per folder, provides offline/startup loading, handles database queries/transactions, updates read status locally, processes message deletions, and queries unique cached contacts/recipients for autocomplete.
 - [tui.go](tui.go) - Contains layout rendering, multi-pane UI focus, navigation key bindings, and user interface updates.
   - **Layout 1** (default): Three panes side-by-side — `[Folders | Messages | Detail]`. Rendered via `renderLayout1()`.
   - **Layout 2**: Left column stacks Folders (~30% height) above Messages (~70% height); right column holds the Detail pane. Rendered via `renderLayout2()`, `renderFoldersViewWide()`, `renderMessagesViewWide()`.
   - Viewport sizing is split into `updateViewportSizeLayout1()` and `updateViewportSizeLayout2()`, dispatched by `updateViewportSize()` based on `config.Layout`.
   - **Thread Grouping**: Messages are grouped into `ThreadGroup` structs by `conversationId`. The Messages pane navigates a flat virtual list (`[]MessageListItem`) built by `buildVirtualList()`. Each item references a thread-group index and either a header row (`MemberIdx == -1`) or a specific reply (`MemberIdx >= 0`). Multi-message threads default to collapsed; `Space` toggles collapse state. Navigation uses `m.virtualSelected` (index into `m.virtualList`) instead of the old `m.selectedMessage`. The helper `activeMessage()` returns the `*Message` currently indicated by `virtualSelected`.
+  - **Contact Suggestions**: Suggests unique contacts below the 'To' field input when SQLite is enabled, filtering suggestions in real-time as the user types. Key intercepts (Up/Down, Enter to select, Esc to close suggestions) are active when the suggestion dropdown is visible.
 - [notification.go](notification.go) - Triggers OS desktop notifications using `notify-send` for new messages.
 
 ---

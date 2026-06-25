@@ -309,9 +309,63 @@ func (d *DB) UpdateReadStatus(messageID string, isRead bool) error {
 	return err
 }
 
+// Contact represents a name and email address pair.
+type Contact struct {
+	Name    string
+	Address string
+}
+
+// GetContacts retrieves all unique contacts from the messages table.
+func (d *DB) GetContacts() ([]Contact, error) {
+	// Try full query with JSON extraction
+	rows, err := d.db.Query(`
+		SELECT DISTINCT name, address FROM (
+			SELECT from_name AS name, from_address AS address FROM messages WHERE from_address != '' AND from_address IS NOT NULL
+			UNION
+			SELECT json_extract(value, '$.emailAddress.name') AS name, json_extract(value, '$.emailAddress.address') AS address 
+			FROM messages, json_each(to_recipients)
+			UNION
+			SELECT json_extract(value, '$.emailAddress.name') AS name, json_extract(value, '$.emailAddress.address') AS address 
+			FROM messages, json_each(cc_recipients)
+		) WHERE address != '' AND address IS NOT NULL
+		ORDER BY name ASC, address ASC
+	`)
+	if err != nil {
+		// Fallback to simple from_name/from_address query if JSON1 extension is missing/errors
+		rows, err = d.db.Query(`
+			SELECT DISTINCT from_name AS name, from_address AS address 
+			FROM messages 
+			WHERE from_address != '' AND from_address IS NOT NULL
+			ORDER BY name ASC, address ASC
+		`)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer rows.Close()
+
+	var contacts []Contact
+	for rows.Next() {
+		var c Contact
+		var name, address sql.NullString
+		if err := rows.Scan(&name, &address); err != nil {
+			return nil, err
+		}
+		if address.Valid && address.String != "" {
+			c.Address = address.String
+			if name.Valid {
+				c.Name = name.String
+			}
+			contacts = append(contacts, c)
+		}
+	}
+	return contacts, rows.Err()
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
 }
+

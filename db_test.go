@@ -180,3 +180,73 @@ func TestDBUpsertMessagesTransaction(t *testing.T) {
 		t.Errorf("expected msg-2 to remain, got %s", retrieved[0].ID)
 	}
 }
+
+func TestDBGetContacts(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	msg := Message{
+		ID:               "msg-1",
+		ReceivedDateTime: time.Now(),
+		From: Recipient{
+			EmailAddress: EmailAddress{
+				Name:    "Alice Smith",
+				Address: "alice@example.com",
+			},
+		},
+		ToRecipients: []Recipient{
+			{
+				EmailAddress: EmailAddress{
+					Name:    "Bob Jones",
+					Address: "bob@example.com",
+				},
+			},
+		},
+		CcRecipients: []Recipient{
+			{
+				EmailAddress: EmailAddress{
+					Name:    "Charlie Brown",
+					Address: "charlie@example.com",
+				},
+			},
+		},
+	}
+
+	err = db.UpsertMessage("inbox", msg)
+	if err != nil {
+		t.Fatalf("failed to upsert message: %v", err)
+	}
+
+	contacts, err := db.GetContacts()
+	if err != nil {
+		t.Fatalf("failed to get contacts: %v", err)
+	}
+
+	// We expect 3 contacts: Alice, Bob, Charlie
+	if len(contacts) != 3 {
+		t.Fatalf("expected 3 contacts, got %d", len(contacts))
+	}
+
+	// Order by name ASC: Alice Smith, Bob Jones, Charlie Brown
+	expected := []struct {
+		Name string
+		Addr string
+	}{
+		{"Alice Smith", "alice@example.com"},
+		{"Bob Jones", "bob@example.com"},
+		{"Charlie Brown", "charlie@example.com"},
+	}
+
+	for i, exp := range expected {
+		if contacts[i].Name != exp.Name || contacts[i].Address != exp.Addr {
+			t.Errorf("expected contacts[%d] to be %s <%s>, got %s <%s>", i, exp.Name, exp.Addr, contacts[i].Name, contacts[i].Address)
+		}
+	}
+}
+
