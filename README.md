@@ -8,6 +8,7 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 - 🔑 **Device Code Flow Authentication**: Authenticate securely using Microsoft's standard OAuth2 device flow (no app credentials/passwords stored locally, only access/refresh tokens).
 - 🔄 **Automatic Token Refresh**: The client automatically handles token expiration and refreshes OAuth2 access tokens in the background.
 - 📥 **Background Fetching**: Syncs mail folders and automatically fetches new messages in the background (configurable interval, defaults to every 5 minutes).
+- 🧵 **Conversation Threading**: Messages are automatically grouped into conversation threads by Microsoft's `conversationId`. Threads with multiple messages are collapsed by default (showing the most recent), and can be expanded/collapsed with `Space`. Expanded threads show each reply indented with a `└` tree connector, sender name, and date. A `▶`/`▼` indicator and reply-count badge `[N]` mark collapsible threads.
 - ✉️ **Send & Compose Mail**: Press `n` to open a full compose screen to draft and send new emails.
 - 🗑️ **Delete Messages**: Press `d` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook.
 - 📎 **Attachments Support**: Press `a` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`.
@@ -107,6 +108,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2:
 | `Tab` | Switch focus between the Folders, Messages, and Message Detail panes |
 | `Shift+Tab` | Switch focus in reverse order |
 | `Up` / `Down` (or `k` / `j`) | Navigate selection in the focused pane |
+| `Space` | Toggle expand/collapse for the selected conversation thread in the Messages pane |
 | `PageUp` / `PageDown` | Scroll message body up/down |
 | `n` | Compose a new email |
 | `A` | Reply / Answer to the currently selected message (pre-fills sender, subject with Re:, quotes body, and focuses body field at the beginning) |

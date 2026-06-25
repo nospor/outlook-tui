@@ -39,6 +39,23 @@ const (
 	stateReplyConfirm
 )
 
+// ThreadGroup holds a conversation thread: the most-recent message is the
+// "header" shown when the group is collapsed. All messages in the thread
+// (including the header) are in Members, ordered newest-first.
+type ThreadGroup struct {
+	ConversationID string
+	Subject        string // normalised (Re:/Fwd: stripped)
+	Members        []Message
+}
+
+// MessageListItem is one entry in the virtual message list used for keyboard
+// navigation. It is either a thread-group header or an individual reply.
+type MessageListItem struct {
+	ThreadIdx  int  // index into m.threadGroups
+	MemberIdx  int  // -1 = header row; >=0 = member inside the thread
+	IsHeader   bool
+}
+
 // Messages
 type (
 	errMsg                error
@@ -89,6 +106,12 @@ type mainModel struct {
 	detailMessage   *Message
 	attachments     []Attachment
 	selectedAttach  int
+
+	// Thread grouping
+	threadGroups    []ThreadGroup
+	collapsedThreads map[string]bool // keyed by ConversationID; true = collapsed
+	virtualList     []MessageListItem // flat navigable list
+	virtualSelected int               // index into virtualList
 
 	// Sub-components
 	detailViewport viewport.Model
@@ -307,6 +330,102 @@ func (m mainModel) tickCmd() tea.Cmd {
 	})
 }
 
+// normaliseSubject strips common reply/forward prefixes for grouping.
+func normaliseSubject(s string) string {
+	for {
+		lower := strings.ToLower(strings.TrimSpace(s))
+		if strings.HasPrefix(lower, "re:") {
+			s = strings.TrimSpace(s[3:])
+		} else if strings.HasPrefix(lower, "fwd:") {
+			s = strings.TrimSpace(s[4:])
+		} else if strings.HasPrefix(lower, "fw:") {
+			s = strings.TrimSpace(s[3:])
+		} else {
+			break
+		}
+	}
+	return s
+}
+
+// buildThreadGroups groups m.messages into conversation threads.
+// Groups with a single message stay as solo threads (no collapse UI).
+// Groups with 2+ messages are collapsed by default (unless already tracked).
+func (m *mainModel) buildThreadGroups() {
+	if m.collapsedThreads == nil {
+		m.collapsedThreads = make(map[string]bool)
+	}
+
+	// Use an ordered slice to preserve newest-first ordering of threads.
+	order := []string{}
+	byConv := map[string][]Message{}
+
+	for _, msg := range m.messages {
+		cid := msg.ConversationID
+		if cid == "" {
+			// Fall back: treat each message as its own thread
+			cid = msg.ID
+		}
+		if _, seen := byConv[cid]; !seen {
+			order = append(order, cid)
+		}
+		byConv[cid] = append(byConv[cid], msg)
+	}
+
+	groups := make([]ThreadGroup, 0, len(order))
+	for _, cid := range order {
+		members := byConv[cid]
+		subj := normaliseSubject(members[0].Subject)
+		groups = append(groups, ThreadGroup{
+			ConversationID: cid,
+			Subject:        subj,
+			Members:        members,
+		})
+		// Collapse multi-message threads by default (only on first encounter)
+		if len(members) > 1 {
+			if _, known := m.collapsedThreads[cid]; !known {
+				m.collapsedThreads[cid] = true
+			}
+		}
+	}
+	m.threadGroups = groups
+	m.buildVirtualList()
+}
+
+// buildVirtualList rebuilds the flat navigation list from threadGroups and
+// collapsed state. Must be called after buildThreadGroups and whenever
+// collapsed state changes.
+func (m *mainModel) buildVirtualList() {
+	var items []MessageListItem
+	for ti, tg := range m.threadGroups {
+		collapsed := m.collapsedThreads[tg.ConversationID]
+		if len(tg.Members) == 1 || collapsed {
+			// Show only the header (most recent message)
+			items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: -1, IsHeader: true})
+		} else {
+			// Header row first, then all members
+			items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: -1, IsHeader: true})
+			for mi := range tg.Members {
+				items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: mi, IsHeader: false})
+			}
+		}
+	}
+	m.virtualList = items
+}
+
+// activeMessage returns the Message currently indicated by virtualSelected,
+// or nil if list is empty.
+func (m mainModel) activeMessage() *Message {
+	if len(m.virtualList) == 0 || m.virtualSelected >= len(m.virtualList) {
+		return nil
+	}
+	item := m.virtualList[m.virtualSelected]
+	tg := m.threadGroups[item.ThreadIdx]
+	if item.IsHeader || item.MemberIdx < 0 {
+		return &tg.Members[0]
+	}
+	return &tg.Members[item.MemberIdx]
+}
+
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -420,40 +539,52 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
 		}
-		// Preserve the currently selected message if it still exists in the new list
+		// Remember the currently active message ID so we can re-select it
 		currentID := ""
-		if m.selectedMessage < len(m.messages) {
-			currentID = m.messages[m.selectedMessage].ID
+		if am := m.activeMessage(); am != nil {
+			currentID = am.ID
 		}
 		m.messages = msg.Messages
 		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
 
+		// Rebuild thread groups (preserve collapsed state map)
+		m.buildThreadGroups()
+
+		// Try to re-select the same message
 		preserved := false
 		if currentID != "" {
-			for i, em := range m.messages {
-				if em.ID == currentID {
-					m.selectedMessage = i
+			for vi, item := range m.virtualList {
+				tg := m.threadGroups[item.ThreadIdx]
+				var candidate Message
+				if item.IsHeader || item.MemberIdx < 0 {
+					candidate = tg.Members[0]
+				} else {
+					candidate = tg.Members[item.MemberIdx]
+				}
+				if candidate.ID == currentID {
+					m.virtualSelected = vi
 					preserved = true
 					break
 				}
 			}
 		}
 		if !preserved {
-			// Previously selected message gone — try to keep the same index (clamped to the new list)
-			if len(m.messages) > 0 {
-				if m.selectedMessage >= len(m.messages) {
-					m.selectedMessage = len(m.messages) - 1
+			if len(m.virtualList) > 0 {
+				if m.virtualSelected >= len(m.virtualList) {
+					m.virtualSelected = len(m.virtualList) - 1
 				}
-				if m.selectedMessage < 0 {
-					m.selectedMessage = 0
+				if m.virtualSelected < 0 {
+					m.virtualSelected = 0
 				}
 				m.detailMessage = nil
 				m.attachments = nil
 				m.detailViewport.SetContent("")
 				m.statusMsg = "Loading message details..."
-				return m, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID)
+				if am := m.activeMessage(); am != nil {
+					return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+				}
 			} else {
-				m.selectedMessage = 0
+				m.virtualSelected = 0
 				m.detailMessage = nil
 				m.attachments = nil
 				m.detailViewport.SetContent("")
@@ -462,7 +593,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case messageDetailFetchedMsg:
 		// Make sure it matches selected message
-		if len(m.messages) > 0 && m.messages[m.selectedMessage].ID == msg.Message.ID {
+		if am := m.activeMessage(); am != nil && am.ID == msg.Message.ID {
 			m.detailMessage = msg.Message
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
@@ -471,8 +602,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 			
-			// Mark as read in local UI
-			m.messages[m.selectedMessage].IsRead = true
+			// Mark as read in local UI — update in messages slice and thread groups
+			for i, em := range m.messages {
+				if em.ID == msg.Message.ID {
+					m.messages[i].IsRead = true
+				}
+			}
+			for ti := range m.threadGroups {
+				for mi := range m.threadGroups[ti].Members {
+					if m.threadGroups[ti].Members[mi].ID == msg.Message.ID {
+						m.threadGroups[ti].Members[mi].IsRead = true
+					}
+				}
+			}
 			m.statusMsg = "Message details loaded"
 		}
 
@@ -619,7 +761,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder > 0 {
 					m.selectedFolder--
-					m.selectedMessage = 0
+					m.virtualSelected = 0
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
@@ -627,11 +769,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
-				if m.selectedMessage > 0 {
-					m.selectedMessage--
+				if m.virtualSelected > 0 {
+					m.virtualSelected--
 					m.detailMessage = nil
 					m.statusMsg = "Loading message details..."
-					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+					if am := m.activeMessage(); am != nil {
+						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					}
 				}
 			case paneDetail:
 				m.detailViewport.LineUp(1)
@@ -642,7 +786,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder > 0 {
 					m.selectedFolder--
-					m.selectedMessage = 0
+					m.virtualSelected = 0
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
@@ -650,11 +794,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
-				if m.selectedMessage > 0 {
-					m.selectedMessage--
+				if m.virtualSelected > 0 {
+					m.virtualSelected--
 					m.detailMessage = nil
 					m.statusMsg = "Loading message details..."
-					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+					if am := m.activeMessage(); am != nil {
+						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					}
 				}
 			case paneDetail:
 				m.detailViewport.LineUp(1)
@@ -664,7 +810,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
 					m.selectedFolder++
-					m.selectedMessage = 0
+					m.virtualSelected = 0
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
@@ -672,11 +818,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
-				if m.selectedMessage < len(m.messages)-1 {
-					m.selectedMessage++
+				if m.virtualSelected < len(m.virtualList)-1 {
+					m.virtualSelected++
 					m.detailMessage = nil
 					m.statusMsg = "Loading message details..."
-					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+					if am := m.activeMessage(); am != nil {
+						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					}
 				}
 			case paneDetail:
 				m.detailViewport.LineDown(1)
@@ -687,7 +835,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneFolders:
 				if m.selectedFolder < len(m.folders)-1 {
 					m.selectedFolder++
-					m.selectedMessage = 0
+					m.virtualSelected = 0
 					m.detailMessage = nil
 					m.attachments = nil
 					m.detailViewport.SetContent("")
@@ -695,11 +843,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
 				}
 			case paneMessages:
-				if m.selectedMessage < len(m.messages)-1 {
-					m.selectedMessage++
+				if m.virtualSelected < len(m.virtualList)-1 {
+					m.virtualSelected++
 					m.detailMessage = nil
 					m.statusMsg = "Loading message details..."
-					cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+					if am := m.activeMessage(); am != nil {
+						cmds = append(cmds, fetchMessageDetailCmd(m.graphClient, am.ID))
+					}
 				}
 			case paneDetail:
 				m.detailViewport.LineDown(1)
@@ -711,6 +861,24 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pagedown":
 			if m.activePane == paneDetail {
 				m.detailViewport.HalfPageDown()
+			}
+		case " ":
+			// Toggle thread collapse/expand in the Messages pane
+			if m.activePane == paneMessages && len(m.virtualList) > 0 && m.virtualSelected < len(m.virtualList) {
+				item := m.virtualList[m.virtualSelected]
+				tg := m.threadGroups[item.ThreadIdx]
+				if len(tg.Members) > 1 {
+					cid := tg.ConversationID
+					m.collapsedThreads[cid] = !m.collapsedThreads[cid]
+					// Rebuild virtual list; clamp virtualSelected
+					m.buildVirtualList()
+					if m.virtualSelected >= len(m.virtualList) {
+						m.virtualSelected = len(m.virtualList) - 1
+					}
+					if m.virtualSelected < 0 {
+						m.virtualSelected = 0
+					}
+				}
 			}
 		case "n":
 			// Compose new email
@@ -732,18 +900,32 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeBody.SetHeight(10)
 		case "d", "delete":
 			// Delete current message
-			if len(m.messages) > 0 && m.selectedMessage < len(m.messages) {
+			if am := m.activeMessage(); am != nil {
 				m.statusMsg = "Moving message to Deleted Items..."
-				cmds = append(cmds, deleteMailCmd(m.graphClient, m.messages[m.selectedMessage].ID))
+				cmds = append(cmds, deleteMailCmd(m.graphClient, am.ID))
 			}
 		case "r":
 			// Mark message Read/Unread
-			if len(m.messages) > 0 && m.selectedMessage < len(m.messages) {
-				targetState := !m.messages[m.selectedMessage].IsRead
-				m.messages[m.selectedMessage].IsRead = targetState
-				m.statusMsg = fmt.Sprintf("Marking message read status...")
+			if am := m.activeMessage(); am != nil {
+				targetState := !am.IsRead
+				msgID := am.ID
+				// Update in messages slice
+				for i := range m.messages {
+					if m.messages[i].ID == msgID {
+						m.messages[i].IsRead = targetState
+					}
+				}
+				// Update in thread groups
+				for ti := range m.threadGroups {
+					for mi := range m.threadGroups[ti].Members {
+						if m.threadGroups[ti].Members[mi].ID == msgID {
+							m.threadGroups[ti].Members[mi].IsRead = targetState
+						}
+					}
+				}
+				m.statusMsg = "Marking message read status..."
 				cmds = append(cmds, func() tea.Msg {
-					_ = m.graphClient.MarkAsRead(m.messages[m.selectedMessage].ID, targetState)
+					_ = m.graphClient.MarkAsRead(msgID, targetState)
 					return nil
 				})
 			}
@@ -755,7 +937,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "A":
 			// Ask if user wants to reply to sender or all
-			if len(m.messages) > 0 && m.selectedMessage < len(m.messages) {
+			if m.activeMessage() != nil {
 				m.state = stateReplyConfirm
 				m.statusMsg = "Select reply option (s/a/c)"
 			}
@@ -843,11 +1025,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *mainModel) initiateReply(replyAll bool) {
-	if len(m.messages) == 0 || m.selectedMessage >= len(m.messages) {
+	origMsgPtr := m.activeMessage()
+	if origMsgPtr == nil {
 		m.state = stateMain
 		return
 	}
-	origMsg := m.messages[m.selectedMessage]
+	origMsg := *origMsgPtr
 	
 	var bodyText string
 	senderName := origMsg.From.EmailAddress.Name
@@ -1213,7 +1396,7 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [n] Compose | [A] Reply | [d] Delete/Trash | [r] Read/Unread | [a] Attachments | [q] Quit"
+		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [r] Read/Unread | [a] Attachments | [q] Quit"
 		
 		availableWidth := m.width - lipgloss.Width(keysText) - 4
 		if availableWidth > 5 {
@@ -1398,28 +1581,27 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 	var s strings.Builder
 	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
 
-	if len(m.messages) == 0 {
+	if len(m.virtualList) == 0 {
 		s.WriteString(dimStyle.Render(" No messages"))
 		return s.String()
 	}
 
-	start := 0
-	end := len(m.messages)
-
-	// Each message takes 3 lines
+	// Each item takes 3 lines (header or member row)
 	maxItems := (availHeight - 2) / 3
 	if maxItems < 1 {
 		maxItems = 1
 	}
 
-	if len(m.messages) > maxItems {
-		start = m.selectedMessage - (maxItems / 2)
+	start := 0
+	end := len(m.virtualList)
+	if len(m.virtualList) > maxItems {
+		start = m.virtualSelected - (maxItems / 2)
 		if start < 0 {
 			start = 0
 		}
 		end = start + maxItems
-		if end > len(m.messages) {
-			end = len(m.messages)
+		if end > len(m.virtualList) {
+			end = len(m.virtualList)
 			start = end - maxItems
 			if start < 0 {
 				start = 0
@@ -1427,52 +1609,101 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 		}
 	}
 
-	// line1: "● fromName"  — prefix is 2 chars ("● " or "  ")
-	maxFrom := availWidth - 4
+	maxFrom := availWidth - 6
 	if maxFrom < 8 {
 		maxFrom = 8
 	}
-	// line2: "  @ subject" — prefix is 4 chars ("  @ " or "    ")
-	// Subject gets the full remaining width of its own line.
-	maxSubj := availWidth - 4
+	maxSubj := availWidth - 6
 	if maxSubj < 8 {
 		maxSubj = 8
 	}
 
-	for i := start; i < end; i++ {
-		msg := m.messages[i]
-		fromName := msg.From.EmailAddress.Name
-		if fromName == "" {
-			fromName = msg.From.EmailAddress.Address
-		}
-		if len(fromName) > maxFrom {
-			fromName = fromName[:maxFrom-2] + ".."
-		}
-		subject := msg.Subject
-		if subject == "" {
-			subject = "(No Subject)"
-		}
-		if len(subject) > maxSubj {
-			subject = subject[:maxSubj-2] + ".."
-		}
-		unreadMarker := " "
-		if !msg.IsRead {
-			unreadMarker = "●"
-		}
-		attachMarker := " "
-		if msg.HasAttachments {
-			attachMarker = "@"
-		}
-		line1 := fmt.Sprintf("%s %s", unreadMarker, fromName)
-		line2 := fmt.Sprintf("  %s %s", attachMarker, subject)
+	for vi := start; vi < end; vi++ {
+		item := m.virtualList[vi]
+		tg := m.threadGroups[item.ThreadIdx]
+		isSelected := vi == m.virtualSelected
 
-		if i == m.selectedMessage {
-			s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
-		} else {
+		if item.IsHeader {
+			msg := tg.Members[0]
+			// Thread collapse indicator
+			var threadIndicator string
+			var countBadge string
+			if len(tg.Members) > 1 {
+				if m.collapsedThreads[tg.ConversationID] {
+					threadIndicator = "▶ "
+				} else {
+					threadIndicator = "▼ "
+				}
+				countBadge = fmt.Sprintf(" [%d]", len(tg.Members))
+			} else {
+				threadIndicator = "  "
+			}
+			fromName := msg.From.EmailAddress.Name
+			if fromName == "" {
+				fromName = msg.From.EmailAddress.Address
+			}
+			unreadMarker := " "
 			if !msg.IsRead {
+				unreadMarker = "●"
+			}
+			attachMarker := " "
+			if msg.HasAttachments {
+				attachMarker = "@"
+			}
+			subj := tg.Subject
+			if subj == "" {
+				subj = "(No Subject)"
+			}
+			// Truncate to fit
+			maxFN := maxFrom - len(threadIndicator) - len(countBadge)
+			if maxFN < 4 {
+				maxFN = 4
+			}
+			if len(fromName) > maxFN {
+				fromName = fromName[:maxFN-2] + ".."
+			}
+			if len(subj) > maxSubj {
+				subj = subj[:maxSubj-2] + ".."
+			}
+			line1 := fmt.Sprintf("%s%s %s%s", threadIndicator, unreadMarker, fromName, countBadge)
+			line2 := fmt.Sprintf("  %s %s", attachMarker, subj)
+			if isSelected {
+				s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else if !msg.IsRead {
 				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
 			} else {
 				s.WriteString(line1 + "\n" + dimStyle.Render(line2) + "\n\n")
+			}
+		} else {
+			// Indented reply row
+			msg := tg.Members[item.MemberIdx]
+			fromName := msg.From.EmailAddress.Name
+			if fromName == "" {
+				fromName = msg.From.EmailAddress.Address
+			}
+			unreadMarker := " "
+			if !msg.IsRead {
+				unreadMarker = "●"
+			}
+			dateStr := msg.ReceivedDateTime.Local().Format("Jan 2")
+			maxFN2 := maxFrom - 8
+			if maxFN2 < 4 {
+				maxFN2 = 4
+			}
+			if len(fromName) > maxFN2 {
+				fromName = fromName[:maxFN2-2] + ".."
+			}
+			line1 := fmt.Sprintf("  └ %s %s  %s", unreadMarker, fromName, dateStr)
+			line2 := fmt.Sprintf("    %s", msg.BodyPreview)
+			if len(line2) > availWidth-2 {
+				line2 = line2[:availWidth-5] + "..."
+			}
+			if isSelected {
+				s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else if !msg.IsRead {
+				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else {
+				s.WriteString(dimStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
 			}
 		}
 	}
@@ -1541,28 +1772,27 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 	var s strings.Builder
 	s.WriteString(headerStyle.Render("MESSAGES") + "\n\n")
 
-	if len(m.messages) == 0 {
+	if len(m.virtualList) == 0 {
 		s.WriteString(dimStyle.Render(" No messages"))
 		return s.String()
 	}
 
-	start := 0
-	end := len(m.messages)
-
-	// Each message takes 3 lines
+	// Each item takes 3 lines
 	maxItems := (availHeight - 2) / 3
 	if maxItems < 1 {
 		maxItems = 1
 	}
 
-	if len(m.messages) > maxItems {
-		start = m.selectedMessage - (maxItems / 2)
+	start := 0
+	end := len(m.virtualList)
+	if len(m.virtualList) > maxItems {
+		start = m.virtualSelected - (maxItems / 2)
 		if start < 0 {
 			start = 0
 		}
 		end = start + maxItems
-		if end > len(m.messages) {
-			end = len(m.messages)
+		if end > len(m.virtualList) {
+			end = len(m.virtualList)
 			start = end - maxItems
 			if start < 0 {
 				start = 0
@@ -1570,44 +1800,86 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 		}
 	}
 
-	for i := start; i < end; i++ {
-		msg := m.messages[i]
-		fromName := msg.From.EmailAddress.Name
-		if fromName == "" {
-			fromName = msg.From.EmailAddress.Address
-		}
-		if len(fromName) > 16 {
-			fromName = fromName[:14] + ".."
-		}
+	// Narrow pane: tighter truncation
+	maxFrom := 14
+	maxSubj := 18
 
-		subject := msg.Subject
-		if subject == "" {
-			subject = "(No Subject)"
-		}
-		if len(subject) > 20 {
-			subject = subject[:18] + ".."
-		}
+	for vi := start; vi < end; vi++ {
+		item := m.virtualList[vi]
+		tg := m.threadGroups[item.ThreadIdx]
+		isSelected := vi == m.virtualSelected
 
-		unreadMarker := " "
-		if !msg.IsRead {
-			unreadMarker = "●"
-		}
-		
-		attachMarker := " "
-		if msg.HasAttachments {
-			attachMarker = "@"
-		}
-
-		line1 := fmt.Sprintf("%s %s", unreadMarker, fromName)
-		line2 := fmt.Sprintf("  %s %s", attachMarker, subject)
-
-		if i == m.selectedMessage {
-			s.WriteString(selectedItemStyle.Copy().Width(31).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
-		} else {
+		if item.IsHeader {
+			msg := tg.Members[0]
+			var threadIndicator string
+			var countBadge string
+			if len(tg.Members) > 1 {
+				if m.collapsedThreads[tg.ConversationID] {
+					threadIndicator = "▶"
+				} else {
+					threadIndicator = "▼"
+				}
+				countBadge = fmt.Sprintf("(%d)", len(tg.Members))
+			}
+			fromName := msg.From.EmailAddress.Name
+			if fromName == "" {
+				fromName = msg.From.EmailAddress.Address
+			}
+			if len(fromName) > maxFrom {
+				fromName = fromName[:maxFrom-2] + ".."
+			}
+			unreadMarker := " "
 			if !msg.IsRead {
+				unreadMarker = "●"
+			}
+			attachMarker := " "
+			if msg.HasAttachments {
+				attachMarker = "@"
+			}
+			subj := tg.Subject
+			if subj == "" {
+				subj = "(No Subject)"
+			}
+			if len(subj) > maxSubj {
+				subj = subj[:maxSubj-2] + ".."
+			}
+			// Build compact lines for narrow pane
+			var line1 string
+			if threadIndicator != "" {
+				line1 = fmt.Sprintf("%s%s %s %s", threadIndicator, unreadMarker, fromName, countBadge)
+			} else {
+				line1 = fmt.Sprintf("%s %s", unreadMarker, fromName)
+			}
+			line2 := fmt.Sprintf("  %s %s", attachMarker, subj)
+			if isSelected {
+				s.WriteString(selectedItemStyle.Copy().Width(31).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else if !msg.IsRead {
 				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
 			} else {
 				s.WriteString(line1 + "\n" + dimStyle.Render(line2) + "\n\n")
+			}
+		} else {
+			// Indented reply row (narrow)
+			msg := tg.Members[item.MemberIdx]
+			fromName := msg.From.EmailAddress.Name
+			if fromName == "" {
+				fromName = msg.From.EmailAddress.Address
+			}
+			if len(fromName) > 10 {
+				fromName = fromName[:8] + ".."
+			}
+			unreadMarker := " "
+			if !msg.IsRead {
+				unreadMarker = "●"
+			}
+			line1 := fmt.Sprintf(" └%s%s", unreadMarker, fromName)
+			line2 := fmt.Sprintf("   %s", msg.ReceivedDateTime.Local().Format("Jan 2"))
+			if isSelected {
+				s.WriteString(selectedItemStyle.Copy().Width(31).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else if !msg.IsRead {
+				s.WriteString(unreadStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
+			} else {
+				s.WriteString(dimStyle.Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
 			}
 		}
 	}
