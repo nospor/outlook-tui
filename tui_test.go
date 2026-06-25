@@ -356,5 +356,68 @@ func TestComposeCcContactSuggestions(t *testing.T) {
 	}
 }
 
+func TestExtractURLsFromMainMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "No URLs",
+			input:    "Hello world, this is a message with no links.",
+			expected: nil,
+		},
+		{
+			name:     "Single plain URL",
+			input:    "Check this out: https://example.com/foo. It's cool.",
+			expected: []string{"https://example.com/foo"},
+		},
+		{
+			name:     "Anchor tag URL",
+			input:    "Visit <a href=\"https://github.com\">GitHub</a> website.",
+			expected: []string{"https://github.com"},
+		},
+		{
+			name:     "Multiple URLs with duplicates",
+			input:    "Link 1: https://google.com, Link 2: http://yahoo.com, Link 3: https://google.com",
+			expected: []string{"https://google.com", "http://yahoo.com"},
+		},
+		{
+			name:     "Quoted lines prefixed with >",
+			input:    "Please use this link: https://active.com\n\n> Old conversation:\n> Go to https://quoted.com",
+			expected: []string{"https://active.com"},
+		},
+		{
+			name:     "Original message block headers",
+			input:    "Main message: https://new.com\n\n-----Original Message-----\nFrom: test@example.com\nSent: 2026\nTo: user\n\nQuoted: https://old.com",
+			expected: []string{"https://new.com"},
+		},
+		{
+			name:     "Punctuation trimming check",
+			input:    "Urls: (https://a.com), [https://b.com], {https://c.com}, https://d.com/!",
+			expected: []string{"https://a.com", "https://b.com", "https://c.com", "https://d.com/"},
+		},
+		{
+			name:     "HTML divs structure",
+			input:    "Main link: https://new.com<div>-----Original Message-----</div><div>From: test@example.com</div><div>Sent: 2026</div><div>To: user</div><div>Quoted: https://old.com</div>",
+			expected: []string{"https://new.com"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := extractURLsFromMainMessage(tt.input)
+			if len(actual) != len(tt.expected) {
+				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
+			}
+			for i := range actual {
+				if actual[i] != tt.expected[i] {
+					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], actual[i])
+				}
+			}
+		})
+	}
+}
+
 
 

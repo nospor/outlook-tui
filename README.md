@@ -123,6 +123,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `d` (or `Delete`) | Move the selected message to Deleted Items (Trash) |
 | `r` | Toggle the selected message's Read/Unread status |
 | `a` | View and select attachments on the current email |
+| `u` | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text) |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open` |
 | `Esc` | Go back (cancel compose, close attachments list, or go back to config) |
 | `q` (or `Ctrl+C`) | Quit the application |

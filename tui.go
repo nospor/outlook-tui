@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -37,6 +38,7 @@ const (
 	stateCompose
 	stateAttachments
 	stateReplyConfirm
+	stateURLSelect
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -133,6 +135,10 @@ type mainModel struct {
 
 	// SQLite cache (nil when use_sqlite == 0)
 	db *DB
+
+	// URL select state
+	extractedURLs   []string
+	selectedURLIdx  int
 }
 
 func initialModel() mainModel {
@@ -1151,6 +1157,35 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateReplyConfirm
 				m.statusMsg = "Select reply option (s/a/c)"
 			}
+		case "u":
+			// Extract URLs from the selected message's main body (not quoted text)
+			am := m.activeMessage()
+			if am == nil {
+				m.statusMsg = "No message selected"
+				break
+			}
+			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+				m.statusMsg = "Message details loading, please try again..."
+				break
+			}
+			urls := extractURLsFromMainMessage(m.detailMessage.Body.Content)
+			if len(urls) == 0 {
+				m.statusMsg = "No URLs found in the main message"
+				break
+			}
+			if len(urls) == 1 {
+				// Copy directly to clipboard
+				if err := clipboard.WriteAll(urls[0]); err != nil {
+					m.statusMsg = fmt.Sprintf("Failed to copy URL: %v", err)
+				} else {
+					m.statusMsg = "Copied URL to clipboard!"
+				}
+				break
+			}
+			// Multiple URLs: show popup/modal
+			m.extractedURLs = urls
+			m.selectedURLIdx = 0
+			m.state = stateURLSelect
 		}
 
 	case stateCompose:
@@ -1272,6 +1307,33 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.initiateReply(false)
 		case "a":
 			m.initiateReply(true)
+		}
+
+	case stateURLSelect:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q":
+			m.state = stateMain
+			m.statusMsg = "URL copy cancelled"
+		case "up", "k":
+			if m.selectedURLIdx > 0 {
+				m.selectedURLIdx--
+			}
+		case "down", "j":
+			if m.selectedURLIdx < len(m.extractedURLs)-1 {
+				m.selectedURLIdx++
+			}
+		case "enter":
+			url := m.extractedURLs[m.selectedURLIdx]
+			if err := clipboard.WriteAll(url); err != nil {
+				m.statusMsg = fmt.Sprintf("Failed to copy URL: %v", err)
+			} else {
+				m.statusMsg = "Copied URL to clipboard!"
+			}
+			m.state = stateMain
 		}
 	}
 
@@ -1747,6 +1809,23 @@ func (m mainModel) View() string {
 			}
 		}
 		s.WriteString("\n   [Up/Down] Select Attachment  |  [Enter] Save to Downloads  |  [Esc] Back\n")
+
+	case stateURLSelect:
+		s.WriteString("   " + headerStyle.Render("SELECT URL TO COPY TO CLIPBOARD") + "\n\n")
+		for i, url := range m.extractedURLs {
+			indicator := "  "
+			if i == m.selectedURLIdx {
+				indicator = "> "
+			}
+			
+			line := fmt.Sprintf("%s %s", indicator, url)
+			if i == m.selectedURLIdx {
+				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
+			} else {
+				s.WriteString("   " + line + "\n")
+			}
+		}
+		s.WriteString("\n   [Up/Down/j/k] Select URL  |  [Enter] Copy URL to Clipboard  |  [Esc/q] Cancel\n")
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -2415,9 +2494,10 @@ func formatBodyContent(htmlContent string) string {
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
 	// We'll replace simple tags to preserve readability.
-	res = strings.ReplaceAll(res, "<br>", "\n")
-	res = strings.ReplaceAll(res, "<br/>", "\n")
+	res = regexp.MustCompile(`(?i)<br(?:\s*\/)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<p(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
 	res = strings.ReplaceAll(res, "</p>", "\n\n")
+	res = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
 	res = strings.ReplaceAll(res, "</div>", "\n")
 	
 	// Strip all other HTML tags
@@ -2699,4 +2779,94 @@ func renderTopBorderWithTitle(width int, title string, active bool) string {
 	rightPart = " " + borderLipglossStyle.Render(strings.Repeat(horiz, rightDashesCount)+topRight)
 
 	return leftPart + middleText + rightPart
+}
+
+// extractURLsFromMainMessage returns a list of unique URLs found in the body content,
+// excluding any URLs in quoted lines or block dividers/original message blocks.
+func extractURLsFromMainMessage(htmlContent string) []string {
+	// 1. Replace anchor tags to make href values visible.
+	res := replaceAnchorTags(htmlContent)
+
+	// 2. Convert HTML line breaks to real newlines to preserve message structure.
+	res = regexp.MustCompile(`(?i)<br(?:\s*\/)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<p(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
+	res = strings.ReplaceAll(res, "</p>", "\n\n")
+	res = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = strings.ReplaceAll(res, "</div>", "\n")
+
+	// 3. Strip other HTML tags.
+	var builder strings.Builder
+	inTag := false
+	for _, r := range res {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			if inTag {
+				inTag = false
+				continue
+			}
+		}
+		if !inTag {
+			builder.WriteRune(r)
+		}
+	}
+
+	unescaped := html.UnescapeString(builder.String())
+	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
+
+	lines := strings.Split(unescaped, "\n")
+	var urls []string
+	seen := make(map[string]bool)
+
+	urlRx := regexp.MustCompile(`https?://[^\s<>"\x1b]+`)
+	inOriginal := false
+
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+
+		plainLine := stripANSICodes(l)
+		trimmedPlain := strings.TrimSpace(plainLine)
+
+		if !inOriginal && isOriginalMessageStart(trimmedPlain) {
+			inOriginal = true
+		}
+
+		if inOriginal || strings.HasPrefix(trimmedPlain, ">") {
+			continue
+		}
+
+		// Find URLs in the plain line
+		matches := urlRx.FindAllString(trimmedPlain, -1)
+		for _, m := range matches {
+			url := m
+			// Trim trailing punctuation like styleURLs does
+			for len(url) > 0 {
+				last := url[len(url)-1]
+				if last == '.' || last == ',' || last == ')' || last == ']' || last == '}' || last == '!' || last == '?' || last == ':' || last == ';' {
+					if last == ')' && strings.Count(url, "(") > strings.Count(url, ")")-1 {
+						break
+					}
+					if last == ']' && strings.Count(url, "[") > strings.Count(url, "]")-1 {
+						break
+					}
+					if last == '}' && strings.Count(url, "{") > strings.Count(url, "}")-1 {
+						break
+					}
+					url = url[:len(url)-1]
+				} else {
+					break
+				}
+			}
+			if url != "" && !seen[url] {
+				seen[url] = true
+				urls = append(urls, url)
+			}
+		}
+	}
+	return urls
 }
