@@ -980,6 +980,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneDetail:
 				m.detailViewport.LineUp(1)
 			}
+		case "K":
+			// Capital K: navigate up in Messages pane if in Folders pane, or scroll up message detail if in Messages pane
+			switch m.activePane {
+			case paneFolders:
+				if m.virtualSelected > 0 {
+					m.virtualSelected--
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			case paneMessages:
+				m.detailViewport.LineUp(1)
+			}
 		case "down":
 			switch m.activePane {
 			case paneFolders:
@@ -1025,6 +1040,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case paneDetail:
 				m.detailViewport.LineDown(1)
 			}
+		case "J":
+			// Capital J: navigate down in Messages pane if in Folders pane, or scroll down message detail if in Messages pane
+			switch m.activePane {
+			case paneFolders:
+				if m.virtualSelected < len(m.virtualList)-1 {
+					m.virtualSelected++
+					var cmd tea.Cmd
+					m, cmd = m.loadMessageDetail(m.activeMessage())
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			case paneMessages:
+				m.detailViewport.LineDown(1)
+			}
 		case "pageup":
 			if m.activePane == paneDetail {
 				m.detailViewport.HalfPageUp()
@@ -1034,8 +1064,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailViewport.HalfPageDown()
 			}
 		case " ":
-			// Toggle thread collapse/expand in the Messages pane
-			if m.activePane == paneMessages && len(m.virtualList) > 0 && m.virtualSelected < len(m.virtualList) {
+			// Toggle thread collapse/expand in the Messages or Folders pane
+			if (m.activePane == paneMessages || m.activePane == paneFolders) && len(m.virtualList) > 0 && m.virtualSelected < len(m.virtualList) {
 				item := m.virtualList[m.virtualSelected]
 				tg := m.threadGroups[item.ThreadIdx]
 				if len(tg.Members) > 1 {

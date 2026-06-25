@@ -115,7 +115,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `Tab` | Switch focus between the Folders, Messages, and Message Detail panes |
 | `Shift+Tab` | Switch focus in reverse order |
 | `Up` / `Down` (or `k` / `j`) | Navigate selection in the focused pane |
-| `Space` | Toggle expand/collapse for the selected conversation thread in the Messages pane |
+| `K` / `J` | Navigate selection in Messages pane (when in Folders pane), or scroll message in Details pane (when in Messages pane) |
+| `Space` | Toggle expand/collapse for the selected conversation thread (works when focused on either the Messages or Folders pane) |
 | `PageUp` / `PageDown` | Scroll message body up/down |
 | `n` | Compose a new email |
 | `A` | Reply / Answer to the currently selected message (pre-fills sender, subject with Re:, quotes body, and focuses body field at the beginning) |

@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )
@@ -181,4 +182,93 @@ func TestLipglossWrap(t *testing.T) {
 	ansiWrapped := wrapText(ansiText, 20)
 	t.Logf("ANSI Wrapped:\n%q", ansiWrapped)
 }
+
+func TestJKNavigation(t *testing.T) {
+	// Initialize a basic mainModel
+	msg1 := Message{
+		ID:             "msg1ID",
+		ConversationID: "conv1ID",
+		Subject:        "Hello",
+		IsRead:         true,
+		Body:           ItemBody{Content: "Body 1"},
+	}
+	msg2 := Message{
+		ID:             "msg2ID",
+		ConversationID: "conv1ID",
+		Subject:        "Re: Hello",
+		IsRead:         true,
+		Body:           ItemBody{Content: "Body 2"},
+	}
+
+	m := mainModel{
+		state:      stateMain,
+		activePane: paneFolders,
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+			{ThreadIdx: 0, MemberIdx: 1, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{
+				ConversationID: "conv1ID",
+				Members:        []Message{msg1, msg2},
+			},
+		},
+		virtualSelected: 0,
+		width:           100,
+		height:          30,
+	}
+
+	// 1. In paneFolders, pressing K should do nothing since virtualSelected is already 0
+	updatedModelInterface, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("K")})
+	updatedModel := updatedModelInterface.(mainModel)
+	if updatedModel.virtualSelected != 0 {
+		t.Errorf("expected virtualSelected to remain 0, got %d", updatedModel.virtualSelected)
+	}
+
+	// 2. In paneFolders, pressing J should navigate down in Messages pane (to index 1)
+	updatedModelInterface, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("J")})
+	updatedModel = updatedModelInterface.(mainModel)
+	if updatedModel.virtualSelected != 1 {
+		t.Errorf("expected virtualSelected to be 1, got %d", updatedModel.virtualSelected)
+	}
+
+	// 3. In paneMessages, pressing K or J should scroll message detail in Details pane
+	// Let's first move focus to paneMessages
+	m.activePane = paneMessages
+	m.virtualSelected = 0
+
+	// Initialize viewport with some content so it is scrollable
+	m.detailViewport.Width = 20
+	m.detailViewport.Height = 5
+	m.detailViewport.SetContent("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+	m.detailViewport.YOffset = 3
+
+	// Pressing K (scroll up)
+	updatedModelInterface, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("K")})
+	updatedModel = updatedModelInterface.(mainModel)
+	// We expect the viewport to scroll up by 1 line, meaning YOffset decreases by 1
+	if updatedModel.detailViewport.YOffset != 2 {
+		t.Errorf("expected detailViewport.YOffset to be 2, got %d", updatedModel.detailViewport.YOffset)
+	}
+
+	// Pressing J (scroll down)
+	updatedModelInterface, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("J")})
+	updatedModel = updatedModelInterface.(mainModel)
+	// We expect the viewport to scroll down by 1 line, meaning YOffset increases by 1
+	if updatedModel.detailViewport.YOffset != 4 {
+		t.Errorf("expected detailViewport.YOffset to be 4, got %d", updatedModel.detailViewport.YOffset)
+	}
+
+	// 4. In paneFolders, pressing Space should toggle collapsed state of the thread
+	m.activePane = paneFolders
+	m.collapsedThreads = make(map[string]bool)
+	m.collapsedThreads["conv1ID"] = true
+
+	updatedModelInterface, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	updatedModel = updatedModelInterface.(mainModel)
+	if updatedModel.collapsedThreads["conv1ID"] {
+		t.Errorf("expected thread conv1ID to be uncollapsed, but it remains collapsed")
+	}
+}
+
 
