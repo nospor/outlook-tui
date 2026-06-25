@@ -1240,7 +1240,7 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 		metaHeight = len(metaLines) - 1 + 2
 	}
 
-	viewportHeight := totalHeight - metaHeight
+	viewportHeight := totalHeight - 2 - metaHeight
 	if viewportHeight < 3 {
 		viewportHeight = 3
 	}
@@ -1512,7 +1512,9 @@ func (m mainModel) renderLayout2() string {
 
 	// Right detail pane spans the full height; outer = totalHeight + 2 (borders)
 	// left col outer = leftColInner+4=50; right pane Width = m.width - 50 - 4 = m.width - 54
-	dView := dStyle.Width(m.width - 54).Height(totalHeight).Render(detailView)
+	// dView outer height must match left column outer height (= totalHeight).
+	// .Height(n) sets inner content; outer = n+2 (borders). So use totalHeight-2.
+	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(detailView)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
 }
