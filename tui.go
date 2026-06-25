@@ -897,9 +897,11 @@ func (m mainModel) updateViewportSize() mainModel {
 		detailWidth = 20
 	}
 
-	metaHeight := 6 // header(2) + Subject+From+Date(3) + separator(1)
-	if m.detailMessage != nil && len(m.attachments) > 0 {
-		metaHeight = 7
+	metaHeight := 6 // fallback
+	if m.detailMessage != nil {
+		metaBlock := m.renderMetaBlock(detailWidth)
+		metaLines := strings.Split(metaBlock, "\n")
+		metaHeight = len(metaLines) - 1 + 2
 	}
 
 	viewportHeight := paneHeight - metaHeight
@@ -1253,21 +1255,65 @@ func (m mainModel) renderDetailView() string {
 		return s.String()
 	}
 
-	// Meta info block
+	detailWidth := m.width - 64
+	if detailWidth < 20 {
+		detailWidth = 20
+	}
+	s.WriteString(m.renderMetaBlock(detailWidth))
+	s.WriteString(m.detailViewport.View())
+
+	return s.String()
+}
+
+func (m mainModel) renderMetaBlock(width int) string {
+	if m.detailMessage == nil {
+		return ""
+	}
+	var s strings.Builder
+
+	// Helper to format recipients list
+	formatRecipients := func(recipients []Recipient) string {
+		var parts []string
+		for _, r := range recipients {
+			name := r.EmailAddress.Name
+			addr := r.EmailAddress.Address
+			if name == "" {
+				parts = append(parts, addr)
+			} else if addr == "" {
+				parts = append(parts, name)
+			} else {
+				parts = append(parts, fmt.Sprintf("%s <%s>", name, addr))
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
+
 	fromVal := fmt.Sprintf("%s <%s>", m.detailMessage.From.EmailAddress.Name, m.detailMessage.From.EmailAddress.Address)
 	dateStr := m.detailMessage.ReceivedDateTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
-	
-	s.WriteString(lipgloss.NewStyle().Bold(true).Render("Subject: ") + m.detailMessage.Subject + "\n")
-	s.WriteString(lipgloss.NewStyle().Bold(true).Render("From:    ") + fromVal + "\n")
-	s.WriteString(lipgloss.NewStyle().Bold(true).Render("Date:    ") + dateStr + "\n")
-	
-	if len(m.attachments) > 0 {
-		s.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))))
-		s.WriteString(dimStyle.Render("Press [a] to view/download attachments\n"))
+
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Subject: ") + m.detailMessage.Subject, width) + "\n")
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("From:    ") + fromVal, width) + "\n")
+
+	toVal := formatRecipients(m.detailMessage.ToRecipients)
+	if toVal != "" {
+		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("To:      ") + toVal, width) + "\n")
 	}
-	
-	s.WriteString(dimStyle.Render("--------------------------------------------------------------------") + "\n")
-	s.WriteString(m.detailViewport.View())
+
+	ccVal := formatRecipients(m.detailMessage.CcRecipients)
+	if ccVal != "" {
+		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Cc:      ") + ccVal, width) + "\n")
+	}
+
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Date:    ") + dateStr, width) + "\n")
+
+	if len(m.attachments) > 0 {
+		attStr := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))) +
+			dimStyle.Render("Press [a] to view/download attachments")
+		s.WriteString(wrapText(attStr, width) + "\n")
+	}
+
+	sep := strings.Repeat("-", width)
+	s.WriteString(dimStyle.Render(sep) + "\n")
 
 	return s.String()
 }

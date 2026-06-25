@@ -31,6 +31,7 @@ type Message struct {
 	HasAttachments   bool        `json:"hasAttachments"`
 	From             Recipient   `json:"from"`
 	ToRecipients     []Recipient `json:"toRecipients"`
+	CcRecipients     []Recipient `json:"ccRecipients"`
 	Body             ItemBody    `json:"body"`
 }
 
@@ -89,7 +90,7 @@ func (gc *GraphClient) GetFolders() ([]MailFolder, error) {
 }
 
 func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
-	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients&$top=50&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID))
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients&$top=50&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID))
 	resp, err := gc.client.Get(reqURL)
 	if err != nil {
 		return nil, err
@@ -112,7 +113,7 @@ func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
 }
 
 func (gc *GraphClient) GetMessage(messageID string) (*Message, error) {
-	reqURL := fmt.Sprintf("%s/me/messages/%s?$select=id,subject,body,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients", graphBaseURL, url.PathEscape(messageID))
+	reqURL := fmt.Sprintf("%s/me/messages/%s?$select=id,subject,body,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients", graphBaseURL, url.PathEscape(messageID))
 	resp, err := gc.client.Get(reqURL)
 	if err != nil {
 		return nil, err
