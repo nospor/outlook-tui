@@ -1244,7 +1244,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.composeStep = (m.composeStep - 1 + 4) % 4
 			m.updateComposeFocus()
-		case "ctrl+s":
+		case "ctrl+s", "ctrl+S", "ctrl+x":
 			// Send!
 			m.statusMsg = "Sending email..."
 			cmds = append(cmds, sendMailCmd(
@@ -1791,7 +1791,7 @@ func (m mainModel) View() string {
 		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
 		s.WriteString("   Body:\n   " + bodyBorder.Render(m.composeBody.View()) + "\n\n")
 		
-		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+S] Send  |  [Esc] Cancel\n")
+		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
 	case stateAttachments:
 		s.WriteString("   " + headerStyle.Render("ATTACHMENTS IN CURRENT EMAIL") + "\n\n")
@@ -1841,8 +1841,10 @@ func (m mainModel) View() string {
 		} else {
 			s.WriteString(statusStyle.Width(m.width).Render(statusText))
 		}
-	} else if m.state != stateCompose && m.state != stateConfig && m.state != stateDeviceAuth && m.state != stateAttachments {
-		s.WriteString("\n" + statusStyle.Width(m.width).Render(m.statusMsg))
+	} else if m.state != stateDeviceAuth && m.state != stateLoading {
+		if m.statusMsg != "" {
+			s.WriteString("\n" + statusStyle.Width(m.width).Render(m.statusMsg))
+		}
 	}
 
 	// Guarantee exactly m.height output lines so BubbleTea's cursor tracking

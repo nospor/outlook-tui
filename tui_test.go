@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -517,6 +518,74 @@ func TestLayout2Heights(t *testing.T) {
 		t.Errorf("Heights are not constant across selections/list sizes!")
 	}
 }
+
+func TestComposeCtrlS(t *testing.T) {
+	m := mainModel{
+		state:       stateCompose,
+		composeStep: 3,
+		config:      Config{UseSQLite: 0},
+	}
+	m.composeTo = textinput.New()
+	m.composeCc = textinput.New()
+	m.composeSubject = textinput.New()
+	m.composeBody = textarea.New()
+
+	m.composeTo.SetValue("test@example.com")
+	m.composeCc.SetValue("")
+	m.composeSubject.SetValue("Test Subject")
+	m.composeBody.SetValue("Test Body")
+
+	// KeyMsg representing ctrl+s
+	keyMsg := tea.KeyMsg{
+		Type:  tea.KeyCtrlS,
+		Runes: []rune("\x13"),
+	}
+
+	updatedModelInterface, cmd := m.Update(keyMsg)
+	updated := updatedModelInterface.(mainModel)
+
+	if updated.statusMsg != "Sending email..." {
+		t.Errorf("expected statusMsg to be 'Sending email...', got %q", updated.statusMsg)
+	}
+
+	if cmd == nil {
+		t.Fatalf("expected a command to be returned, got nil")
+	}
+}
+
+func TestParseAddressStringToRecipients(t *testing.T) {
+	// Test empty address string returns non-nil slice
+	resEmpty := parseAddressStringToRecipients("")
+	if resEmpty == nil {
+		t.Errorf("expected non-nil slice for empty string, got nil")
+	}
+	if len(resEmpty) != 0 {
+		t.Errorf("expected length of 0 for empty string, got %d", len(resEmpty))
+	}
+
+	// Test whitespaces
+	resSpaces := parseAddressStringToRecipients("   ,  ")
+	if resSpaces == nil {
+		t.Errorf("expected non-nil slice for spaces, got nil")
+	}
+	if len(resSpaces) != 0 {
+		t.Errorf("expected length of 0 for spaces, got %d", len(resSpaces))
+	}
+
+	// Test valid address parsing
+	resValid := parseAddressStringToRecipients("John Doe <john@example.com>, jane@example.com")
+	if len(resValid) != 2 {
+		t.Fatalf("expected 2 recipients, got %d", len(resValid))
+	}
+	if resValid[0].EmailAddress.Name != "John Doe" || resValid[0].EmailAddress.Address != "john@example.com" {
+		t.Errorf("incorrect parse for recipient 0: %v", resValid[0])
+	}
+	if resValid[1].EmailAddress.Name != "" || resValid[1].EmailAddress.Address != "jane@example.com" {
+		t.Errorf("incorrect parse for recipient 1: %v", resValid[1])
+	}
+}
+
+
 
 
 

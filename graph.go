@@ -159,7 +159,7 @@ func (gc *GraphClient) GetAttachments(messageID string) ([]Attachment, error) {
 }
 
 func parseAddressStringToRecipients(addressStr string) []Recipient {
-	var recipients []Recipient
+	recipients := []Recipient{}
 	emails := strings.Split(addressStr, ",")
 	for _, email := range emails {
 		email = strings.TrimSpace(email)
