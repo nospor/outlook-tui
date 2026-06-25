@@ -133,3 +133,14 @@ func TestStripANSICodes(t *testing.T) {
 	}
 }
 
+func TestLipglossWrap(t *testing.T) {
+	text := "Hi All,\nI spoke to Ben, but there does not seem to be a simple place in Java DMS or ADAM where you can see who our paid advertisers are, so I have attached the list we spoke about earlier."
+	wrapped := wrapText(text, 40)
+	t.Logf("Wrapped:\n%q", wrapped)
+
+	// Test with ANSI code
+	ansiText := "Some \x1b[1mbold\x1b[22m text that is also quite long and should wrap properly."
+	ansiWrapped := wrapText(ansiText, 20)
+	t.Logf("ANSI Wrapped:\n%q", ansiWrapped)
+}
+

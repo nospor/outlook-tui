@@ -309,7 +309,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m = m.updateViewportSize()
 		if m.detailMessage != nil {
-			m.detailViewport.SetContent(formatBodyContent(m.detailMessage.Body.Content))
+			m.detailViewport.SetContent(wrapText(formatBodyContent(m.detailMessage.Body.Content), m.detailViewport.Width))
 		}
 		if m.state == stateCompose {
 			h := m.height - 18
@@ -452,7 +452,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedAttach = 0
 			
 			m = m.updateViewportSize()
-			m.detailViewport.SetContent(formatBodyContent(msg.Message.Body.Content))
+			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 			
 			// Mark as read in local UI
@@ -1361,4 +1361,16 @@ func sortFolders(folders []MailFolder) []MailFolder {
 	}
 	result = append(result, others...)
 	return result
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(text)
+	lines := strings.Split(wrapped, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	return strings.Join(lines, "\n")
 }
