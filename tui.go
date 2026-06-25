@@ -119,9 +119,10 @@ type mainModel struct {
 
 	// Compose state
 	composeTo        textinput.Model
+	composeCc        textinput.Model
 	composeSubject   textinput.Model
 	composeBody      textarea.Model
-	composeStep      int // 0 = To, 1 = Subject, 2 = Body
+	composeStep      int // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
 	contacts         []Contact
 	filteredContacts []Contact
 	contactsSelected int
@@ -261,9 +262,9 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func sendMailCmd(gc *GraphClient, to, subject, body string) tea.Cmd {
+func sendMailCmd(gc *GraphClient, to, cc, subject, body string) tea.Cmd {
 	return func() tea.Msg {
-		err := gc.SendMessage(subject, body, to)
+		err := gc.SendMessage(subject, body, to, cc)
 		if err != nil {
 			return errMsg(err)
 		}
@@ -1095,6 +1096,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeTo.Focus()
 			m.composeTo.Width = m.width - 20
 			
+			m.composeCc = textinput.New()
+			m.composeCc.Placeholder = "cc@domain.com (optional)"
+			m.composeCc.Width = m.width - 20
+
 			m.composeSubject = textinput.New()
 			m.composeSubject.Placeholder = "Email subject..."
 			m.composeSubject.Width = m.width - 20
@@ -1154,7 +1159,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
+		if m.config.UseSQLite != 0 && (m.composeStep == 0 || m.composeStep == 1) && len(m.filteredContacts) > 0 {
 			switch key.String() {
 			case "down":
 				m.contactsSelected = (m.contactsSelected + 1) % len(m.filteredContacts)
@@ -1164,7 +1169,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				selected := m.filteredContacts[m.contactsSelected]
-				parts := strings.Split(m.composeTo.Value(), ",")
+				var inputToUpdate *textinput.Model
+				if m.composeStep == 0 {
+					inputToUpdate = &m.composeTo
+				} else {
+					inputToUpdate = &m.composeCc
+				}
+				parts := strings.Split(inputToUpdate.Value(), ",")
 				if len(parts) > 0 {
 					var newAddress string
 					if selected.Name != "" {
@@ -1174,8 +1185,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					parts[len(parts)-1] = " " + newAddress
 					newValue := strings.TrimLeft(strings.Join(parts, ","), " ")
-					m.composeTo.SetValue(newValue + ", ")
-					m.composeTo.SetCursor(len(m.composeTo.Value()))
+					inputToUpdate.SetValue(newValue + ", ")
+					inputToUpdate.SetCursor(len(inputToUpdate.Value()))
 				}
 				m.filteredContacts = nil
 				m.contactsSelected = 0
@@ -1192,10 +1203,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMain
 			m.statusMsg = "Compose cancelled"
 		case "tab":
-			m.composeStep = (m.composeStep + 1) % 3
+			m.composeStep = (m.composeStep + 1) % 4
 			m.updateComposeFocus()
 		case "shift+tab":
-			m.composeStep = (m.composeStep - 1 + 3) % 3
+			m.composeStep = (m.composeStep - 1 + 4) % 4
 			m.updateComposeFocus()
 		case "ctrl+s":
 			// Send!
@@ -1203,6 +1214,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, sendMailCmd(
 				m.graphClient,
 				m.composeTo.Value(),
+				m.composeCc.Value(),
 				m.composeSubject.Value(),
 				m.composeBody.Value(),
 			))
@@ -1214,8 +1226,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.composeTo, cmd = m.composeTo.Update(msg)
 				m.updateFilteredContacts()
 			case 1:
-				m.composeSubject, cmd = m.composeSubject.Update(msg)
+				m.composeCc, cmd = m.composeCc.Update(msg)
+				m.updateFilteredContacts()
 			case 2:
+				m.composeSubject, cmd = m.composeSubject.Update(msg)
+			case 3:
 				m.composeBody, cmd = m.composeBody.Update(msg)
 			}
 			cmds = append(cmds, cmd)
@@ -1288,7 +1303,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 
 	m.state = stateCompose
-	m.composeStep = 2 // Focus body field
+	m.composeStep = 3 // Focus body field
 	m.loadContacts()
 	
 	m.composeTo = textinput.New()
@@ -1304,6 +1319,8 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		}
 	}
 
+	var ccRecipients []string
+
 	if replyAll {
 		var origTo []Recipient
 		var origCc []Recipient
@@ -1315,7 +1332,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 			origCc = origMsg.CcRecipients
 		}
 
-		hasEmail := func(addr string) bool {
+		hasEmail := func(addr string, list []string) bool {
 			addr = strings.ToLower(strings.TrimSpace(addr))
 			if addr == "" {
 				return true
@@ -1323,7 +1340,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 			if m.userEmail != "" && strings.ToLower(m.userEmail) == addr {
 				return true
 			}
-			for _, r := range recipients {
+			for _, r := range list {
 				checkAddr := strings.ToLower(strings.TrimSpace(r))
 				if strings.Contains(checkAddr, "<") && strings.Contains(checkAddr, ">") {
 					start := strings.Index(checkAddr, "<")
@@ -1342,7 +1359,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		for _, r := range origTo {
 			addr := r.EmailAddress.Address
 			name := r.EmailAddress.Name
-			if !hasEmail(addr) {
+			if !hasEmail(addr, recipients) {
 				if name != "" {
 					recipients = append(recipients, fmt.Sprintf("%s <%s>", name, addr))
 				} else {
@@ -1354,17 +1371,22 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		for _, r := range origCc {
 			addr := r.EmailAddress.Address
 			name := r.EmailAddress.Name
-			if !hasEmail(addr) {
+			if !hasEmail(addr, recipients) && !hasEmail(addr, ccRecipients) {
 				if name != "" {
-					recipients = append(recipients, fmt.Sprintf("%s <%s>", name, addr))
+					ccRecipients = append(ccRecipients, fmt.Sprintf("%s <%s>", name, addr))
 				} else {
-					recipients = append(recipients, addr)
+					ccRecipients = append(ccRecipients, addr)
 				}
 			}
 		}
 	}
 
 	m.composeTo.SetValue(strings.Join(recipients, ", "))
+	
+	m.composeCc = textinput.New()
+	m.composeCc.Placeholder = "cc@domain.com (optional)"
+	m.composeCc.Width = m.width - 20
+	m.composeCc.SetValue(strings.Join(ccRecipients, ", "))
 	
 	subject := origMsg.Subject
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
@@ -1405,14 +1427,17 @@ func (m *mainModel) initiateReply(replyAll bool) {
 
 func (m *mainModel) updateComposeFocus() {
 	m.composeTo.Blur()
+	m.composeCc.Blur()
 	m.composeSubject.Blur()
 	m.composeBody.Blur()
 	switch m.composeStep {
 	case 0:
 		m.composeTo.Focus()
 	case 1:
-		m.composeSubject.Focus()
+		m.composeCc.Focus()
 	case 2:
+		m.composeSubject.Focus()
+	case 3:
 		m.composeBody.Focus()
 	}
 }
@@ -1435,7 +1460,17 @@ func (m *mainModel) updateFilteredContacts() {
 		return
 	}
 
-	val := m.composeTo.Value()
+	var val string
+	if m.composeStep == 0 {
+		val = m.composeTo.Value()
+	} else if m.composeStep == 1 {
+		val = m.composeCc.Value()
+	} else {
+		m.filteredContacts = nil
+		m.contactsSelected = 0
+		return
+	}
+
 	parts := strings.Split(val, ",")
 	if len(parts) == 0 {
 		m.filteredContacts = nil
@@ -1647,6 +1682,7 @@ func (m mainModel) View() string {
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
 		
 		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
+		ccBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 		subjBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 		bodyBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 
@@ -1654,8 +1690,10 @@ func (m mainModel) View() string {
 		case 0:
 			toBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		case 1:
-			subjBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+			ccBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		case 2:
+			subjBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+		case 3:
 			bodyBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 		}
 
@@ -1672,6 +1710,21 @@ func (m mainModel) View() string {
 		} else {
 			s.WriteString("\n")
 		}
+
+		s.WriteString("   Cc:\n   " + ccBorder.Render(m.composeCc.View()) + "\n")
+		if m.config.UseSQLite != 0 && m.composeStep == 1 && len(m.filteredContacts) > 0 {
+			popupContent := m.renderContactsPopup()
+			lines := strings.Split(popupContent, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					s.WriteString("   " + line + "\n")
+				}
+			}
+			s.WriteString("\n")
+		} else {
+			s.WriteString("\n")
+		}
+
 		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
 		s.WriteString("   Body:\n   " + bodyBorder.Render(m.composeBody.View()) + "\n\n")
 		

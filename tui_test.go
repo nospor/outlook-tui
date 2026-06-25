@@ -314,5 +314,47 @@ func TestComposeContactSuggestions(t *testing.T) {
 	}
 }
 
+func TestComposeCcContactSuggestions(t *testing.T) {
+	m := mainModel{
+		state:       stateCompose,
+		composeStep: 1, // CC field
+		contacts: []Contact{
+			{Name: "Alice Smith", Address: "alice@ex.com"},
+			{Name: "Bob Jones", Address: "bob@ex.com"},
+			{Name: "Charlie Brown", Address: "charlie@ex.com"},
+		},
+		config: Config{UseSQLite: 1},
+	}
+	m.composeCc = textinput.New()
+	
+	// Simulate typing "a"
+	m.composeCc.SetValue("a")
+	m.updateFilteredContacts()
+
+	if len(m.filteredContacts) != 2 {
+		t.Fatalf("expected 2 filtered contacts (Alice, Charlie), got %d", len(m.filteredContacts))
+	}
+	if m.filteredContacts[0].Name != "Alice Smith" {
+		t.Errorf("expected first matching contact to be Alice Smith, got %s", m.filteredContacts[0].Name)
+	}
+
+	// Pressing Down should move selection to second option (Charlie)
+	updatedInterface, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated := updatedInterface.(mainModel)
+	if updated.contactsSelected != 1 {
+		t.Errorf("expected contactsSelected to be 1, got %d", updated.contactsSelected)
+	}
+
+	// Pressing Enter should autofill Charlie into CC
+	updatedInterface, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = updatedInterface.(mainModel)
+	if updated.composeCc.Value() != "Charlie Brown <charlie@ex.com>, " {
+		t.Errorf("expected autofilled value 'Charlie Brown <charlie@ex.com>, ', got %q", updated.composeCc.Value())
+	}
+	if len(updated.filteredContacts) != 0 {
+		t.Errorf("expected suggestions list to be cleared after selection, but got %d items", len(updated.filteredContacts))
+	}
+}
+
 
 

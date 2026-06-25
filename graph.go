@@ -158,26 +158,9 @@ func (gc *GraphClient) GetAttachments(messageID string) ([]Attachment, error) {
 	return result.Value, nil
 }
 
-func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress string) error {
-	reqURL := fmt.Sprintf("%s/me/sendMail", graphBaseURL)
-
-	sendReq := struct {
-		Message struct {
-			Subject      string      `json:"subject"`
-			Body         ItemBody    `json:"body"`
-			ToRecipients []Recipient `json:"toRecipients"`
-		} `json:"message"`
-		SaveToSentItems string `json:"saveToSentItems"`
-	}{}
-
-	sendReq.Message.Subject = subject
-	sendReq.Message.Body = ItemBody{
-		ContentType: "Text",
-		Content:     bodyText,
-	}
-
-	var toRecipients []Recipient
-	emails := strings.Split(recipientAddress, ",")
+func parseAddressStringToRecipients(addressStr string) []Recipient {
+	var recipients []Recipient
+	emails := strings.Split(addressStr, ",")
 	for _, email := range emails {
 		email = strings.TrimSpace(email)
 		if email == "" {
@@ -193,14 +176,37 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress string) e
 				addr = strings.TrimSpace(email[start+1 : end])
 			}
 		}
-		toRecipients = append(toRecipients, Recipient{
+		recipients = append(recipients, Recipient{
 			EmailAddress: EmailAddress{
 				Name:    name,
 				Address: addr,
 			},
 		})
 	}
-	sendReq.Message.ToRecipients = toRecipients
+	return recipients
+}
+
+func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string) error {
+	reqURL := fmt.Sprintf("%s/me/sendMail", graphBaseURL)
+
+	sendReq := struct {
+		Message struct {
+			Subject      string      `json:"subject"`
+			Body         ItemBody    `json:"body"`
+			ToRecipients []Recipient `json:"toRecipients"`
+			CcRecipients []Recipient `json:"ccRecipients"`
+		} `json:"message"`
+		SaveToSentItems string `json:"saveToSentItems"`
+	}{}
+
+	sendReq.Message.Subject = subject
+	sendReq.Message.Body = ItemBody{
+		ContentType: "Text",
+		Content:     bodyText,
+	}
+
+	sendReq.Message.ToRecipients = parseAddressStringToRecipients(recipientAddress)
+	sendReq.Message.CcRecipients = parseAddressStringToRecipients(ccAddress)
 	sendReq.SaveToSentItems = "true"
 
 	jsonBytes, err := json.Marshal(sendReq)
