@@ -83,6 +83,7 @@ func TestConfigDefaults(t *testing.T) {
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
+	cfg.ExcludedFolders = []string{"Junk Email", "RSS Feeds"}
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -98,5 +99,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.UseSQLite != 1 {
 		t.Errorf("expected custom UseSQLite to be 1, got %d", cfg.UseSQLite)
+	}
+	if len(cfg.ExcludedFolders) != 2 || cfg.ExcludedFolders[0] != "Junk Email" || cfg.ExcludedFolders[1] != "RSS Feeds" {
+		t.Errorf("expected custom ExcludedFolders to be [\"Junk Email\", \"RSS Feeds\"], got %v", cfg.ExcludedFolders)
 	}
 }

@@ -94,15 +94,17 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `use_sqlite`: Enable the local SQLite message cache (defaults to `0` — disabled).
   - **`0` (default)** — No local cache; messages are always fetched fresh from the Microsoft Graph API.
   - **`1`** — Cache messages in `~/.cache/outlook-tui/db.db`. On subsequent launches, cached messages for the first folder are displayed immediately while a fresh fetch runs in the background. Switching folders also shows cached messages instantly. Deleting a message or opening it (marking read) updates the cache.
+* `excluded_folders`: A list of folder names (display name or well-known name) that should not be shown in the Folders pane (e.g. `["Junk Email", "RSS Feeds"]`). Matching is case-insensitive.
 
-Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
+Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching and folder exclusions:
 ```json
 {
   "client_id": "your-azure-client-id",
   "tenant_id": "common",
   "refresh_time_min": 5,
   "layout": 2,
-  "use_sqlite": 1
+  "use_sqlite": 1,
+  "excluded_folders": ["Junk Email", "RSS Feeds"]
 }
 ```
 

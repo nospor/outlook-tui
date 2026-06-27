@@ -779,7 +779,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case foldersFetchedMsg:
-		sortedFolders := sortFolders(msg)
+		sortedFolders := sortFolders(msg, m.config.ExcludedFolders)
 		if m.state != stateMain {
 			// Initial load: set up navigation state
 			m.folders = sortedFolders
@@ -3143,12 +3143,15 @@ func stripANSICodes(s string) string {
 	return re.ReplaceAllString(s, "")
 }
 
-func sortFolders(folders []MailFolder) []MailFolder {
+func sortFolders(folders []MailFolder, excluded []string) []MailFolder {
 	var inbox *MailFolder
 	var sentItems *MailFolder
 	var others []MailFolder
 
 	for _, f := range folders {
+		if isExcluded(f, excluded) {
+			continue
+		}
 		lowerName := strings.ToLower(f.DisplayName)
 		lowerWellKnown := strings.ToLower(f.WellKnownName)
 		if lowerWellKnown == "inbox" || lowerName == "inbox" {
@@ -3171,6 +3174,19 @@ func sortFolders(folders []MailFolder) []MailFolder {
 	}
 	result = append(result, others...)
 	return result
+}
+
+func isExcluded(folder MailFolder, excluded []string) bool {
+	for _, excl := range excluded {
+		exclLower := strings.ToLower(strings.TrimSpace(excl))
+		if exclLower == "" {
+			continue
+		}
+		if strings.ToLower(folder.DisplayName) == exclLower || strings.ToLower(folder.WellKnownName) == exclLower {
+			return true
+		}
+	}
+	return false
 }
 
 func wrapText(text string, width int) string {

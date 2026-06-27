@@ -20,7 +20,7 @@ func TestSortFolders(t *testing.T) {
 		{ID: "5", DisplayName: "Junk Email", WellKnownName: "junkemail"},
 	}
 
-	sorted := sortFolders(folders)
+	sorted := sortFolders(folders, nil)
 
 	if len(sorted) != len(folders) {
 		t.Fatalf("expected %d folders, got %d", len(folders), len(sorted))
@@ -49,7 +49,7 @@ func TestSortFolders_NoInboxOrSent(t *testing.T) {
 		{ID: "3", DisplayName: "Archive", WellKnownName: "archive"},
 	}
 
-	sorted := sortFolders(folders)
+	sorted := sortFolders(folders, nil)
 
 	if len(sorted) != 2 {
 		t.Fatalf("expected 2 folders, got %d", len(sorted))
@@ -67,7 +67,7 @@ func TestSortFolders_CaseInsensitiveAndFallback(t *testing.T) {
 		{ID: "3", DisplayName: "Boîte d'envoi", WellKnownName: "sentitems"}, // localized but wellKnownName is sentitems
 	}
 
-	sorted := sortFolders(folders)
+	sorted := sortFolders(folders, nil)
 
 	if len(sorted) != 3 {
 		t.Fatalf("expected 3 folders, got %d", len(sorted))
@@ -83,6 +83,26 @@ func TestSortFolders_CaseInsensitiveAndFallback(t *testing.T) {
 
 	if sorted[2].DisplayName != "drafts" {
 		t.Errorf("expected third folder to be 'drafts', got '%s'", sorted[2].DisplayName)
+	}
+}
+
+func TestSortFolders_Excluded(t *testing.T) {
+	folders := []MailFolder{
+		{ID: "1", DisplayName: "Drafts", WellKnownName: "drafts"},
+		{ID: "2", DisplayName: "Inbox", WellKnownName: "inbox"},
+		{ID: "3", DisplayName: "Junk Email", WellKnownName: "junkemail"},
+		{ID: "4", DisplayName: "RSS Feeds", WellKnownName: "rssfeeds"},
+	}
+
+	excluded := []string{"Junk Email", "rssfeeds"}
+	sorted := sortFolders(folders, excluded)
+
+	if len(sorted) != 2 {
+		t.Fatalf("expected 2 folders, got %d", len(sorted))
+	}
+
+	if sorted[0].DisplayName != "Inbox" || sorted[1].DisplayName != "Drafts" {
+		t.Errorf("expected Inbox and Drafts, got %v", sorted)
 	}
 }
 

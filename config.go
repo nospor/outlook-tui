@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	ClientID       string `json:"client_id"`
-	TenantID       string `json:"tenant_id"`        // defaults to "common"
-	RefreshTimeMin int    `json:"refresh_time_min"` // defaults to 5
-	Layout         int    `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
-	UseSQLite      int    `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
+	ClientID        string   `json:"client_id"`
+	TenantID        string   `json:"tenant_id"`        // defaults to "common"
+	RefreshTimeMin  int      `json:"refresh_time_min"` // defaults to 5
+	Layout          int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
+	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
+	ExcludedFolders []string `json:"excluded_folders"`
 }
 
 func GetConfigDir() (string, error) {
@@ -62,7 +63,7 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") {
 		_ = SaveConfig(cfg)
 	}
 
