@@ -77,6 +77,10 @@ type (
 		Message     *Message
 		Attachments []Attachment
 	}
+	attachmentsFetchedMsg struct {
+		MessageID   string
+		Attachments []Attachment
+	}
 	tokenFetchedMsg     TokenCache
 	deviceCodeMsg       *DeviceCodeResponse
 	statusUpdateMsg     string
@@ -275,6 +279,7 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 		var atts []Attachment
 		if msg.HasAttachments {
 			atts, _ = gc.GetAttachments(msgID)
+			msg.Attachments = atts
 		}
 
 		// Also mark message as read if unread
@@ -283,6 +288,16 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 		}
 
 		return messageDetailFetchedMsg{Message: msg, Attachments: atts}
+	}
+}
+
+func fetchAttachmentsCmd(gc *GraphClient, msgID string) tea.Cmd {
+	return func() tea.Msg {
+		atts, err := gc.GetAttachments(msgID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return attachmentsFetchedMsg{MessageID: msgID, Attachments: atts}
 	}
 }
 
@@ -560,10 +575,15 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	// 1. Check if the body content is already loaded in the memory model
 	if am.Body.Content != "" {
 		m.detailMessage = am
-		m.attachments = nil
+		m.attachments = am.Attachments
 		m = m.updateViewportSize()
 		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content), m.detailViewport.Width))
 		m.detailViewport.GotoTop()
+
+		if am.HasAttachments && len(am.Attachments) == 0 {
+			m.statusMsg = "Loading attachments..."
+			return m, fetchAttachmentsCmd(m.graphClient, am.ID)
+		}
 
 		if am.IsRead {
 			m.statusMsg = "Message details loaded"
@@ -578,15 +598,16 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	if m.db != nil {
 		if cached, err := m.db.GetMessage(am.ID); err == nil && cached != nil && cached.Body.Content != "" {
 			m.detailMessage = cached
-			m.attachments = nil
+			m.attachments = cached.Attachments
 			m = m.updateViewportSize()
 			m.detailViewport.SetContent(wrapText(formatBodyContent(cached.Body.Content), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 
-			// Update in-memory collections so they have the loaded body too
+			// Update in-memory collections so they have the loaded body and attachments too
 			for i, msg := range m.messages {
 				if msg.ID == am.ID {
 					m.messages[i].Body = cached.Body
+					m.messages[i].Attachments = cached.Attachments
 					break
 				}
 			}
@@ -594,9 +615,15 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == am.ID {
 						m.threadGroups[ti].Members[mi].Body = cached.Body
+						m.threadGroups[ti].Members[mi].Attachments = cached.Attachments
 						break
 					}
 				}
+			}
+
+			if cached.HasAttachments && len(cached.Attachments) == 0 {
+				m.statusMsg = "Loading attachments..."
+				return m, fetchAttachmentsCmd(m.graphClient, am.ID)
 			}
 
 			if cached.IsRead {
@@ -789,17 +816,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "No more messages to load"
 			break
 		}
-		// Populate any cached bodies into the newly fetched message list to avoid losing them in memory
+		// Populate any cached bodies and attachments into the newly fetched message list to avoid losing them in memory
 		for i, newMsg := range msg.Messages {
 			for _, oldMsg := range m.messages {
 				if oldMsg.ID == newMsg.ID && oldMsg.Body.Content != "" {
 					msg.Messages[i].Body = oldMsg.Body
+					msg.Messages[i].Attachments = oldMsg.Attachments
 					break
 				}
 			}
 			if msg.Messages[i].Body.Content == "" && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
+					msg.Messages[i].Attachments = cached.Attachments
 				}
 			}
 		}
@@ -816,12 +845,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
 		}
-		// Populate any cached bodies into the newly fetched message list to avoid losing them in memory
+		// Populate any cached bodies and attachments into the newly fetched message list to avoid losing them in memory
 		for i, newMsg := range msg.Messages {
 			// Check current in-memory messages
 			for _, oldMsg := range m.messages {
 				if oldMsg.ID == newMsg.ID && oldMsg.Body.Content != "" {
 					msg.Messages[i].Body = oldMsg.Body
+					msg.Messages[i].Attachments = oldMsg.Attachments
 					break
 				}
 			}
@@ -829,6 +859,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Messages[i].Body.Content == "" && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
+					msg.Messages[i].Attachments = cached.Attachments
 				}
 			}
 		}
@@ -901,6 +932,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if em.ID == msg.Message.ID {
 					m.messages[i].IsRead = true
 					m.messages[i].Body = msg.Message.Body
+					m.messages[i].Attachments = msg.Attachments
 				}
 			}
 			for ti := range m.threadGroups {
@@ -908,6 +940,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.threadGroups[ti].Members[mi].ID == msg.Message.ID {
 						m.threadGroups[ti].Members[mi].IsRead = true
 						m.threadGroups[ti].Members[mi].Body = msg.Message.Body
+						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
 					}
 				}
 			}
@@ -917,6 +950,35 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.db.UpdateReadStatus(msg.Message.ID, true)
 			}
 			m.statusMsg = "Message details loaded"
+		}
+
+	case attachmentsFetchedMsg:
+		if am := m.activeMessage(); am != nil && am.ID == msg.MessageID {
+			m.attachments = msg.Attachments
+			m.selectedAttach = 0
+			m = m.updateViewportSize()
+			
+			// Update in-memory collections so they have the loaded attachments too
+			for i, em := range m.messages {
+				if em.ID == msg.MessageID {
+					m.messages[i].Attachments = msg.Attachments
+				}
+			}
+			for ti := range m.threadGroups {
+				for mi := range m.threadGroups[ti].Members {
+					if m.threadGroups[ti].Members[mi].ID == msg.MessageID {
+						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
+					}
+				}
+			}
+			// Upsert to SQLite cache to save it for future
+			if m.db != nil && len(m.folders) > 0 {
+				if cached, err := m.db.GetMessage(msg.MessageID); err == nil && cached != nil {
+					cached.Attachments = msg.Attachments
+					_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *cached)
+				}
+			}
+			m.statusMsg = "Attachments loaded"
 		}
 
 	case userEmailFetchedMsg:

@@ -35,6 +35,7 @@ type Message struct {
 	ToRecipients     []Recipient `json:"toRecipients"`
 	CcRecipients     []Recipient `json:"ccRecipients"`
 	Body             ItemBody    `json:"body"`
+	Attachments      []Attachment `json:"attachments,omitempty"`
 }
 
 type Recipient struct {

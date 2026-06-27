@@ -78,12 +78,20 @@ func (d *DB) migrate() error {
 			cc_recipients     TEXT NOT NULL DEFAULT '[]',
 			body_content_type TEXT NOT NULL DEFAULT '',
 			body_content      TEXT NOT NULL DEFAULT '',
+			attachments       TEXT NOT NULL DEFAULT '[]',
 			fetched_at        TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_folder ON messages(folder_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(folder_id, received_datetime DESC);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add attachments column if it doesn't exist for existing databases
+	_, _ = d.db.Exec(`ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`)
+
+	return nil
 }
 
 // recipientsJSON marshals a []Recipient to a JSON string (never errors in practice).
@@ -99,6 +107,25 @@ func parseRecipients(s string) []Recipient {
 	return rs
 }
 
+// attachmentsJSON marshals a []Attachment to a JSON string.
+func attachmentsJSON(as []Attachment) string {
+	if as == nil {
+		return "[]"
+	}
+	b, _ := json.Marshal(as)
+	return string(b)
+}
+
+// parseAttachments unmarshals a JSON string back to []Attachment.
+func parseAttachments(s string) []Attachment {
+	var as []Attachment
+	_ = json.Unmarshal([]byte(s), &as)
+	if as == nil {
+		as = []Attachment{}
+	}
+	return as
+}
+
 // UpsertMessage inserts or replaces a message in the cache.
 func (d *DB) UpsertMessage(folderID string, msg Message) error {
 	_, err := d.db.Exec(`
@@ -108,8 +135,9 @@ func (d *DB) UpsertMessage(folderID string, msg Message) error {
 			from_name, from_address,
 			to_recipients, cc_recipients,
 			body_content_type, body_content,
+			attachments,
 			fetched_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msg.ID,
 		folderID,
 		msg.ConversationID,
@@ -124,6 +152,7 @@ func (d *DB) UpsertMessage(folderID string, msg Message) error {
 		recipientsJSON(msg.CcRecipients),
 		msg.Body.ContentType,
 		msg.Body.Content,
+		attachmentsJSON(msg.Attachments),
 		time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	return err
@@ -220,7 +249,7 @@ func (d *DB) GetMessages(folderID string) ([]Message, error) {
 		       received_datetime, is_read, has_attachments,
 		       from_name, from_address,
 		       to_recipients, cc_recipients,
-		       body_content_type, body_content
+		       body_content_type, body_content, attachments
 		FROM messages
 		WHERE folder_id = ?
 		ORDER BY received_datetime DESC`, folderID)
@@ -237,13 +266,14 @@ func (d *DB) GetMessages(folderID string) ([]Message, error) {
 		var fromName, fromAddress string
 		var toJSON, ccJSON string
 		var bodyType, bodyContent string
+		var attachmentsJSON string
 
 		if err := rows.Scan(
 			&m.ID, &m.ConversationID, &m.Subject, &m.BodyPreview,
 			&receivedStr, &isRead, &hasAttachments,
 			&fromName, &fromAddress,
 			&toJSON, &ccJSON,
-			&bodyType, &bodyContent,
+			&bodyType, &bodyContent, &attachmentsJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -255,6 +285,7 @@ func (d *DB) GetMessages(folderID string) ([]Message, error) {
 		m.ToRecipients = parseRecipients(toJSON)
 		m.CcRecipients = parseRecipients(ccJSON)
 		m.Body = ItemBody{ContentType: bodyType, Content: bodyContent}
+		m.Attachments = parseAttachments(attachmentsJSON)
 
 		msgs = append(msgs, m)
 	}
@@ -268,7 +299,7 @@ func (d *DB) GetMessage(messageID string) (*Message, error) {
 		       received_datetime, is_read, has_attachments,
 		       from_name, from_address,
 		       to_recipients, cc_recipients,
-		       body_content_type, body_content
+		       body_content_type, body_content, attachments
 		FROM messages
 		WHERE id = ?`, messageID)
 
@@ -278,13 +309,14 @@ func (d *DB) GetMessage(messageID string) (*Message, error) {
 	var fromName, fromAddress string
 	var toJSON, ccJSON string
 	var bodyType, bodyContent string
+	var attachmentsJSON string
 
 	err := row.Scan(
 		&m.ID, &m.ConversationID, &m.Subject, &m.BodyPreview,
 		&receivedStr, &isRead, &hasAttachments,
 		&fromName, &fromAddress,
 		&toJSON, &ccJSON,
-		&bodyType, &bodyContent,
+		&bodyType, &bodyContent, &attachmentsJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -297,6 +329,7 @@ func (d *DB) GetMessage(messageID string) (*Message, error) {
 	m.ToRecipients = parseRecipients(toJSON)
 	m.CcRecipients = parseRecipients(ccJSON)
 	m.Body = ItemBody{ContentType: bodyType, Content: bodyContent}
+	m.Attachments = parseAttachments(attachmentsJSON)
 
 	return &m, nil
 }

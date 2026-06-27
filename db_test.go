@@ -44,6 +44,16 @@ func TestDBCache(t *testing.T) {
 			ContentType: "Text",
 			Content:     "Full body content here.",
 		},
+		Attachments: []Attachment{
+			{
+				ID:           "att-1",
+				Name:         "file.txt",
+				ContentType:  "text/plain",
+				Size:         123,
+				IsInline:     false,
+				ContentBytes: "SGVsbG8gV29ybGQ=", // Base64 for Hello World
+			},
+		},
 	}
 
 	// 2. Upsert single message
@@ -89,6 +99,15 @@ func TestDBCache(t *testing.T) {
 	}
 	if len(retrieved.ToRecipients) != 1 || retrieved.ToRecipients[0].EmailAddress.Address != "recipient@example.com" {
 		t.Errorf("unexpected ToRecipients: %v", retrieved.ToRecipients)
+	}
+
+	// Retrieve full message to verify attachments are fetched
+	fullMsg, err := db.GetMessage(msg1.ID)
+	if err != nil {
+		t.Fatalf("failed to get full message: %v", err)
+	}
+	if len(fullMsg.Attachments) != 1 || fullMsg.Attachments[0].Name != "file.txt" {
+		t.Errorf("expected 1 attachment named file.txt, got: %v", fullMsg.Attachments)
 	}
 
 	// 4. Update read status
