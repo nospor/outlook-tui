@@ -2435,8 +2435,12 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 			if subj == "" {
 				subj = "(No Subject)"
 			}
+			dateStr := msg.ReceivedDateTime.Local().Format("Jan 2 15:04")
 			// Truncate to fit
-			maxFN := maxFrom - len(threadIndicator) - len(countBadge)
+			// line1 format: threadIndicator + unreadMarker + " " + fromName + countBadge + "  " + dateStr
+			leftOverhead := len(threadIndicator) + len(unreadMarker) + 1 + len(countBadge)
+			rightOverhead := 2 + len(dateStr)
+			maxFN := (availWidth - 2) - leftOverhead - rightOverhead
 			if maxFN < 4 {
 				maxFN = 4
 			}
@@ -2446,7 +2450,13 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 			if len(subj) > maxSubj {
 				subj = subj[:maxSubj-2] + ".."
 			}
-			line1 := fmt.Sprintf("%s%s %s%s", threadIndicator, unreadMarker, fromName, countBadge)
+			leftPart := fmt.Sprintf("%s%s %s%s", threadIndicator, unreadMarker, fromName, countBadge)
+			rightPart := dateStr
+			spaceCount := (availWidth - 2) - lipgloss.Width(leftPart) - lipgloss.Width(rightPart)
+			if spaceCount < 2 {
+				spaceCount = 2
+			}
+			line1 := leftPart + strings.Repeat(" ", spaceCount) + rightPart
 			line2 := fmt.Sprintf("  %s %s", attachMarker, subj)
 			if isSelected {
 				s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line1) + "\n" + dimStyle.Render(line2) + "\n\n")
@@ -2466,15 +2476,23 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 			if !msg.IsRead {
 				unreadMarker = "●"
 			}
-			dateStr := msg.ReceivedDateTime.Local().Format("Jan 2")
-			maxFN2 := maxFrom - 8
+			dateStr := msg.ReceivedDateTime.Local().Format("Jan 2 15:04")
+			leftOverhead := 6 // "  └ " (4) + unreadMarker (1) + " " (1)
+			rightOverhead := 2 + len(dateStr)
+			maxFN2 := (availWidth - 2) - leftOverhead - rightOverhead
 			if maxFN2 < 4 {
 				maxFN2 = 4
 			}
 			if len(fromName) > maxFN2 {
 				fromName = fromName[:maxFN2-2] + ".."
 			}
-			line1 := fmt.Sprintf("  └ %s %s  %s", unreadMarker, fromName, dateStr)
+			leftPart := fmt.Sprintf("  └ %s %s", unreadMarker, fromName)
+			rightPart := dateStr
+			spaceCount := (availWidth - 2) - lipgloss.Width(leftPart) - lipgloss.Width(rightPart)
+			if spaceCount < 2 {
+				spaceCount = 2
+			}
+			line1 := leftPart + strings.Repeat(" ", spaceCount) + rightPart
 			line2 := fmt.Sprintf("    %s", msg.BodyPreview)
 			if len(line2) > availWidth-2 {
 				line2 = line2[:availWidth-5] + "..."

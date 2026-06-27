@@ -90,7 +90,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `refresh_time_min`: The background refresh/fetching interval in minutes (defaults to `5`).
 * `layout`: The UI layout mode (defaults to `1`).
   - **`1` (default) — Side-by-side**: Three panes arranged horizontally: `[Folders | Messages | Detail]`.
-  - **`2` — Stacked left column**: Folders and Messages are stacked vertically on the left (~30% / ~70% height split), with the Detail pane occupying the wider right column.
+  - **`2` — Stacked left column**: Folders and Messages are stacked vertically on the left (~30% / ~70% height split), with the Detail pane occupying the wider right column. In this layout, the Messages pane displays the date and time of the message next to the author.
 * `use_sqlite`: Enable the local SQLite message cache (defaults to `0` — disabled).
   - **`0` (default)** — No local cache; messages are always fetched fresh from the Microsoft Graph API.
   - **`1`** — Cache messages in `~/.cache/outlook-tui/db.db`. On subsequent launches, cached messages for the first folder are displayed immediately while a fresh fetch runs in the background. Switching folders also shows cached messages instantly. Deleting a message or opening it (marking read) updates the cache.
