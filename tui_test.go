@@ -553,6 +553,33 @@ func TestComposeCtrlS(t *testing.T) {
 	}
 }
 
+func TestReloadFolderKey(t *testing.T) {
+	m := mainModel{
+		state: stateMain,
+		folders: []MailFolder{
+			{ID: "folder1", DisplayName: "Inbox"},
+		},
+		selectedFolder: 0,
+	}
+
+	keyMsg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("R"),
+	}
+
+	updatedModelInterface, cmd := m.Update(keyMsg)
+	updated := updatedModelInterface.(mainModel)
+
+	expectedMsg := "Reloading messages for Inbox..."
+	if updated.statusMsg != expectedMsg {
+		t.Errorf("expected statusMsg to be %q, got %q", expectedMsg, updated.statusMsg)
+	}
+
+	if cmd == nil {
+		t.Fatalf("expected a command to be returned, got nil")
+	}
+}
+
 func TestParseAddressStringToRecipients(t *testing.T) {
 	// Test empty address string returns non-nil slice
 	resEmpty := parseAddressStringToRecipients("")

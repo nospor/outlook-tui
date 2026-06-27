@@ -124,6 +124,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `Ctrl+g`                      | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view. |
 | `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
 | `r`                           | Toggle the selected message's Read/Unread status                                                                                            |
+| `R`                           | Reload/refresh messages in the selected folder                                                                                               |
 | `a`                           | View and select attachments on the current email                                                                                            |
 | `u`                           | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text)   |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |

@@ -1218,6 +1218,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return nil
 				})
 			}
+		case "R":
+			// Reload selected folder
+			if len(m.folders) > 0 {
+				m.statusMsg = fmt.Sprintf("Reloading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+				cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+			}
 		case "a":
 			// Open attachments pane if message has attachments
 			if m.detailMessage != nil && len(m.attachments) > 0 {
@@ -1935,7 +1941,7 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [r] Read/Unread | [a] Attachments | [u] Copy URL | [q] Quit"
+		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [R] Reload | [r] Read/Unread | [a] Attachments | [u] Copy URL | [q] Quit"
 		
 		availableWidth := m.width - lipgloss.Width(keysText) - 4
 		if availableWidth > 5 {
