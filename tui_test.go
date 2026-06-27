@@ -650,6 +650,116 @@ func TestUndeleteKey(t *testing.T) {
 	}
 }
 
+func TestReplyKeyBypassConfirm(t *testing.T) {
+	m := mainModel{
+		state:     stateMain,
+		userEmail: "me@example.com",
+		virtualSelected: 0,
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{
+				Members: []Message{
+					{
+						ID: "msg1",
+						From: Recipient{
+							EmailAddress: EmailAddress{
+								Name:    "Sender Person",
+								Address: "sender@example.com",
+							},
+						},
+						ToRecipients: []Recipient{
+							{
+								EmailAddress: EmailAddress{
+									Name:    "Me",
+									Address: "me@example.com",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	keyMsg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("A"),
+	}
+
+	updatedModelInterface, _ := m.Update(keyMsg)
+	updated := updatedModelInterface.(mainModel)
+
+	// Since there is only one other person (sender@example.com) besides me@example.com,
+	// it should bypass stateReplyConfirm and go straight to stateCompose.
+	if updated.state != stateCompose {
+		t.Errorf("expected state to be stateCompose, got %v", updated.state)
+	}
+
+	if updated.composeIsReplyAll {
+		t.Error("expected composeIsReplyAll to be false")
+	}
+
+	if !strings.Contains(updated.composeTo.Value(), "sender@example.com") {
+		t.Errorf("expected composeTo to contain sender@example.com, got %q", updated.composeTo.Value())
+	}
+}
+
+func TestReplyKeyShowConfirm(t *testing.T) {
+	m := mainModel{
+		state:     stateMain,
+		userEmail: "me@example.com",
+		virtualSelected: 0,
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{
+				Members: []Message{
+					{
+						ID: "msg2",
+						From: Recipient{
+							EmailAddress: EmailAddress{
+								Name:    "Sender Person",
+								Address: "sender@example.com",
+							},
+						},
+						ToRecipients: []Recipient{
+							{
+								EmailAddress: EmailAddress{
+									Name:    "Me",
+									Address: "me@example.com",
+								},
+							},
+							{
+								EmailAddress: EmailAddress{
+									Name:    "Other Person",
+									Address: "other@example.com",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	keyMsg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("A"),
+	}
+
+	updatedModelInterface, _ := m.Update(keyMsg)
+	updated := updatedModelInterface.(mainModel)
+
+	// Since there are multiple other people (sender@example.com and other@example.com),
+	// it should prompt the user (stateReplyConfirm).
+	if updated.state != stateReplyConfirm {
+		t.Errorf("expected state to be stateReplyConfirm, got %v", updated.state)
+	}
+}
+
 
 
 

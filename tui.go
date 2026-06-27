@@ -1373,9 +1373,49 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "A":
 			// Ask if user wants to reply to sender or all
-			if m.activeMessage() != nil {
-				m.state = stateReplyConfirm
-				m.statusMsg = "Select reply option (s/a/c)"
+			if am := m.activeMessage(); am != nil {
+				var origTo []Recipient
+				var origCc []Recipient
+				senderAddr := am.From.EmailAddress.Address
+				if m.detailMessage != nil && m.detailMessage.ID == am.ID {
+					origTo = m.detailMessage.ToRecipients
+					origCc = m.detailMessage.CcRecipients
+					if m.detailMessage.From.EmailAddress.Address != "" {
+						senderAddr = m.detailMessage.From.EmailAddress.Address
+					}
+				} else {
+					origTo = am.ToRecipients
+					origCc = am.CcRecipients
+				}
+
+				uniqueOthers := make(map[string]bool)
+				userEmailLower := strings.ToLower(strings.TrimSpace(m.userEmail))
+
+				senderAddr = strings.ToLower(strings.TrimSpace(senderAddr))
+				if senderAddr != "" && (userEmailLower == "" || senderAddr != userEmailLower) {
+					uniqueOthers[senderAddr] = true
+				}
+
+				for _, r := range origTo {
+					addr := strings.ToLower(strings.TrimSpace(r.EmailAddress.Address))
+					if addr != "" && (userEmailLower == "" || addr != userEmailLower) {
+						uniqueOthers[addr] = true
+					}
+				}
+
+				for _, r := range origCc {
+					addr := strings.ToLower(strings.TrimSpace(r.EmailAddress.Address))
+					if addr != "" && (userEmailLower == "" || addr != userEmailLower) {
+						uniqueOthers[addr] = true
+					}
+				}
+
+				if len(uniqueOthers) <= 1 {
+					m.initiateReply(false)
+				} else {
+					m.state = stateReplyConfirm
+					m.statusMsg = "Select reply option (s/a/c)"
+				}
 			}
 		case "u":
 			// Extract URLs from the selected message's main body (not quoted text)

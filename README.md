@@ -119,7 +119,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `Space`                       | Toggle expand/collapse for the selected conversation thread (works when focused on either the Messages or Folders pane)                     |
 | `PageUp` / `PageDown`         | Scroll message body up/down                                                                                                                 |
 | `n`                           | Compose a new email                                                                                                                         |
-| `A`                           | Reply / Answer to the currently selected message (pre-fills sender, subject with Re:, quotes body, and focuses body field at the beginning) |
+| `A`                           | Reply to the selected message. Automatically replies to the sender if they are the only other participant, or prompts to choose Reply vs Reply All if there are multiple participants. |
 | `Ctrl+s` (or `Ctrl+x`)        | Send the message (when in Compose view)                                                                                                     |
 | `Ctrl+g`                      | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view. |
 | `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
