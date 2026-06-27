@@ -31,6 +31,10 @@ func GetCacheDir() (string, error) {
 }
 
 // OpenDB opens (or creates) the SQLite database at ~/.cache/outlook-tui/db.db.
+// We use the default DELETE journal mode (no WAL) so the database is always a
+// single db.db file with no -wal/-shm sidecars. This means a dirty shutdown
+// (e.g. laptop restart while the app is open) can never leave a stale WAL that
+// causes duplicate or corrupted data on next startup.
 func OpenDB() (*DB, error) {
 	dir, err := GetCacheDir()
 	if err != nil {
@@ -38,7 +42,7 @@ func OpenDB() (*DB, error) {
 	}
 
 	path := filepath.Join(dir, "db.db")
-	sqlDB, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_foreign_keys=on")
+	sqlDB, err := sql.Open("sqlite3", path+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
@@ -51,7 +55,7 @@ func OpenDB() (*DB, error) {
 	return d, nil
 }
 
-// Close closes the underlying database.
+// Close closes the underlying database connection.
 func (d *DB) Close() error {
 	return d.db.Close()
 }

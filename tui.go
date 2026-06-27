@@ -1671,7 +1671,9 @@ func (m mainModel) updateViewportSizeLayout1() mainModel {
 	//   Height(n) with Border             → outer = n+2  (Height is inner content)
 	//   fView outer=25, mView outer=35 → dView outer must = m.width-60 → Width = m.width-62
 	//   Content area inside padding = Width - 2 = m.width-64 (viewport width)
-	paneHeight := m.height - 6 // inner content; outer = paneHeight+2 (border top+bottom)
+	// View() line budget: 1 (title) + 2 (\n\n) + paneHeight+2 (borders) + 1 (trailing \n) + 1 (\n before footer) + 1 (footer) = paneHeight+8
+	// So paneHeight = m.height - 8.
+	paneHeight := m.height - 8 // inner content; outer = paneHeight+2 (border top+bottom)
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -1704,7 +1706,8 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 	//
 	// Left column: leftColInner=46 → leftColOuter=50 (inner + 2 padding + 2 border)
 	// Right detail pane content width = m.width - leftColOuter - 4 (its own pad+border) = m.width - 54
-	totalHeight := m.height - 6
+	// Same budget as Layout1: paneHeight+8 total lines → totalHeight = m.height - 8.
+	totalHeight := m.height - 8
 	if totalHeight < 10 {
 		totalHeight = 10
 	}
@@ -2033,7 +2036,7 @@ func (m mainModel) renderContactsPopup() string {
 // renderLayout1 renders the default side-by-side three-pane layout:
 //   [Folders | Messages | Detail]
 func (m mainModel) renderLayout1() string {
-	paneHeight := m.height - 6
+	paneHeight := m.height - 8
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -2082,7 +2085,7 @@ func (m mainModel) renderLayout1() string {
 // Left column inner width = 46 → outer = 50 (2 padding + 2 border on each side).
 // Right column inner width = m.width - 54.
 func (m mainModel) renderLayout2() string {
-	totalHeight := m.height - 6
+	totalHeight := m.height - 8
 	if totalHeight < 10 {
 		totalHeight = 10
 	}
