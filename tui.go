@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,8 @@ const (
 	stateAttachments
 	stateReplyConfirm
 	stateURLSelect
+	stateYouTrackURLSelect
+	stateYouTrackInstallPrompt
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -427,6 +430,18 @@ func openEditorCmd(currentBody string) tea.Cmd {
 			return editorBodyLoadedMsg(currentBody)
 		}
 		return editorBodyLoadedMsg(string(data))
+	})
+}
+
+type youtrackTuiFinishedMsg struct {
+	Err error
+}
+
+// openYouTrackTuiCmd launches the external yt-tui command with the given URL.
+func openYouTrackTuiCmd(urlStr string) tea.Cmd {
+	c := exec.Command("yt-tui", urlStr)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return youtrackTuiFinishedMsg{Err: err}
 	})
 }
 
@@ -1052,6 +1067,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("Saved attachment to: %s", msg)
 		m.state = stateMain
 
+	case youtrackTuiFinishedMsg:
+		m.state = stateMain
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("yt-tui finished with error: %v", msg.Err)
+		} else {
+			m.statusMsg = "yt-tui closed"
+		}
+		return m, nil
+
 	case tickMsg:
 		// Background tick: fetch folders and current messages silently
 		if m.state == stateMain && m.graphClient != nil {
@@ -1446,6 +1470,37 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.extractedURLs = urls
 			m.selectedURLIdx = 0
 			m.state = stateURLSelect
+		case "o":
+			// Check if yt-tui is installed
+			if _, err := exec.LookPath("yt-tui"); err != nil {
+				m.state = stateYouTrackInstallPrompt
+				break
+			}
+			// Open YouTrack URLs from the selected message using yt-tui
+			am := m.activeMessage()
+			if am == nil {
+				m.statusMsg = "No message selected"
+				break
+			}
+			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+				m.statusMsg = "Message details loading, please try again..."
+				break
+			}
+			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content)
+			if len(ytURLs) == 0 {
+				m.statusMsg = "No YouTrack URLs found in the message"
+				break
+			}
+			if len(ytURLs) == 1 {
+				// Launch yt-tui immediately
+				m.state = stateLoading
+				m.statusMsg = "Launching yt-tui..."
+				return m, openYouTrackTuiCmd(ytURLs[0])
+			}
+			// Multiple YouTrack URLs: show popup/modal
+			m.extractedURLs = ytURLs
+			m.selectedURLIdx = 0
+			m.state = stateYouTrackURLSelect
 		}
 
 	case stateCompose:
@@ -1610,6 +1665,43 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Copied URL to clipboard!"
 			}
 			m.state = stateMain
+		}
+
+	case stateYouTrackURLSelect:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q":
+			m.state = stateMain
+			m.statusMsg = "YouTrack selection cancelled"
+		case "up", "k":
+			if m.selectedURLIdx > 0 {
+				m.selectedURLIdx--
+			}
+		case "down", "j":
+			if m.selectedURLIdx < len(m.extractedURLs)-1 {
+				m.selectedURLIdx++
+			}
+		case "enter":
+			if m.selectedURLIdx >= 0 && m.selectedURLIdx < len(m.extractedURLs) {
+				urlStr := m.extractedURLs[m.selectedURLIdx]
+				m.state = stateLoading
+				m.statusMsg = "Launching yt-tui..."
+				return m, openYouTrackTuiCmd(urlStr)
+			}
+		}
+
+	case stateYouTrackInstallPrompt:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q", "enter":
+			m.state = stateMain
+			m.statusMsg = "Ready"
 		}
 	}
 
@@ -2116,6 +2208,30 @@ func (m mainModel) View() string {
 			}
 		}
 		s.WriteString("\n   [Up/Down/j/k] Select URL  |  [Enter] Copy URL to Clipboard  |  [Esc/q] Cancel\n")
+
+	case stateYouTrackURLSelect:
+		s.WriteString("   " + headerStyle.Render("SELECT YOUTRACK ISSUE TO OPEN IN YT-TUI") + "\n\n")
+		for i, url := range m.extractedURLs {
+			indicator := "  "
+			if i == m.selectedURLIdx {
+				indicator = "> "
+			}
+			
+			line := fmt.Sprintf("%s %s", indicator, url)
+			if i == m.selectedURLIdx {
+				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
+			} else {
+				s.WriteString("   " + line + "\n")
+			}
+		}
+		s.WriteString("\n   [Up/Down/j/k] Select YouTrack URL  |  [Enter] Open in yt-tui  |  [Esc/q] Cancel\n")
+
+	case stateYouTrackInstallPrompt:
+		s.WriteString("   " + headerStyle.Render("YOUTRACK TUI NOT INSTALLED") + "\n\n")
+		s.WriteString("   The yt-tui binary could not be found in your system's PATH.\n")
+		s.WriteString("   To use this integration, please install yt-tui first:\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Underline(true).Render("https://github.com/nospor/yt-tui") + "\n\n")
+		s.WriteString("   [Esc/q/Enter] Back to Main View\n")
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -2126,13 +2242,13 @@ func (m mainModel) View() string {
 		
 		var keysText string
 		if m.width >= 160 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [a] Attach | [u] URL | [q] Quit"
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [a] Attach | [u] URL | [o] YouTrack | [q] Quit"
 		} else if m.width >= 130 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [o] YouTrack | [q] Quit"
 		} else if m.width >= 95 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [R] Reload | [M] More | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [R] Reload | [M] More | [o] YouTrack | [q] Quit"
 		} else {
-			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [M] More | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [M] More | [o] YouTrack | [q] Quit"
 		}
 		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
@@ -3213,4 +3329,32 @@ func cropLines(s string, maxLines int) string {
 		return strings.Join(lines[:maxLines], "\n")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func extractYouTrackURLs(htmlContent string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent)
+	var ytURLs []string
+	seen := make(map[string]bool)
+	issueRx := regexp.MustCompile(`(?i)/issue/([a-zA-Z0-9]+-[0-9]+)`)
+	for _, uStr := range allURLs {
+		parsed, err := url.Parse(uStr)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Host)
+		if !strings.Contains(host, "youtrack") {
+			continue
+		}
+		matches := issueRx.FindStringSubmatch(parsed.Path)
+		if len(matches) < 2 {
+			continue
+		}
+		issueID := matches[1]
+		normalized := fmt.Sprintf("%s://%s/issue/%s", parsed.Scheme, parsed.Host, issueID)
+		if !seen[normalized] {
+			seen[normalized] = true
+			ytURLs = append(ytURLs, normalized)
+		}
+	}
+	return ytURLs
 }

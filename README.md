@@ -129,6 +129,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
 | `a`                           | View and select attachments on the current email                                                                                            |
 | `u`                           | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text)   |
+| `o`                           | Extract YouTrack URLs from the selected message and open in the external `yt-tui` app (shows a popup list if multiple unique YouTrack URLs exist, ignoring quoted/original text) |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
 | `Esc`                         | Go back (cancel compose, close attachments list, or go back to config)                                                                      |
 | `q` (or `Ctrl+C`)             | Quit the application                                                                                                                        |
@@ -157,3 +158,11 @@ export EDITOR='nvim -u NONE'   # open without user config
 ```
 
 Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
+
+## YouTrack TUI Integration (`yt-tui`)
+
+Outlook TUI integrates with [yt-tui](https://github.com/nospor/yt-tui) to let you open YouTrack issue links directly in the terminal:
+- Press **`o`** on a message containing YouTrack URLs.
+- If there is a single YouTrack URL, it opens directly in `yt-tui`.
+- If there are multiple, you will be prompted to select one from a list.
+- To use this, you must have the `yt-tui` binary installed and available in your shell's `PATH`. If it is not installed, the app will show a popup with download and installation information.

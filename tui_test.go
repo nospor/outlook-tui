@@ -421,6 +421,54 @@ func TestExtractURLsFromMainMessage(t *testing.T) {
 	}
 }
 
+func TestExtractYouTrackURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "No YouTrack URLs",
+			input:    "Hello world, check https://google.com and https://github.com",
+			expected: nil,
+		},
+		{
+			name:     "One YouTrack URL",
+			input:    "Please check this issue: https://youtrack.adwanted.com/issue/MTEL-21797. Thanks!",
+			expected: []string{"https://youtrack.adwanted.com/issue/MTEL-21797"},
+		},
+		{
+			name:     "Multiple YouTrack URLs with duplicates, params, and non-issues",
+			input: `
+				Check:
+				1. https://srds.youtrack.cloud/issue/SR-15
+				2. https://srds.youtrack.cloud/api/files/12-4?sign=MTc4
+				3. https://srds.youtrack.cloud/issue/SR-15#focus=Comments-7-5.0-0
+				4. https://srds.youtrack.cloud/issue/SR-15?replyTo=7-5
+				5. https://srds.youtrack.cloud/api/unsubscribe?token=MTc4ND
+				6. https://srds.youtrack.cloud/users/58b4dd7b-9851?tab=notifications
+				7. https://youtrack.adwanted.com/issue/MTEL-21797
+				8. https://srds.youtrack.cloud/issue/SR-15/logos
+			`,
+			expected: []string{"https://srds.youtrack.cloud/issue/SR-15", "https://youtrack.adwanted.com/issue/MTEL-21797"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := extractYouTrackURLs(tt.input)
+			if len(actual) != len(tt.expected) {
+				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
+			}
+			for i := range actual {
+				if actual[i] != tt.expected[i] {
+					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], actual[i])
+				}
+			}
+		})
+	}
+}
+
 func TestLayout2Heights(t *testing.T) {
 	m := mainModel{
 		state:      stateMain,
