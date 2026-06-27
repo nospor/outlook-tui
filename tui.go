@@ -78,6 +78,7 @@ type (
 	statusUpdateMsg     string
 	mailSentMsg         struct{}
 	mailDeletedMsg      struct{ MessageID string }
+	mailRestoredMsg     struct{ MessageID string }
 	attachmentSavedMsg  string
 	userEmailFetchedMsg string
 	editorBodyLoadedMsg string // body text returned after external editor exits
@@ -298,6 +299,16 @@ func deleteMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return mailDeletedMsg{MessageID: msgID}
+	}
+}
+
+func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
+	return func() tea.Msg {
+		err := gc.MoveMessage(msgID, "inbox")
+		if err != nil {
+			return errMsg(err)
+		}
+		return mailRestoredMsg{MessageID: msgID}
 	}
 }
 
@@ -919,6 +930,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
+	case mailRestoredMsg:
+		m.statusMsg = "Message restored to Inbox"
+		// Remove from SQLite cache (as it is leaving the current folder, e.g. Deleted Items)
+		if m.db != nil {
+			_ = m.db.DeleteMessage(msg.MessageID)
+		}
+		// Reload messages
+		if len(m.folders) > 0 {
+			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
+		}
+
 	case attachmentSavedMsg:
 		m.statusMsg = fmt.Sprintf("Saved attachment to: %s", msg)
 		m.state = stateMain
@@ -1192,6 +1214,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if am := m.activeMessage(); am != nil {
 				m.statusMsg = "Moving message to Deleted Items..."
 				cmds = append(cmds, deleteMailCmd(m.graphClient, am.ID))
+			}
+		case "U":
+			// Undelete/Restore current message to Inbox
+			if am := m.activeMessage(); am != nil {
+				m.statusMsg = "Restoring message to Inbox..."
+				cmds = append(cmds, restoreMailCmd(m.graphClient, am.ID))
 			}
 		case "r":
 			// Mark message Read/Unread
@@ -1677,9 +1705,9 @@ func (m mainModel) updateViewportSizeLayout1() mainModel {
 	//   Height(n) with Border             → outer = n+2  (Height is inner content)
 	//   fView outer=25, mView outer=35 → dView outer must = m.width-60 → Width = m.width-62
 	//   Content area inside padding = Width - 2 = m.width-64 (viewport width)
-	// View() line budget: 1 (title) + 2 (\n\n) + paneHeight+2 (borders) + 1 (trailing \n) + 1 (\n before footer) + 1 (footer) = paneHeight+8
-	// So paneHeight = m.height - 8.
-	paneHeight := m.height - 8 // inner content; outer = paneHeight+2 (border top+bottom)
+	// View() line budget: 1 (title) + 2 (\n\n) + paneHeight+2 (borders) + 1 (trailing \n) + 1 (\n before footer) + 2 (footer status + keys) = paneHeight+9
+	// So paneHeight = m.height - 9.
+	paneHeight := m.height - 9 // inner content; outer = paneHeight+2 (border top+bottom)
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -1712,8 +1740,8 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 	//
 	// Left column: leftColInner=46 → leftColOuter=50 (inner + 2 padding + 2 border)
 	// Right detail pane content width = m.width - leftColOuter - 4 (its own pad+border) = m.width - 54
-	// Same budget as Layout1: paneHeight+8 total lines → totalHeight = m.height - 8.
-	totalHeight := m.height - 8
+	// Same budget as Layout1: paneHeight+9 total lines → totalHeight = m.height - 9.
+	totalHeight := m.height - 9
 	if totalHeight < 10 {
 		totalHeight = 10
 	}
@@ -1941,14 +1969,19 @@ func (m mainModel) View() string {
 	if m.state == stateMain {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		keysText := "[Tab] Switch Pane | [Space] Expand/Collapse Thread | [n] Compose | [A] Reply | [d] Delete | [R] Reload | [r] Read/Unread | [a] Attachments | [u] Copy URL | [q] Quit"
+		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
 		
-		availableWidth := m.width - lipgloss.Width(keysText) - 4
-		if availableWidth > 5 {
-			s.WriteString(statusStyle.Width(availableWidth).Render(statusText) + "  " + dimStyle.Render(keysText))
+		var keysText string
+		if m.width >= 135 {
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [r] Read | [a] Attach | [u] URL | [q] Quit"
+		} else if m.width >= 105 {
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [r] Read | [q] Quit"
+		} else if m.width >= 75 {
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [U] Undelete | [q] Quit"
 		} else {
-			s.WriteString(statusStyle.Width(m.width).Render(statusText))
+			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [U] Undel | [q] Quit"
 		}
+		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
 		if m.statusMsg != "" {
 			s.WriteString("\n" + statusStyle.Width(m.width).Render(m.statusMsg))
@@ -2042,7 +2075,7 @@ func (m mainModel) renderContactsPopup() string {
 // renderLayout1 renders the default side-by-side three-pane layout:
 //   [Folders | Messages | Detail]
 func (m mainModel) renderLayout1() string {
-	paneHeight := m.height - 8
+	paneHeight := m.height - 9
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -2091,7 +2124,7 @@ func (m mainModel) renderLayout1() string {
 // Left column inner width = 46 → outer = 50 (2 padding + 2 border on each side).
 // Right column inner width = m.width - 54.
 func (m mainModel) renderLayout2() string {
-	totalHeight := m.height - 8
+	totalHeight := m.height - 9
 	if totalHeight < 10 {
 		totalHeight = 10
 	}

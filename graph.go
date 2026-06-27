@@ -332,13 +332,13 @@ func (gc *GraphClient) GetMe() (string, error) {
 	return email, nil
 }
 
-func (gc *GraphClient) DeleteMessage(messageID string) error {
+func (gc *GraphClient) MoveMessage(messageID, destinationID string) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/move", graphBaseURL, url.PathEscape(messageID))
 
 	moveReq := struct {
 		DestinationID string `json:"destinationId"`
 	}{
-		DestinationID: "deleteditems",
+		DestinationID: destinationID,
 	}
 
 	jsonBytes, err := json.Marshal(moveReq)
@@ -354,10 +354,14 @@ func (gc *GraphClient) DeleteMessage(messageID string) error {
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to delete message: status %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("failed to move message: status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	return nil
+}
+
+func (gc *GraphClient) DeleteMessage(messageID string) error {
+	return gc.MoveMessage(messageID, "deleteditems")
 }
 
 func (gc *GraphClient) MarkAsRead(messageID string, isRead bool) error {

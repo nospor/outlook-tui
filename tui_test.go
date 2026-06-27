@@ -612,6 +612,44 @@ func TestParseAddressStringToRecipients(t *testing.T) {
 	}
 }
 
+func TestUndeleteKey(t *testing.T) {
+	m := mainModel{
+		state: stateMain,
+		folders: []MailFolder{
+			{ID: "deleteditems", DisplayName: "Deleted Items", WellKnownName: "deleteditems"},
+		},
+		selectedFolder:  0,
+		virtualSelected: 0,
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{
+				Members: []Message{
+					{ID: "msg123", Subject: "Trash mail"},
+				},
+			},
+		},
+	}
+
+	keyMsg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("U"),
+	}
+
+	updatedModelInterface, cmd := m.Update(keyMsg)
+	updated := updatedModelInterface.(mainModel)
+
+	expectedMsg := "Restoring message to Inbox..."
+	if updated.statusMsg != expectedMsg {
+		t.Errorf("expected statusMsg to be %q, got %q", expectedMsg, updated.statusMsg)
+	}
+
+	if cmd == nil {
+		t.Fatalf("expected a command to be returned, got nil")
+	}
+}
+
 
 
 
