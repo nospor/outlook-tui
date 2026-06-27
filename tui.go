@@ -693,7 +693,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m, tea.Batch(clearKittyImagesCmd(), tea.Quit)
 		}
 
 	case tea.WindowSizeMsg:
@@ -1154,7 +1154,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch key.String() {
 		case "q":
-			return m, tea.Quit
+			return m, tea.Batch(clearKittyImagesCmd(), tea.Quit)
 		case "tab":
 			// Switch pane focus
 			m.activePane = (m.activePane + 1) % 3
@@ -1394,6 +1394,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.detailMessage != nil && len(m.attachments) > 0 {
 				m.state = stateAttachments
 				m.selectedAttach = 0
+				cmds = append(cmds, clearKittyImagesCmd())
 			}
 		case "A":
 			// Ask if user wants to reply to sender or all
@@ -1611,13 +1612,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			m.state = stateMain
+			cmds = append(cmds, clearKittyImagesCmd())
 		case "up", "k":
 			if m.selectedAttach > 0 {
 				m.selectedAttach--
+				cmds = append(cmds, clearKittyImagesCmd())
 			}
 		case "down", "j":
 			if m.selectedAttach < len(m.attachments)-1 {
 				m.selectedAttach++
+				cmds = append(cmds, clearKittyImagesCmd())
 			}
 		case "enter":
 			// Save attachment
@@ -2175,6 +2179,8 @@ func (m mainModel) View() string {
 		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
 	case stateAttachments:
+		// Clear any previous Kitty image previews from the screen
+		s.WriteString("\033_Ga=d,d=A\033\\")
 		s.WriteString("   " + headerStyle.Render("ATTACHMENTS IN CURRENT EMAIL") + "\n\n")
 		for i, att := range m.attachments {
 			indicator := "  "
@@ -2191,6 +2197,24 @@ func (m mainModel) View() string {
 			}
 		}
 		s.WriteString("\n   [Up/Down] Select Attachment  |  [Enter] Save to Downloads  |  [Esc] Back\n")
+
+		// Preview the selected attachment if it is an image
+		if len(m.attachments) > 0 && m.selectedAttach >= 0 && m.selectedAttach < len(m.attachments) {
+			currAtt := m.attachments[m.selectedAttach]
+			if isImageAttachment(currAtt) {
+				previewRows := m.height - len(m.attachments) - 10
+				if previewRows > 18 {
+					previewRows = 18
+				}
+				if previewRows >= 5 {
+					s.WriteString("\n   Preview:\n")
+					s.WriteString(renderKittyImagePreview(currAtt, previewRows))
+					for i := 0; i < previewRows; i++ {
+						s.WriteString("\n")
+					}
+				}
+			}
+		}
 
 	case stateURLSelect:
 		s.WriteString("   " + headerStyle.Render("SELECT URL TO COPY TO CLIPBOARD") + "\n\n")

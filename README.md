@@ -13,7 +13,7 @@ A gorgeous, responsive, and fully-featured Terminal User Interface (TUI) client 
 - 🧵 **Conversation Threading**: Messages are automatically grouped into conversation threads by Microsoft's `conversationId`. Threads with multiple messages are collapsed by default (showing the most recent), and can be expanded/collapsed with `Space`. Expanded threads show each reply indented with a `└` tree connector, sender name, and date. A `▶`/`▼` indicator and reply-count badge `[N]` mark collapsible threads.
 - ✉️ **Send & Compose Mail**: Press `n` to open a full compose screen to draft and send new emails. Includes a `Cc` field for copying additional recipients. With SQLite caching enabled, it features interactive autocomplete for both the `To` and `Cc` fields (use `Up`/`Down` to navigate suggestions, `Enter` to select/autocomplete, and `Esc` to close suggestions popup).
 - 🗑️ **Delete & Recover Messages**: Press `d` or `Delete` to move messages to the Trash (Deleted Items folder) on Outlook. Press `U` (Capital U) to recover/undelete a message from the Deleted Items folder back to the Inbox.
-- 📎 **Attachments Support**: Press `a` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`.
+- 📎 **Attachments Support**: Press `a` to view a list of attachments on the current email, download them locally to your `Downloads` directory, and automatically open them using `xdg-open`. **If the attachment is an image, a live preview is rendered directly in the terminal using the Kitty terminal graphics protocol (supported by Kitty, WezTerm, Ghostty, etc.)**.
 - 📜 **Smooth Navigation**: Tab between panes, scroll using arrow keys, page up/down, or the mouse wheel.
 
 ## Directory Structure
@@ -127,7 +127,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching:
 | `r`                           | Toggle the selected message's Read/Unread status                                                                                            |
 | `R`                           | Reload/refresh messages in the selected folder                                                                                               |
 | `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
-| `a`                           | View and select attachments on the current email                                                                                            |
+| `a`                           | View and select attachments on the current email (displays a live image preview in the terminal using Kitty graphics protocol if an image is selected) |
 | `u`                           | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text)   |
 | `o`                           | Extract YouTrack URLs from the selected message and open in the external `yt-tui` app (shows a popup list if multiple unique YouTrack URLs exist, ignoring quoted/original text) |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
