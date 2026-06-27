@@ -66,6 +66,10 @@ type (
 		FolderID string
 		Messages []Message
 	}
+	nextMessagesFetchedMsg struct {
+		FolderID string
+		Messages []Message
+	}
 	inboxMessagesFetchedMsg struct {
 		Messages []Message
 	}
@@ -237,6 +241,16 @@ func fetchMessagesCmd(gc *GraphClient, folderID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return messagesFetchedMsg{FolderID: folderID, Messages: msgs}
+	}
+}
+
+func fetchNextMessagesCmd(gc *GraphClient, folderID string, skip int) tea.Cmd {
+	return func() tea.Msg {
+		msgs, err := gc.GetMessagesPage(folderID, skip)
+		if err != nil {
+			return errMsg(err)
+		}
+		return nextMessagesFetchedMsg{FolderID: folderID, Messages: msgs}
 	}
 }
 
@@ -767,6 +781,37 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case nextMessagesFetchedMsg:
+		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
+			break
+		}
+		if len(msg.Messages) == 0 {
+			m.statusMsg = "No more messages to load"
+			break
+		}
+		// Populate any cached bodies into the newly fetched message list to avoid losing them in memory
+		for i, newMsg := range msg.Messages {
+			for _, oldMsg := range m.messages {
+				if oldMsg.ID == newMsg.ID && oldMsg.Body.Content != "" {
+					msg.Messages[i].Body = oldMsg.Body
+					break
+				}
+			}
+			if msg.Messages[i].Body.Content == "" && m.db != nil {
+				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
+					msg.Messages[i].Body = cached.Body
+				}
+			}
+		}
+
+		// Append newly fetched messages to our list
+		m.messages = append(m.messages, msg.Messages...)
+		if m.db != nil {
+			_ = m.db.UpsertMessages(msg.FolderID, m.messages)
+		}
+		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
+		m.buildThreadGroups()
+
 	case messagesFetchedMsg:
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
@@ -1251,6 +1296,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.folders) > 0 {
 				m.statusMsg = fmt.Sprintf("Reloading messages for %s...", m.folders[m.selectedFolder].DisplayName)
 				cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+			}
+		case "M":
+			// Load more messages for the selected folder
+			if len(m.folders) > 0 {
+				m.statusMsg = fmt.Sprintf("Loading more messages for %s...", m.folders[m.selectedFolder].DisplayName)
+				cmds = append(cmds, fetchNextMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID, len(m.messages)))
 			}
 		case "a":
 			// Open attachments pane if message has attachments
@@ -1972,14 +2023,14 @@ func (m mainModel) View() string {
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
 		
 		var keysText string
-		if m.width >= 135 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [r] Read | [a] Attach | [u] URL | [q] Quit"
-		} else if m.width >= 105 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [r] Read | [q] Quit"
-		} else if m.width >= 75 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [U] Undelete | [q] Quit"
+		if m.width >= 160 {
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [a] Attach | [u] URL | [q] Quit"
+		} else if m.width >= 130 {
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [q] Quit"
+		} else if m.width >= 95 {
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [R] Reload | [M] More | [q] Quit"
 		} else {
-			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [U] Undel | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [M] More | [q] Quit"
 		}
 		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
@@ -1988,15 +2039,16 @@ func (m mainModel) View() string {
 		}
 	}
 
-	// Guarantee exactly m.height output lines so BubbleTea's cursor tracking
-	// is never off. Clip if too tall, pad with blank lines if too short.
+	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
+	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
 	if m.height > 0 && m.state == stateMain {
 		lines := strings.Split(s.String(), "\n")
-		for len(lines) < m.height {
+		targetHeight := m.height - 1
+		for len(lines) < targetHeight {
 			lines = append(lines, "")
 		}
-		if len(lines) > m.height {
-			lines = lines[:m.height]
+		if len(lines) > targetHeight {
+			lines = lines[:targetHeight]
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -2631,6 +2683,7 @@ func (m mainModel) renderMetaBlock(width int) string {
 
 // formatBodyContent strips/cleans up HTML email bodies to readable plain text
 func formatBodyContent(htmlContent string) string {
+	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
 	// First, replace <a> tags so that URLs are preserved before tag stripping
 	res := replaceAnchorTags(htmlContent)
 
@@ -3033,8 +3086,8 @@ func cropLines(s string, maxLines int) string {
 	if maxLines <= 0 {
 		return ""
 	}
+	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.TrimSuffix(s, "\n")
-	s = strings.TrimSuffix(s, "\r")
 	lines := strings.Split(s, "\n")
 	if len(lines) > maxLines {
 		return strings.Join(lines[:maxLines], "\n")

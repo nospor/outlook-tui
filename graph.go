@@ -91,8 +91,8 @@ func (gc *GraphClient) GetFolders() ([]MailFolder, error) {
 	return result.Value, nil
 }
 
-func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
-	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,conversationId,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients&$top=50&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID))
+func (gc *GraphClient) GetMessagesPage(folderID string, skip int) ([]Message, error) {
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,conversationId,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients&$top=50&$skip=%d&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID), skip)
 	resp, err := gc.client.Get(reqURL)
 	if err != nil {
 		return nil, err
@@ -112,6 +112,10 @@ func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
 	}
 
 	return result.Value, nil
+}
+
+func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
+	return gc.GetMessagesPage(folderID, 0)
 }
 
 func (gc *GraphClient) GetMessage(messageID string) (*Message, error) {
