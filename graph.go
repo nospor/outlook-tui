@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -53,11 +56,13 @@ type ItemBody struct {
 }
 
 type Attachment struct {
-	ID           string `json:"id"`
+	ID           string `json:"id,omitempty"`
+	OdataType    string `json:"@odata.type,omitempty"`
 	Name         string `json:"name"`
 	ContentType  string `json:"contentType"`
-	Size         int    `json:"size"`
+	Size         int    `json:"size,omitempty"`
 	IsInline     bool   `json:"isInline"`
+	ContentId    string `json:"contentId,omitempty"`
 	ContentBytes string `json:"contentBytes"` // Base64 encoded payload
 }
 
@@ -191,23 +196,63 @@ func parseAddressStringToRecipients(addressStr string) []Recipient {
 	return recipients
 }
 
-func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string) error {
+func makeImageAttachments(images []PastedImage) []Attachment {
+	var atts []Attachment
+	for i, img := range images {
+		name := fmt.Sprintf("pasted-image-%d.png", i+1)
+		if strings.Contains(img.ContentType, "jpeg") {
+			name = fmt.Sprintf("pasted-image-%d.jpg", i+1)
+		}
+		atts = append(atts, Attachment{
+			OdataType:    "#microsoft.graph.fileAttachment",
+			Name:         name,
+			ContentType:  img.ContentType,
+			ContentBytes: base64.StdEncoding.EncodeToString(img.Bytes),
+			ContentId:    fmt.Sprintf("image%d", i+1),
+			IsInline:     true,
+		})
+	}
+	return atts
+}
+
+func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string, images []PastedImage) error {
 	reqURL := fmt.Sprintf("%s/me/sendMail", graphBaseURL)
 
 	sendReq := struct {
 		Message struct {
-			Subject      string      `json:"subject"`
-			Body         ItemBody    `json:"body"`
-			ToRecipients []Recipient `json:"toRecipients"`
-			CcRecipients []Recipient `json:"ccRecipients"`
+			Subject      string       `json:"subject"`
+			Body         ItemBody     `json:"body"`
+			ToRecipients []Recipient  `json:"toRecipients"`
+			CcRecipients []Recipient  `json:"ccRecipients"`
+			Attachments  []Attachment `json:"attachments,omitempty"`
 		} `json:"message"`
 		SaveToSentItems string `json:"saveToSentItems"`
 	}{}
 
 	sendReq.Message.Subject = subject
+
+	contentType := "Text"
+	bodyContent := bodyText
+	if len(images) > 0 {
+		contentType = "HTML"
+		escaped := html.EscapeString(bodyText)
+		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+		
+		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+			sub := reImg.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
+			}
+			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+		})
+		bodyContent = htmlBody
+		sendReq.Message.Attachments = makeImageAttachments(images)
+	}
+
 	sendReq.Message.Body = ItemBody{
-		ContentType: "Text",
-		Content:     bodyText,
+		ContentType: contentType,
+		Content:     bodyContent,
 	}
 
 	sendReq.Message.ToRecipients = parseAddressStringToRecipients(recipientAddress)
@@ -235,17 +280,41 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 
 // ReplyMessage sends a reply to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/reply on the Graph API.
-func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string) error {
+func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, images []PastedImage) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/reply", graphBaseURL, url.PathEscape(messageID))
 
-	replyReq := struct {
+	type ReplyReq struct {
 		Message struct {
-			ToRecipients []Recipient `json:"toRecipients,omitempty"`
+			ToRecipients []Recipient  `json:"toRecipients,omitempty"`
+			Body         *ItemBody    `json:"body,omitempty"`
+			Attachments  []Attachment `json:"attachments,omitempty"`
 		} `json:"message"`
-		Comment string `json:"comment"`
-	}{}
+		Comment string `json:"comment,omitempty"`
+	}
+	var replyReq ReplyReq
 
-	replyReq.Comment = bodyText
+	if len(images) > 0 {
+		escaped := html.EscapeString(bodyText)
+		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+		
+		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+			sub := reImg.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
+			}
+			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+		})
+		
+		replyReq.Message.Body = &ItemBody{
+			ContentType: "HTML",
+			Content:     htmlBody,
+		}
+		replyReq.Message.Attachments = makeImageAttachments(images)
+	} else {
+		replyReq.Comment = bodyText
+	}
+
 	if toAddress != "" {
 		replyReq.Message.ToRecipients = parseAddressStringToRecipients(toAddress)
 	}
@@ -271,18 +340,42 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string) error
 
 // ReplyAllMessage sends a reply-all to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/replyAll on the Graph API.
-func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string) error {
+func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string, images []PastedImage) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/replyAll", graphBaseURL, url.PathEscape(messageID))
 
-	replyReq := struct {
+	type ReplyReq struct {
 		Message struct {
-			ToRecipients []Recipient `json:"toRecipients,omitempty"`
-			CcRecipients []Recipient `json:"ccRecipients,omitempty"`
+			ToRecipients []Recipient  `json:"toRecipients,omitempty"`
+			CcRecipients []Recipient  `json:"ccRecipients,omitempty"`
+			Body         *ItemBody    `json:"body,omitempty"`
+			Attachments  []Attachment `json:"attachments,omitempty"`
 		} `json:"message"`
-		Comment string `json:"comment"`
-	}{}
+		Comment string `json:"comment,omitempty"`
+	}
+	var replyReq ReplyReq
 
-	replyReq.Comment = bodyText
+	if len(images) > 0 {
+		escaped := html.EscapeString(bodyText)
+		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+		
+		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+			sub := reImg.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
+			}
+			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+		})
+		
+		replyReq.Message.Body = &ItemBody{
+			ContentType: "HTML",
+			Content:     htmlBody,
+		}
+		replyReq.Message.Attachments = makeImageAttachments(images)
+	} else {
+		replyReq.Comment = bodyText
+	}
+
 	if toAddress != "" {
 		replyReq.Message.ToRecipients = parseAddressStringToRecipients(toAddress)
 	}

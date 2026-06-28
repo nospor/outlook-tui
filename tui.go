@@ -145,6 +145,7 @@ type mainModel struct {
 	contacts           []Contact
 	filteredContacts   []Contact
 	contactsSelected   int
+	composedImages     []PastedImage
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -306,18 +307,18 @@ func fetchAttachmentsCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool) tea.Cmd {
+func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool, images []PastedImage) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if replyToID != "" {
 			// Use the proper Graph reply endpoint so the message is threaded correctly.
 			if replyAll {
-				err = gc.ReplyAllMessage(replyToID, body, to, cc)
+				err = gc.ReplyAllMessage(replyToID, body, to, cc, images)
 			} else {
-				err = gc.ReplyMessage(replyToID, body, to)
+				err = gc.ReplyMessage(replyToID, body, to, images)
 			}
 		} else {
-			err = gc.SendMessage(subject, body, to, cc)
+			err = gc.SendMessage(subject, body, to, cc, images)
 		}
 		if err != nil {
 			return errMsg(err)
@@ -1412,6 +1413,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeStep = 0
 			m.composeReplyToID = ""  // not a reply
 			m.composeIsReplyAll = false
+			m.composedImages = nil
 			m.loadContacts()
 			
 			m.composeTo = textinput.New()
@@ -1699,6 +1701,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.state = stateMain
 			m.statusMsg = "Compose cancelled"
+			m.composedImages = nil
 		case "tab":
 			m.composeStep = (m.composeStep + 1) % 4
 			m.updateComposeFocus()
@@ -1709,6 +1712,35 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open compose body in external editor ($EDITOR / $VISUAL / vi)
 			m.statusMsg = "Opening external editor…"
 			return m, openEditorCmd(m.composeBody.Value())
+		case "ctrl+v", "ctrl+shift+v", "ctrl+V":
+			if m.composeStep == 3 {
+				imgBytes, contentType, err := GetClipboardImage()
+				if err == nil && len(imgBytes) > 0 {
+					m.composedImages = append(m.composedImages, PastedImage{
+						Bytes:       imgBytes,
+						ContentType: contentType,
+					})
+					placeholder := fmt.Sprintf("[Image %d]", len(m.composedImages))
+					m.composeBody.InsertString(placeholder)
+					m.statusMsg = "Image pasted from clipboard"
+					return m, nil
+				}
+			}
+			// If not focused on body or if GetClipboardImage fails, fall through to default to let standard text paste work
+			var cmd tea.Cmd
+			switch m.composeStep {
+			case 0:
+				m.composeTo, cmd = m.composeTo.Update(msg)
+				m.updateFilteredContacts()
+			case 1:
+				m.composeCc, cmd = m.composeCc.Update(msg)
+				m.updateFilteredContacts()
+			case 2:
+				m.composeSubject, cmd = m.composeSubject.Update(msg)
+			case 3:
+				m.composeBody, cmd = m.composeBody.Update(msg)
+			}
+			cmds = append(cmds, cmd)
 		case "ctrl+s", "ctrl+S", "ctrl+x":
 			// Send!
 			m.statusMsg = "Sending email..."
@@ -1730,7 +1762,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				bodyToSend,
 				m.composeReplyToID,
 				m.composeIsReplyAll,
+				m.composedImages,
 			))
+			m.composedImages = nil
 		default:
 			// Update the focused compose input
 			var cmd tea.Cmd
@@ -1909,6 +1943,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeStep = 3 // Focus body field
 	m.composeReplyToID = origMsg.ID   // remember original message so we use the reply endpoint
 	m.composeIsReplyAll = replyAll
+	m.composedImages = nil
 	m.loadContacts()
 	
 	m.composeTo = textinput.New()
@@ -2246,6 +2281,10 @@ var (
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(ColorSubtext))
 
+	imagePlaceholderStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(ColorViolet))
+
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(ColorText)).
 			Background(lipgloss.Color(ColorSurface)).
@@ -2354,8 +2393,11 @@ func (m mainModel) View() string {
 			}
 			s.WriteString("\n")
 		}
-		
-		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
+		if len(m.composedImages) > 0 {
+			s.WriteString(fmt.Sprintf("   Pasted images: %d\n\n", len(m.composedImages)))
+		}
+
+		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+v] Paste Image  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
 	case stateAttachments:
 		// Clear any previous Kitty image previews from the screen
@@ -2710,6 +2752,7 @@ func (m mainModel) renderHelpContent() string {
 		composeTitle,
 		"",
 		"  [Tab] / [Shift+Tab] Navigate compose fields (To, Cc, Subject, Body)",
+		"  [Ctrl+v]            Paste image from clipboard",
 		"  [Ctrl+g]            Open external editor ($EDITOR / $VISUAL / vi)",
 		"  [Ctrl+s] / [Ctrl+x] Send email",
 		"  [Up] / [Down]       Navigate autocomplete suggestions",
@@ -3230,6 +3273,11 @@ func formatBodyContent(htmlContent string) string {
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
 	// First, replace <a> tags so that URLs are preserved before tag stripping
 	res := replaceAnchorTags(htmlContent)
+
+	// Replace <img> tags with a styled "[image]" placeholder
+	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
+		return imagePlaceholderStyle.Render("[image]")
+	})
 
 	// Convert formatting tags to ANSI escape sequences before stripping HTML tags
 	res = regexp.MustCompile(`(?i)<(b|strong)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[1m")
