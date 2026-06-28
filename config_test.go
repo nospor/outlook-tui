@@ -30,6 +30,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.UseSQLite != 0 {
 		t.Errorf("expected default UseSQLite to be 0, got %d", cfg.UseSQLite)
 	}
+	if cfg.ScrollLines != 1 {
+		t.Errorf("expected default ScrollLines to be 1, got %d", cfg.ScrollLines)
+	}
 
 	// Case 2: Config file exists but is missing refresh_time_min
 	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
@@ -60,6 +63,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.RefreshTimeMin != 5 {
 		t.Errorf("expected populated RefreshTimeMin to be 5, got %d", cfg.RefreshTimeMin)
 	}
+	if cfg.ScrollLines != 1 {
+		t.Errorf("expected populated ScrollLines to be 1, got %d", cfg.ScrollLines)
+	}
 
 	// Verify it was written back to disk
 	savedData, err := os.ReadFile(configPath)
@@ -80,10 +86,15 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have UseSQLite 0, got %d", savedCfg.UseSQLite)
 	}
 
+	if savedCfg.ScrollLines != 1 {
+		t.Errorf("expected saved config to have ScrollLines 1, got %d", savedCfg.ScrollLines)
+	}
+
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
 	cfg.ExcludedFolders = []string{"Junk Email", "RSS Feeds"}
+	cfg.ScrollLines = 5
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -102,5 +113,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if len(cfg.ExcludedFolders) != 2 || cfg.ExcludedFolders[0] != "Junk Email" || cfg.ExcludedFolders[1] != "RSS Feeds" {
 		t.Errorf("expected custom ExcludedFolders to be [\"Junk Email\", \"RSS Feeds\"], got %v", cfg.ExcludedFolders)
+	}
+	if cfg.ScrollLines != 5 {
+		t.Errorf("expected custom ScrollLines to be 5, got %d", cfg.ScrollLines)
 	}
 }

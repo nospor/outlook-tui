@@ -1234,6 +1234,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		scrollLines := m.config.ScrollLines
+		if scrollLines <= 0 {
+			scrollLines = 1
+		}
+
 		switch key.String() {
 		case "q":
 			return m, tea.Batch(clearKittyImagesCmd(), tea.Quit)
@@ -1270,7 +1275,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneDetail:
-				m.detailViewport.LineUp(1)
+				m.detailViewport.LineUp(scrollLines)
 			}
 		case "k":
 			// vim-key: only navigates lists in folders/messages, scrolls detail
@@ -1293,7 +1298,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneDetail:
-				m.detailViewport.LineUp(1)
+				m.detailViewport.LineUp(scrollLines)
 			}
 		case "K":
 			// Capital K: navigate up in Messages pane if in Folders pane, or scroll up message detail if in Messages pane
@@ -1308,7 +1313,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneMessages:
-				m.detailViewport.LineUp(1)
+				m.detailViewport.LineUp(scrollLines)
 			}
 		case "down":
 			switch m.activePane {
@@ -1330,7 +1335,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneDetail:
-				m.detailViewport.LineDown(1)
+				m.detailViewport.LineDown(scrollLines)
 			}
 		case "j":
 			// vim-key: only navigates lists in folders/messages, scrolls detail
@@ -1353,7 +1358,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneDetail:
-				m.detailViewport.LineDown(1)
+				m.detailViewport.LineDown(scrollLines)
 			}
 		case "J":
 			// Capital J: navigate down in Messages pane if in Folders pane, or scroll down message detail if in Messages pane
@@ -1368,7 +1373,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case paneMessages:
-				m.detailViewport.LineDown(1)
+				m.detailViewport.LineDown(scrollLines)
 			}
 		case "pageup":
 			if m.activePane == paneDetail {

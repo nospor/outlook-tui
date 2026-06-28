@@ -14,6 +14,7 @@ type Config struct {
 	Layout          int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
 	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
 	ExcludedFolders []string `json:"excluded_folders"`
+	ScrollLines     int      `json:"scroll_lines"`     // defaults to 1
 }
 
 func GetConfigDir() (string, error) {
@@ -41,6 +42,7 @@ func LoadConfig() (Config, error) {
 			RefreshTimeMin: 5,
 			Layout:         1,
 			UseSQLite:      0,
+			ScrollLines:    1,
 		}, nil
 	}
 	
@@ -63,7 +65,12 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") {
+	if cfg.ScrollLines <= 0 {
+		cfg.ScrollLines = 1
+		_ = SaveConfig(cfg)
+	}
+
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") {
 		_ = SaveConfig(cfg)
 	}
 
@@ -73,6 +80,9 @@ func LoadConfig() (Config, error) {
 func SaveConfig(cfg Config) error {
 	if cfg.RefreshTimeMin <= 0 {
 		cfg.RefreshTimeMin = 5
+	}
+	if cfg.ScrollLines <= 0 {
+		cfg.ScrollLines = 1
 	}
 	dir, err := GetConfigDir()
 	if err != nil {
