@@ -42,6 +42,7 @@ const (
 	stateURLSelect
 	stateYouTrackURLSelect
 	stateYouTrackInstallPrompt
+	stateHelp
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -130,6 +131,7 @@ type mainModel struct {
 
 	// Sub-components
 	detailViewport viewport.Model
+	helpViewport   viewport.Model
 	spinner        spinner.Model
 
 	// Compose state
@@ -736,6 +738,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.updateViewportSize()
 		if m.detailMessage != nil {
 			m.detailViewport.SetContent(wrapText(formatBodyContent(m.detailMessage.Body.Content), m.detailViewport.Width))
+		}
+		if m.state == stateHelp {
+			m.helpViewport.SetContent(m.renderHelpContent())
 		}
 		if m.state == stateCompose {
 			h := m.height - 18
@@ -1638,6 +1643,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.extractedURLs = ytURLs
 			m.selectedURLIdx = 0
 			m.state = stateYouTrackURLSelect
+		case "?":
+			m.state = stateHelp
+			m = m.updateViewportSize()
+			m.helpViewport.SetContent(m.renderHelpContent())
+			m.helpViewport.GotoTop()
 		}
 
 	case stateCompose:
@@ -1842,6 +1852,29 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "enter":
 			m.state = stateMain
 			m.statusMsg = "Ready"
+		}
+
+	case stateHelp:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		scrollLines := m.config.ScrollLines
+		if scrollLines <= 0 {
+			scrollLines = 1
+		}
+		switch key.String() {
+		case "esc", "q", "?":
+			m.state = stateMain
+			m.statusMsg = "Ready"
+		case "up", "k":
+			m.helpViewport.LineUp(scrollLines)
+		case "down", "j":
+			m.helpViewport.LineDown(scrollLines)
+		case "pageup":
+			m.helpViewport.HalfPageUp()
+		case "pagedown":
+			m.helpViewport.HalfPageDown()
 		}
 	}
 
@@ -2078,6 +2111,16 @@ func (m *mainModel) updateFilteredContacts() {
 
 
 func (m mainModel) updateViewportSize() mainModel {
+	m.helpViewport.Width = m.width - 6
+	if m.helpViewport.Width < 20 {
+		m.helpViewport.Width = 20
+	}
+	helpHeight := m.height - 12
+	if helpHeight < 3 {
+		helpHeight = 3
+	}
+	m.helpViewport.Height = helpHeight
+
 	if m.config.Layout == 2 {
 		return m.updateViewportSizeLayout2()
 	}
@@ -2392,6 +2435,11 @@ func (m mainModel) View() string {
 		s.WriteString("   To use this integration, please install yt-tui first:\n\n")
 		s.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Underline(true).Render("https://github.com/nospor/yt-tui") + "\n\n")
 		s.WriteString("   [Esc/q/Enter] Back to Main View\n")
+
+	case stateHelp:
+		s.WriteString("   " + headerStyle.Render("OUTLOOK TUI HELP & KEYBINDINGS") + "\n\n")
+		s.WriteString(paneActiveStyle.Width(m.width - 4).Height(m.helpViewport.Height).Render(m.helpViewport.View()) + "\n\n")
+		s.WriteString("   " + dimStyle.Render("[Esc/q/?] Close Help  |  [Up/Down/j/k] Scroll  |  [Ctrl+C] Quit") + "\n")
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -2402,13 +2450,13 @@ func (m mainModel) View() string {
 		
 		var keysText string
 		if m.width >= 160 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [?] Help | [q] Quit"
 		} else if m.width >= 130 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Fav | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Fav | [o] YouTrack | [?] Help | [q] Quit"
 		} else if m.width >= 95 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [R] Reload | [M] More | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [R] Reload | [M] More | [?] Help | [q] Quit"
 		} else {
-			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [M] More | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
 		}
 		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
@@ -2419,7 +2467,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && m.state == stateMain {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp) {
 		lines := strings.Split(s.String(), "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -2614,6 +2662,106 @@ func (m mainModel) renderLayout2() string {
 	dView = cropLines(dView, totalHeight)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
+}
+
+func (m mainModel) renderHelpContent() string {
+	var s strings.Builder
+
+	// Description
+	desc := "Outlook TUI is a fast, terminal-based client for Microsoft Outlook 365.\n" +
+		"Manage folders, read messages, handle attachments, copy URLs, and compose emails."
+	s.WriteString(dimStyle.Render(desc) + "\n\n")
+
+	// Left column: Navigation & Views
+	col1Title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("NAVIGATION & VIEWS")
+	col1Lines := []string{
+		col1Title,
+		"",
+		"  [Tab] / [Shift+Tab] Switch pane focus",
+		"  [Left] / [Right]    Switch pane focus",
+		"  [Up] / [Down]       Select items / scroll message",
+		"  [j] / [k]           Select items / scroll message",
+		"  [J] / [K]           Navigate next/prev pane / scroll",
+		"  [PageUp]/[PageDown] Scroll detail view half page",
+		"  [Space]             Toggle collapse/expand thread",
+		"  [R]                 Reload current folder",
+		"  [M]                 Load more messages (paginate)",
+	}
+
+	// Right column: Actions & Compose
+	col2Title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("MAIL ACTIONS & COMPOSE")
+	col2Lines := []string{
+		col2Title,
+		"",
+		"  [n]                 Compose new email",
+		"  [A]                 Reply or Reply All to message",
+		"  [r]                 Toggle Read / Unread status",
+		"  [f]                 Toggle Favorite status (local)",
+		"  [d] / [Delete]      Move message to Deleted Items",
+		"  [U]                 Undelete / Restore to Inbox",
+		"  [a]                 Open attachments pane (if any)",
+		"  [u]                 Extract URLs from email body",
+		"  [o]                 Open YouTrack issue in yt-tui",
+	}
+
+	// Compose Shortcuts Section
+	composeTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("COMPOSE MODE KEYBOARD SHORTCUTS")
+	composeLines := []string{
+		composeTitle,
+		"",
+		"  [Tab] / [Shift+Tab] Navigate compose fields (To, Cc, Subject, Body)",
+		"  [Ctrl+g]            Open external editor ($EDITOR / $VISUAL / vi)",
+		"  [Ctrl+s] / [Ctrl+x] Send email",
+		"  [Up] / [Down]       Navigate autocomplete suggestions",
+		"  [Enter]             Select contact suggestion",
+		"  [Esc]               Cancel composing / Close suggestions",
+	}
+
+	// Build two column section dynamically based on width
+	if m.helpViewport.Width >= 110 {
+		maxLen := len(col1Lines)
+		if len(col2Lines) > maxLen {
+			maxLen = len(col2Lines)
+		}
+		for len(col1Lines) < maxLen {
+			col1Lines = append(col1Lines, "")
+		}
+		for len(col2Lines) < maxLen {
+			col2Lines = append(col2Lines, "")
+		}
+
+		var col1Text, col2Text strings.Builder
+		for i := 0; i < maxLen; i++ {
+			col1Text.WriteString(col1Lines[i] + "\n")
+			col2Text.WriteString(col2Lines[i] + "\n")
+		}
+
+		col1Style := lipgloss.NewStyle().Width(52)
+		col2Style := lipgloss.NewStyle().Width(52)
+
+		columns := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			col1Style.Render(col1Text.String()),
+			col2Style.Render(col2Text.String()),
+		)
+		s.WriteString(columns + "\n")
+	} else {
+		for _, l := range col1Lines {
+			s.WriteString(l + "\n")
+		}
+		s.WriteString("\n")
+		for _, l := range col2Lines {
+			s.WriteString(l + "\n")
+		}
+		s.WriteString("\n")
+	}
+
+	// Compose section
+	for _, l := range composeLines {
+		s.WriteString(l + "\n")
+	}
+
+	return s.String()
 }
 
 // renderFoldersViewWide is a variant of renderFoldersView that uses a wider display name limit.

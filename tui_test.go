@@ -844,6 +844,45 @@ func TestReplyKeyShowConfirm(t *testing.T) {
 	}
 }
 
+func TestHelpKey(t *testing.T) {
+	m := mainModel{
+		state:  stateMain,
+		width:  120,
+		height: 40,
+	}
+
+	// 1. Pressing '?' should enter stateHelp
+	keyMsgHelp := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune("?"),
+	}
+
+	updatedModelInterface, _ := m.Update(keyMsgHelp)
+	updated := updatedModelInterface.(mainModel)
+
+	if updated.state != stateHelp {
+		t.Errorf("expected state to be stateHelp, got %v", updated.state)
+	}
+
+	// View rendering should contain HELP & KEYBINDINGS
+	renderedView := updated.View()
+	if !strings.Contains(renderedView, "HELP & KEYBINDINGS") {
+		t.Errorf("expected rendered view to contain 'HELP & KEYBINDINGS', got:\n%s", renderedView)
+	}
+
+	// 2. Pressing 'esc' in stateHelp should return to stateMain
+	keyMsgEsc := tea.KeyMsg{
+		Type: tea.KeyEsc,
+	}
+
+	closedModelInterface, _ := updated.Update(keyMsgEsc)
+	closed := closedModelInterface.(mainModel)
+
+	if closed.state != stateMain {
+		t.Errorf("expected state to return to stateMain, got %v", closed.state)
+	}
+}
+
 
 
 

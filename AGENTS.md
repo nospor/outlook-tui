@@ -27,6 +27,7 @@ Welcome! This workspace contains **Outlook TUI**, a gorgeous, responsive, and fu
   - **Contact Suggestions**: Suggests unique contacts below the 'To' field input when SQLite is enabled, filtering suggestions in real-time as the user types. Key intercepts (Up/Down, Enter to select, Esc to close suggestions) are active when the suggestion dropdown is visible.
   - **External Editor (Ctrl+G)**: When composing, pressing `Ctrl+g` invokes `openEditorCmd()` which writes the current body to a temp file and uses `tea.ExecProcess` to suspend the TUI and launch the editor specified by `$EDITOR` (falling back to `$VISUAL`, then `vi`). On exit the file is read back and returned as `editorBodyLoadedMsg`, which updates `m.composeBody` and focuses the body field (`composeStep = 3`). The temp file is always cleaned up via `defer os.Remove`.
   - **Favorites (f key)**: Pressing `f` on a selected message toggles its entry in the `favorite_messages` database table. The Favorites folder is always prepended to the top of the folders pane (index 0) and operates entirely locally (no Graph API calls are made when viewing or reloading the Favorites folder).
+  - **Help Popup (? key)**: Pressing `?` toggles the help overlay screen (`stateHelp`), which displays a comprehensive reference of keyboard shortcuts and app functionalities in a beautifully formatted, scrollable viewport.
 - [notification.go](notification.go) - Triggers OS desktop notifications using `notify-send` for new messages.
 
 ---
