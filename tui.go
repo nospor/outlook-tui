@@ -566,13 +566,36 @@ func (m mainModel) loadCachedFolderMessages() (mainModel, string) {
 		return m, status
 	}
 	folderID := m.folders[m.selectedFolder].ID
-	cached, err := m.db.GetMessages(folderID)
-	if err == nil && len(cached) > 0 {
+	if folderID == "favorites" {
+		cached, _ := m.db.GetFavoriteMessages()
 		m.messages = cached
 		m.buildThreadGroups()
-		return m, fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
+		return m, fmt.Sprintf("Favorites: %d messages", len(cached))
+	}
+	if m.config.UseSQLite == 1 {
+		cached, err := m.db.GetMessages(folderID)
+		if err == nil && len(cached) > 0 {
+			m.messages = cached
+			m.buildThreadGroups()
+			return m, fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
+		}
 	}
 	return m, fmt.Sprintf("Loading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+}
+
+// updateFavoritesFolderCounts updates the unread and total item counts for the favorites folder in memory.
+func (m *mainModel) updateFavoritesFolderCounts() {
+	if len(m.folders) == 0 || m.folders[0].ID != "favorites" {
+		return
+	}
+	if m.db == nil {
+		return
+	}
+	unread, total, err := m.db.GetFavoritesCounts()
+	if err == nil {
+		m.folders[0].UnreadItemCount = unread
+		m.folders[0].TotalItemCount = total
+	}
 }
 
 // loadMessageDetail loads the message detail (including body and attachments).
@@ -611,7 +634,14 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 
 	// 2. Check if the body content is cached in SQLite
 	if m.db != nil {
-		if cached, err := m.db.GetMessage(am.ID); err == nil && cached != nil && cached.Body.Content != "" {
+		var cached *Message
+		var err error
+		if len(m.folders) > 0 && m.folders[m.selectedFolder].ID == "favorites" {
+			cached, err = m.db.GetFavoriteMessage(am.ID)
+		} else if m.config.UseSQLite == 1 {
+			cached, err = m.db.GetMessage(am.ID)
+		}
+		if err == nil && cached != nil && cached.Body.Content != "" {
 			m.detailMessage = cached
 			m.attachments = cached.Attachments
 			m = m.updateViewportSize()
@@ -677,6 +707,10 @@ func (m mainModel) selectFolder(idx int) (mainModel, tea.Cmd) {
 	m, m.statusMsg = m.loadCachedFolderMessages()
 	if am := m.activeMessage(); am != nil {
 		m, detailCmd = m.loadMessageDetail(am)
+	}
+
+	if m.folders[m.selectedFolder].ID == "favorites" {
+		return m, detailCmd
 	}
 
 	fetchCmd := fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
@@ -761,8 +795,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cache token
 		_ = SaveToken(TokenCache(msg))
 
-		// Open SQLite cache if enabled
-		if m.config.UseSQLite == 1 && m.db == nil {
+		// Open SQLite database (always open it so we can use it for internal Favorites)
+		if m.db == nil {
 			if sqlDB, err := OpenDB(); err == nil {
 				m.db = sqlDB
 			} else {
@@ -779,7 +813,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case foldersFetchedMsg:
-		sortedFolders := sortFolders(msg, m.config.ExcludedFolders)
+		sortedFolders := sortFolders(msg, m.config.ExcludedFolders, m.db)
 		if m.state != stateMain {
 			// Initial load: set up navigation state
 			m.folders = sortedFolders
@@ -787,10 +821,22 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activePane = paneFolders
 			m.selectedFolder = 0
 			if len(m.folders) > 0 {
-				// Load from SQLite cache first for instant display
 				var detailCmd tea.Cmd
-				if m.db != nil {
-					if cached, err := m.db.GetMessages(m.folders[0].ID); err == nil && len(cached) > 0 {
+				firstFolderID := m.folders[0].ID
+				if firstFolderID == "favorites" {
+					if m.db != nil {
+						cached, _ := m.db.GetFavoriteMessages()
+						m.messages = cached
+						m.buildThreadGroups()
+						m.statusMsg = fmt.Sprintf("Favorites: %d messages", len(cached))
+						if am := m.activeMessage(); am != nil {
+							m, detailCmd = m.loadMessageDetail(am)
+						}
+					} else {
+						m.statusMsg = "Favorites: 0 messages"
+					}
+				} else if m.config.UseSQLite == 1 && m.db != nil {
+					if cached, err := m.db.GetMessages(firstFolderID); err == nil && len(cached) > 0 {
 						m.messages = cached
 						m.buildThreadGroups()
 						m.statusMsg = fmt.Sprintf("Showing %d cached messages, refreshing...", len(cached))
@@ -804,9 +850,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = fmt.Sprintf("Loading messages for %s...", m.folders[0].DisplayName)
 				}
 				cmds := []tea.Cmd{
-					fetchMessagesCmd(m.graphClient, m.folders[0].ID),
 					fetchInboxMessagesCmd(m.graphClient),
 					m.tickCmd(),
+				}
+				if firstFolderID != "favorites" {
+					cmds = append(cmds, fetchMessagesCmd(m.graphClient, firstFolderID))
 				}
 				if detailCmd != nil {
 					cmds = append(cmds, detailCmd)
@@ -840,7 +888,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			if msg.Messages[i].Body.Content == "" && m.db != nil {
+			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
 					msg.Messages[i].Attachments = cached.Attachments
@@ -850,7 +898,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Append newly fetched messages to our list
 		m.messages = append(m.messages, msg.Messages...)
-		if m.db != nil {
+		if m.config.UseSQLite == 1 && m.db != nil {
 			_ = m.db.UpsertMessages(msg.FolderID, m.messages)
 		}
 		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
@@ -871,7 +919,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Fallback to SQLite check if still empty
-			if msg.Messages[i].Body.Content == "" && m.db != nil {
+			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
 					msg.Messages[i].Attachments = cached.Attachments
@@ -880,7 +928,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Persist messages to SQLite cache (preserving bodies via ON CONFLICT DO UPDATE)
-		if m.db != nil {
+		if m.config.UseSQLite == 1 && m.db != nil {
 			_ = m.db.UpsertMessages(msg.FolderID, msg.Messages)
 		}
 		// Remember the currently active message ID so we can re-select it
@@ -961,7 +1009,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Upsert message detail (body + read status) into cache
 			if m.db != nil && len(m.folders) > 0 {
-				_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *msg.Message)
+				if m.folders[m.selectedFolder].ID == "favorites" {
+					_ = m.db.UpsertFavoriteMessage(*msg.Message)
+				} else if m.config.UseSQLite == 1 {
+					_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *msg.Message)
+				}
 				_ = m.db.UpdateReadStatus(msg.Message.ID, true)
 			}
 			m.statusMsg = "Message details loaded"
@@ -988,9 +1040,20 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Upsert to SQLite cache to save it for future
 			if m.db != nil && len(m.folders) > 0 {
-				if cached, err := m.db.GetMessage(msg.MessageID); err == nil && cached != nil {
+				var cached *Message
+				var err error
+				if m.folders[m.selectedFolder].ID == "favorites" {
+					cached, err = m.db.GetFavoriteMessage(msg.MessageID)
+				} else if m.config.UseSQLite == 1 {
+					cached, err = m.db.GetMessage(msg.MessageID)
+				}
+				if err == nil && cached != nil {
 					cached.Attachments = msg.Attachments
-					_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *cached)
+					if m.folders[m.selectedFolder].ID == "favorites" {
+						_ = m.db.UpsertFavoriteMessage(*cached)
+					} else if m.config.UseSQLite == 1 {
+						_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *cached)
+					}
 				}
 			}
 			m.statusMsg = "Attachments loaded"
@@ -1038,28 +1101,45 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Email sent successfully!"
 		// Reload current folder
 		if len(m.folders) > 0 {
+			if m.folders[m.selectedFolder].ID == "favorites" {
+				m, _ = m.loadCachedFolderMessages()
+				m.updateFavoritesFolderCounts()
+				return m, nil
+			}
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
 	case mailDeletedMsg:
 		m.statusMsg = "Message moved to Deleted Items"
-		// Remove from SQLite cache
+		// Remove from SQLite cache and favorites
 		if m.db != nil {
 			_ = m.db.DeleteMessage(msg.MessageID)
+			_ = m.db.RemoveFromFavorites(msg.MessageID)
 		}
 		// Reload messages
 		if len(m.folders) > 0 {
+			if m.folders[m.selectedFolder].ID == "favorites" {
+				m, _ = m.loadCachedFolderMessages()
+				m.updateFavoritesFolderCounts()
+				return m, nil
+			}
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
-		// Remove from SQLite cache (as it is leaving the current folder, e.g. Deleted Items)
+		// Remove from SQLite cache (as it is leaving the current folder, e.g. Deleted Items) and favorites
 		if m.db != nil {
 			_ = m.db.DeleteMessage(msg.MessageID)
+			_ = m.db.RemoveFromFavorites(msg.MessageID)
 		}
 		// Reload messages
 		if len(m.folders) > 0 {
+			if m.folders[m.selectedFolder].ID == "favorites" {
+				m, _ = m.loadCachedFolderMessages()
+				m.updateFavoritesFolderCounts()
+				return m, nil
+			}
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
@@ -1092,13 +1172,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Fetch current folder messages
 			if len(m.folders) > 0 {
 				folderID := m.folders[m.selectedFolder].ID
-				bgCmds = append(bgCmds, func() tea.Msg {
-					msgs, err := m.graphClient.GetMessages(folderID)
-					if err == nil {
-						return messagesFetchedMsg{FolderID: folderID, Messages: msgs}
-					}
-					return nil
-				})
+				if folderID != "favorites" {
+					bgCmds = append(bgCmds, func() tea.Msg {
+						msgs, err := m.graphClient.GetMessages(folderID)
+						if err == nil {
+							return messagesFetchedMsg{FolderID: folderID, Messages: msgs}
+						}
+						return nil
+					})
+				}
 			}
 
 			// Fetch inbox messages for notification tracking
@@ -1372,22 +1454,71 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				m.statusMsg = "Marking message read status..."
+				if m.db != nil {
+					_ = m.db.UpdateReadStatus(msgID, targetState)
+					m.updateFavoritesFolderCounts()
+				}
 				cmds = append(cmds, func() tea.Msg {
 					_ = m.graphClient.MarkAsRead(msgID, targetState)
 					return nil
 				})
 			}
+		case "f":
+			// Toggle Favorite status
+			if am := m.activeMessage(); am != nil && m.db != nil {
+				isFav, err := m.db.IsFavorite(am.ID)
+				if err == nil {
+					if isFav {
+						_ = m.db.RemoveFromFavorites(am.ID)
+						m.statusMsg = "Removed from Favorites"
+					} else {
+						msgToSave := *am
+						if cached, err := m.db.GetMessage(am.ID); err == nil && cached != nil {
+							msgToSave = *cached
+						}
+						_ = m.db.UpsertFavoriteMessage(msgToSave)
+						m.statusMsg = "Added to Favorites"
+					}
+					m.updateFavoritesFolderCounts()
+					if m.folders[m.selectedFolder].ID == "favorites" {
+						m, _ = m.loadCachedFolderMessages()
+						// Adjust selection if we removed the last item
+						if m.virtualSelected >= len(m.virtualList) {
+							m.virtualSelected = max(0, len(m.virtualList)-1)
+						}
+						// Refresh detail view for new selection
+						var detailCmd tea.Cmd
+						if len(m.virtualList) > 0 {
+							m, detailCmd = m.loadMessageDetail(m.activeMessage())
+						} else {
+							m, detailCmd = m.loadMessageDetail(nil)
+						}
+						if detailCmd != nil {
+							cmds = append(cmds, detailCmd)
+						}
+					}
+				}
+			}
 		case "R":
 			// Reload selected folder
 			if len(m.folders) > 0 {
-				m.statusMsg = fmt.Sprintf("Reloading messages for %s...", m.folders[m.selectedFolder].DisplayName)
-				cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+				if m.folders[m.selectedFolder].ID == "favorites" {
+					m, _ = m.loadCachedFolderMessages()
+					m.updateFavoritesFolderCounts()
+				} else {
+					m.statusMsg = fmt.Sprintf("Reloading messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					cmds = append(cmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+				}
 			}
 		case "M":
 			// Load more messages for the selected folder
 			if len(m.folders) > 0 {
-				m.statusMsg = fmt.Sprintf("Loading more messages for %s...", m.folders[m.selectedFolder].DisplayName)
-				cmds = append(cmds, fetchNextMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID, len(m.messages)))
+				if m.folders[m.selectedFolder].ID == "favorites" {
+					m.statusMsg = "No more messages to load"
+				} else {
+					m.statusMsg = fmt.Sprintf("Loading more messages for %s...", m.folders[m.selectedFolder].DisplayName)
+					cmds = append(cmds, fetchNextMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID, len(m.messages)))
+				}
 			}
 		case "a":
 			// Open attachments pane if message has attachments
@@ -2266,13 +2397,13 @@ func (m mainModel) View() string {
 		
 		var keysText string
 		if m.width >= 160 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [a] Attach | [u] URL | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [q] Quit"
 		} else if m.width >= 130 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Fav | [o] YouTrack | [q] Quit"
 		} else if m.width >= 95 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [R] Reload | [M] More | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [R] Reload | [M] More | [o] YouTrack | [q] Quit"
 		} else {
-			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [M] More | [o] YouTrack | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [M] More | [o] YouTrack | [q] Quit"
 		}
 		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
@@ -3143,7 +3274,7 @@ func stripANSICodes(s string) string {
 	return re.ReplaceAllString(s, "")
 }
 
-func sortFolders(folders []MailFolder, excluded []string) []MailFolder {
+func sortFolders(folders []MailFolder, excluded []string, db *DB) []MailFolder {
 	var inbox *MailFolder
 	var sentItems *MailFolder
 	var others []MailFolder
@@ -3165,7 +3296,22 @@ func sortFolders(folders []MailFolder, excluded []string) []MailFolder {
 		}
 	}
 
-	result := make([]MailFolder, 0, len(folders))
+	// Always create Favorites on top
+	favFolder := MailFolder{
+		ID:          "favorites",
+		DisplayName: "Favorites",
+	}
+	if db != nil {
+		unread, total, err := db.GetFavoritesCounts()
+		if err == nil {
+			favFolder.UnreadItemCount = unread
+			favFolder.TotalItemCount = total
+		}
+	}
+
+	result := make([]MailFolder, 0, len(folders)+1)
+	result = append(result, favFolder)
+
 	if inbox != nil {
 		result = append(result, *inbox)
 	}

@@ -127,6 +127,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching 
 | `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
 | `U`                           | Recover/undelete the selected message (moves it back to the Inbox)                                                                          |
 | `r`                           | Toggle the selected message's Read/Unread status                                                                                            |
+| `f`                           | Toggle Favorite status (adds/removes the selected message to/from the local Favorites folder)                                                |
 | `R`                           | Reload/refresh messages in the selected folder                                                                                               |
 | `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
 | `a`                           | View and select attachments on the current email (displays a live image preview in the terminal using Kitty graphics protocol if an image is selected) |

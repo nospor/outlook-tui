@@ -83,6 +83,25 @@ func (d *DB) migrate() error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_folder ON messages(folder_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(folder_id, received_datetime DESC);
+
+		CREATE TABLE IF NOT EXISTS favorite_messages (
+			id                TEXT PRIMARY KEY,
+			conversation_id   TEXT NOT NULL DEFAULT '',
+			subject           TEXT NOT NULL DEFAULT '',
+			body_preview      TEXT NOT NULL DEFAULT '',
+			received_datetime TEXT NOT NULL DEFAULT '',
+			is_read           INTEGER NOT NULL DEFAULT 0,
+			has_attachments   INTEGER NOT NULL DEFAULT 0,
+			from_name         TEXT NOT NULL DEFAULT '',
+			from_address      TEXT NOT NULL DEFAULT '',
+			to_recipients     TEXT NOT NULL DEFAULT '[]',
+			cc_recipients     TEXT NOT NULL DEFAULT '[]',
+			body_content_type TEXT NOT NULL DEFAULT '',
+			body_content      TEXT NOT NULL DEFAULT '',
+			attachments       TEXT NOT NULL DEFAULT '[]',
+			fetched_at        TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_favorite_messages_received ON favorite_messages(received_datetime DESC);
 	`)
 	if err != nil {
 		return err
@@ -340,9 +359,10 @@ func (d *DB) DeleteMessage(messageID string) error {
 	return err
 }
 
-// UpdateReadStatus updates the is_read flag for a message in the cache.
+// UpdateReadStatus updates the is_read flag for a message in the cache and favorites.
 func (d *DB) UpdateReadStatus(messageID string, isRead bool) error {
-	_, err := d.db.Exec(`UPDATE messages SET is_read = ? WHERE id = ?`, boolToInt(isRead), messageID)
+	_, _ = d.db.Exec(`UPDATE messages SET is_read = ? WHERE id = ?`, boolToInt(isRead), messageID)
+	_, err := d.db.Exec(`UPDATE favorite_messages SET is_read = ? WHERE id = ?`, boolToInt(isRead), messageID)
 	return err
 }
 
@@ -404,5 +424,146 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// UpsertFavoriteMessage inserts or replaces a message in the favorite_messages table.
+func (d *DB) UpsertFavoriteMessage(msg Message) error {
+	_, err := d.db.Exec(`
+		INSERT OR REPLACE INTO favorite_messages (
+			id, conversation_id, subject, body_preview,
+			received_datetime, is_read, has_attachments,
+			from_name, from_address,
+			to_recipients, cc_recipients,
+			body_content_type, body_content,
+			attachments,
+			fetched_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID,
+		msg.ConversationID,
+		msg.Subject,
+		msg.BodyPreview,
+		msg.ReceivedDateTime.UTC().Format(time.RFC3339Nano),
+		boolToInt(msg.IsRead),
+		boolToInt(msg.HasAttachments),
+		msg.From.EmailAddress.Name,
+		msg.From.EmailAddress.Address,
+		recipientsJSON(msg.ToRecipients),
+		recipientsJSON(msg.CcRecipients),
+		msg.Body.ContentType,
+		msg.Body.Content,
+		attachmentsJSON(msg.Attachments),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+// GetFavoriteMessages retrieves all messages from the favorite_messages table, ordered by received_datetime desc.
+func (d *DB) GetFavoriteMessages() ([]Message, error) {
+	rows, err := d.db.Query(`
+		SELECT id, conversation_id, subject, body_preview,
+		       received_datetime, is_read, has_attachments,
+		       from_name, from_address,
+		       to_recipients, cc_recipients,
+		       body_content_type, body_content, attachments
+		FROM favorite_messages
+		ORDER BY received_datetime DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		var receivedStr string
+		var isRead, hasAttachments int
+		var fromName, fromAddress string
+		var toJSON, ccJSON string
+		var bodyType, bodyContent string
+		var attachmentsJSON string
+
+		if err := rows.Scan(
+			&m.ID, &m.ConversationID, &m.Subject, &m.BodyPreview,
+			&receivedStr, &isRead, &hasAttachments,
+			&fromName, &fromAddress,
+			&toJSON, &ccJSON,
+			&bodyType, &bodyContent, &attachmentsJSON,
+		); err != nil {
+			return nil, err
+		}
+
+		m.ReceivedDateTime, _ = time.Parse(time.RFC3339Nano, receivedStr)
+		m.IsRead = isRead != 0
+		m.HasAttachments = hasAttachments != 0
+		m.From = Recipient{EmailAddress: EmailAddress{Name: fromName, Address: fromAddress}}
+		m.ToRecipients = parseRecipients(toJSON)
+		m.CcRecipients = parseRecipients(ccJSON)
+		m.Body = ItemBody{ContentType: bodyType, Content: bodyContent}
+		m.Attachments = parseAttachments(attachmentsJSON)
+
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+// GetFavoriteMessage retrieves a single favorite message by ID.
+func (d *DB) GetFavoriteMessage(messageID string) (*Message, error) {
+	row := d.db.QueryRow(`
+		SELECT id, conversation_id, subject, body_preview,
+		       received_datetime, is_read, has_attachments,
+		       from_name, from_address,
+		       to_recipients, cc_recipients,
+		       body_content_type, body_content, attachments
+		FROM favorite_messages
+		WHERE id = ?`, messageID)
+
+	var m Message
+	var receivedStr string
+	var isRead, hasAttachments int
+	var fromName, fromAddress string
+	var toJSON, ccJSON string
+	var bodyType, bodyContent string
+	var attachmentsJSON string
+
+	err := row.Scan(
+		&m.ID, &m.ConversationID, &m.Subject, &m.BodyPreview,
+		&receivedStr, &isRead, &hasAttachments,
+		&fromName, &fromAddress,
+		&toJSON, &ccJSON,
+		&bodyType, &bodyContent, &attachmentsJSON,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	m.ReceivedDateTime, _ = time.Parse(time.RFC3339Nano, receivedStr)
+	m.IsRead = isRead != 0
+	m.HasAttachments = hasAttachments != 0
+	m.From = Recipient{EmailAddress: EmailAddress{Name: fromName, Address: fromAddress}}
+	m.ToRecipients = parseRecipients(toJSON)
+	m.CcRecipients = parseRecipients(ccJSON)
+	m.Body = ItemBody{ContentType: bodyType, Content: bodyContent}
+	m.Attachments = parseAttachments(attachmentsJSON)
+
+	return &m, nil
+}
+
+// RemoveFromFavorites removes a message from the favorites table.
+func (d *DB) RemoveFromFavorites(messageID string) error {
+	_, err := d.db.Exec(`DELETE FROM favorite_messages WHERE id = ?`, messageID)
+	return err
+}
+
+// IsFavorite checks if a message exists in the favorite_messages table.
+func (d *DB) IsFavorite(messageID string) (bool, error) {
+	var exists bool
+	err := d.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM favorite_messages WHERE id = ?)`, messageID).Scan(&exists)
+	return exists, err
+}
+
+// GetFavoritesCounts returns the unread and total counts of favorite messages.
+func (d *DB) GetFavoritesCounts() (unread int, total int, err error) {
+	err = d.db.QueryRow(`SELECT COUNT(CASE WHEN is_read = 0 THEN 1 END), COUNT(*) FROM favorite_messages`).Scan(&unread, &total)
+	return unread, total, err
 }
 

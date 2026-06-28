@@ -269,3 +269,107 @@ func TestDBGetContacts(t *testing.T) {
 	}
 }
 
+func TestDBFavorites(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer db.Close()
+
+	msg := Message{
+		ID:               "msg-fav-1",
+		ConversationID:   "conv-1",
+		Subject:          "Favorite Subject",
+		BodyPreview:      "This is a favorite preview...",
+		ReceivedDateTime: time.Now().Truncate(time.Second),
+		IsRead:           false,
+		HasAttachments:   false,
+		From: Recipient{
+			EmailAddress: EmailAddress{
+				Name:    "Sender Name",
+				Address: "sender@example.com",
+			},
+		},
+	}
+
+	// Test IsFavorite (should be false initially)
+	isFav, err := db.IsFavorite(msg.ID)
+	if err != nil {
+		t.Fatalf("IsFavorite failed: %v", err)
+	}
+	if isFav {
+		t.Errorf("expected isFav to be false initially")
+	}
+
+	// Test UpsertFavoriteMessage
+	err = db.UpsertFavoriteMessage(msg)
+	if err != nil {
+		t.Fatalf("UpsertFavoriteMessage failed: %v", err)
+	}
+
+	// Test IsFavorite (should be true now)
+	isFav, err = db.IsFavorite(msg.ID)
+	if err != nil {
+		t.Fatalf("IsFavorite failed: %v", err)
+	}
+	if !isFav {
+		t.Errorf("expected isFav to be true")
+	}
+
+	// Test GetFavoritesCounts (unread=1, total=1)
+	unread, total, err := db.GetFavoritesCounts()
+	if err != nil {
+		t.Fatalf("GetFavoritesCounts failed: %v", err)
+	}
+	if unread != 1 || total != 1 {
+		t.Errorf("expected unread=1 total=1, got unread=%d total=%d", unread, total)
+	}
+
+	// Test GetFavoriteMessages
+	favs, err := db.GetFavoriteMessages()
+	if err != nil {
+		t.Fatalf("GetFavoriteMessages failed: %v", err)
+	}
+	if len(favs) != 1 || favs[0].ID != msg.ID {
+		t.Errorf("expected 1 favorite with ID %q, got %d items", msg.ID, len(favs))
+	}
+
+	// Test GetFavoriteMessage
+	retrieved, err := db.GetFavoriteMessage(msg.ID)
+	if err != nil {
+		t.Fatalf("GetFavoriteMessage failed: %v", err)
+	}
+	if retrieved.Subject != msg.Subject {
+		t.Errorf("expected Subject %q, got %q", msg.Subject, retrieved.Subject)
+	}
+
+	// Test UpdateReadStatus
+	err = db.UpdateReadStatus(msg.ID, true)
+	if err != nil {
+		t.Fatalf("UpdateReadStatus failed: %v", err)
+	}
+	unread, total, err = db.GetFavoritesCounts()
+	if err != nil {
+		t.Fatalf("GetFavoritesCounts failed: %v", err)
+	}
+	if unread != 0 || total != 1 {
+		t.Errorf("expected unread=0 total=1 after read, got unread=%d total=%d", unread, total)
+	}
+
+	// Test RemoveFromFavorites
+	err = db.RemoveFromFavorites(msg.ID)
+	if err != nil {
+		t.Fatalf("RemoveFromFavorites failed: %v", err)
+	}
+	isFav, err = db.IsFavorite(msg.ID)
+	if err != nil {
+		t.Fatalf("IsFavorite failed: %v", err)
+	}
+	if isFav {
+		t.Errorf("expected isFav to be false after removal")
+	}
+}
+

@@ -11,7 +11,7 @@ import (
 	"github.com/muesli/termenv"
 )
 
-func TestSortFolders(t *testing.T) {
+func TestSortFolders_InboxSentFirst(t *testing.T) {
 	folders := []MailFolder{
 		{ID: "1", DisplayName: "Drafts", WellKnownName: "drafts"},
 		{ID: "2", DisplayName: "Inbox", WellKnownName: "inbox"},
@@ -20,25 +20,29 @@ func TestSortFolders(t *testing.T) {
 		{ID: "5", DisplayName: "Junk Email", WellKnownName: "junkemail"},
 	}
 
-	sorted := sortFolders(folders, nil)
+	sorted := sortFolders(folders, nil, nil)
 
-	if len(sorted) != len(folders) {
-		t.Fatalf("expected %d folders, got %d", len(folders), len(sorted))
+	if len(sorted) != len(folders)+1 {
+		t.Fatalf("expected %d folders, got %d", len(folders)+1, len(sorted))
 	}
 
-	if sorted[0].DisplayName != "Inbox" {
-		t.Errorf("expected first folder to be 'Inbox', got '%s'", sorted[0].DisplayName)
+	if sorted[0].DisplayName != "Favorites" {
+		t.Errorf("expected first folder to be 'Favorites', got '%s'", sorted[0].DisplayName)
 	}
 
-	if sorted[1].DisplayName != "Sent Items" {
-		t.Errorf("expected second folder to be 'Sent Items', got '%s'", sorted[1].DisplayName)
+	if sorted[1].DisplayName != "Inbox" {
+		t.Errorf("expected second folder to be 'Inbox', got '%s'", sorted[1].DisplayName)
+	}
+
+	if sorted[2].DisplayName != "Sent Items" {
+		t.Errorf("expected third folder to be 'Sent Items', got '%s'", sorted[2].DisplayName)
 	}
 
 	expectedRest := []string{"Drafts", "Archive", "Junk Email"}
 	for i, name := range expectedRest {
-		actualName := sorted[i+2].DisplayName
+		actualName := sorted[i+3].DisplayName
 		if actualName != name {
-			t.Errorf("expected folder at index %d to be '%s', got '%s'", i+2, name, actualName)
+			t.Errorf("expected folder at index %d to be '%s', got '%s'", i+3, name, actualName)
 		}
 	}
 }
@@ -49,14 +53,18 @@ func TestSortFolders_NoInboxOrSent(t *testing.T) {
 		{ID: "3", DisplayName: "Archive", WellKnownName: "archive"},
 	}
 
-	sorted := sortFolders(folders, nil)
+	sorted := sortFolders(folders, nil, nil)
 
-	if len(sorted) != 2 {
-		t.Fatalf("expected 2 folders, got %d", len(sorted))
+	if len(sorted) != 3 {
+		t.Fatalf("expected 3 folders, got %d", len(sorted))
 	}
 
-	if sorted[0].DisplayName != "Drafts" || sorted[1].DisplayName != "Archive" {
-		t.Errorf("expected original order, got %v", sorted)
+	if sorted[0].DisplayName != "Favorites" {
+		t.Errorf("expected first folder to be 'Favorites', got '%s'", sorted[0].DisplayName)
+	}
+
+	if sorted[1].DisplayName != "Drafts" || sorted[2].DisplayName != "Archive" {
+		t.Errorf("expected original order starting from index 1, got %v", sorted)
 	}
 }
 
@@ -67,22 +75,26 @@ func TestSortFolders_CaseInsensitiveAndFallback(t *testing.T) {
 		{ID: "3", DisplayName: "Boîte d'envoi", WellKnownName: "sentitems"}, // localized but wellKnownName is sentitems
 	}
 
-	sorted := sortFolders(folders, nil)
+	sorted := sortFolders(folders, nil, nil)
 
-	if len(sorted) != 3 {
-		t.Fatalf("expected 3 folders, got %d", len(sorted))
+	if len(sorted) != 4 {
+		t.Fatalf("expected 4 folders, got %d", len(sorted))
 	}
 
-	if sorted[0].DisplayName != "INBOX" {
-		t.Errorf("expected first folder to be 'INBOX', got '%s'", sorted[0].DisplayName)
+	if sorted[0].DisplayName != "Favorites" {
+		t.Errorf("expected first folder to be 'Favorites', got '%s'", sorted[0].DisplayName)
 	}
 
-	if sorted[1].DisplayName != "Boîte d'envoi" {
-		t.Errorf("expected second folder to be 'Boîte d'envoi', got '%s'", sorted[1].DisplayName)
+	if sorted[1].DisplayName != "INBOX" {
+		t.Errorf("expected second folder to be 'INBOX', got '%s'", sorted[1].DisplayName)
 	}
 
-	if sorted[2].DisplayName != "drafts" {
-		t.Errorf("expected third folder to be 'drafts', got '%s'", sorted[2].DisplayName)
+	if sorted[2].DisplayName != "Boîte d'envoi" {
+		t.Errorf("expected third folder to be 'Boîte d'envoi', got '%s'", sorted[2].DisplayName)
+	}
+
+	if sorted[3].DisplayName != "drafts" {
+		t.Errorf("expected fourth folder to be 'drafts', got '%s'", sorted[3].DisplayName)
 	}
 }
 
@@ -95,14 +107,18 @@ func TestSortFolders_Excluded(t *testing.T) {
 	}
 
 	excluded := []string{"Junk Email", "rssfeeds"}
-	sorted := sortFolders(folders, excluded)
+	sorted := sortFolders(folders, excluded, nil)
 
-	if len(sorted) != 2 {
-		t.Fatalf("expected 2 folders, got %d", len(sorted))
+	if len(sorted) != 3 {
+		t.Fatalf("expected 3 folders, got %d", len(sorted))
 	}
 
-	if sorted[0].DisplayName != "Inbox" || sorted[1].DisplayName != "Drafts" {
-		t.Errorf("expected Inbox and Drafts, got %v", sorted)
+	if sorted[0].DisplayName != "Favorites" {
+		t.Errorf("expected first folder to be 'Favorites', got '%s'", sorted[0].DisplayName)
+	}
+
+	if sorted[1].DisplayName != "Inbox" || sorted[2].DisplayName != "Drafts" {
+		t.Errorf("expected Favorites, Inbox, and Drafts, got %v", sorted)
 	}
 }
 
