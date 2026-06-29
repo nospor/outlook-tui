@@ -1273,9 +1273,54 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editorBodyLoadedMsg:
 		// External editor exited; load returned content into compose body
-		m.composeBody.SetValue(string(msg))
-		// Ensure cursor is at end of body
-		m.composeBody.CursorEnd()
+		bodyStr := string(msg)
+		m.composeBody.SetValue(bodyStr)
+
+		// Find where the reply ends and the quoted message starts.
+		// We position the cursor right after the user's reply.
+		targetLine := -1
+		lines := strings.Split(bodyStr, "\n")
+		for i, line := range lines {
+			if isOriginalMessageStart(line) {
+				targetLine = i
+				break
+			}
+		}
+
+		// Move cursor to the very top (Line 0, Col 0)
+		for m.composeBody.Line() > 0 || m.composeBody.LineInfo().RowOffset > 0 {
+			m.composeBody.CursorUp()
+		}
+		m.composeBody.CursorStart()
+
+		if targetLine > 0 {
+			// Place the cursor on the line immediately before the quote block starts, at its end.
+			lastLine := -1
+			for m.composeBody.Line() < targetLine-1 {
+				currLine := m.composeBody.Line()
+				if currLine == lastLine {
+					break
+				}
+				lastLine = currLine
+				m.composeBody.CursorDown()
+			}
+			m.composeBody.CursorEnd()
+		} else if targetLine == 0 {
+			// Quote block starts at the very first line, keep cursor at top.
+		} else {
+			// No quote block found, move to the end of the entire document.
+			lastLine := -1
+			for m.composeBody.Line() < m.composeBody.LineCount()-1 {
+				currLine := m.composeBody.Line()
+				if currLine == lastLine {
+					break
+				}
+				lastLine = currLine
+				m.composeBody.CursorDown()
+			}
+			m.composeBody.CursorEnd()
+		}
+
 		// Switch focus to body field
 		m.composeStep = 3
 		m.updateComposeFocus()
