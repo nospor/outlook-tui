@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,6 +20,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
+	"outlook-tui/filepicker"
 )
 
 type pane int
@@ -43,6 +46,7 @@ const (
 	stateYouTrackURLSelect
 	stateYouTrackInstallPrompt
 	stateHelp
+	stateFileBrowse
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -146,6 +150,8 @@ type mainModel struct {
 	filteredContacts   []Contact
 	contactsSelected   int
 	composedImages     []PastedImage
+	composedFiles      []PendingFile
+	filepicker         filepicker.Model
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -170,11 +176,29 @@ func initialModel() mainModel {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
 
+	fp := filepicker.New()
+	sortBy, sortOrder, lastDir := LoadFilepickerSettings()
+	if lastDir != "" {
+		fp.CurrentDirectory = lastDir
+	}
+	if sortBy == "Datetime" {
+		fp.SortBy = filepicker.SortByDatetime
+	} else {
+		fp.SortBy = filepicker.SortByName
+	}
+	if sortOrder == "desc" {
+		fp.SortOrder = filepicker.SortDescending
+	} else {
+		fp.SortOrder = filepicker.SortAscending
+	}
+	fp.Styles = filepicker.DefaultStyles()
+
 	return mainModel{
 		state:      stateLoading,
 		txtInput:   ti,
 		spinner:    s,
 		configStep: 0,
+		filepicker: fp,
 	}
 }
 
@@ -307,18 +331,18 @@ func fetchAttachmentsCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool, images []PastedImage) tea.Cmd {
+func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool, images []PastedImage, files []PendingFile) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if replyToID != "" {
 			// Use the proper Graph reply endpoint so the message is threaded correctly.
 			if replyAll {
-				err = gc.ReplyAllMessage(replyToID, body, to, cc, images)
+				err = gc.ReplyAllMessage(replyToID, body, to, cc, images, files)
 			} else {
-				err = gc.ReplyMessage(replyToID, body, to, images)
+				err = gc.ReplyMessage(replyToID, body, to, images, files)
 			}
 		} else {
-			err = gc.SendMessage(subject, body, to, cc, images)
+			err = gc.SendMessage(subject, body, to, cc, images, files)
 		}
 		if err != nil {
 			return errMsg(err)
@@ -387,6 +411,42 @@ func saveAttachmentCmd(att Attachment) tea.Cmd {
 		_ = exec.Command("xdg-open", path).Start()
 		
 		return attachmentSavedMsg(path)
+	}
+}
+
+type MsgFileAttached struct {
+	Name        string
+	ContentType string
+	Data        []byte
+	Err         error
+}
+
+func attachFileFromFilepathCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return MsgFileAttached{Err: err}
+		}
+
+		filename := filepath.Base(path)
+		contentType := http.DetectContentType(data)
+
+		// DetectContentType can be generic; map common extension overrides for accuracy
+		ext := strings.ToLower(filepath.Ext(filename))
+		switch ext {
+		case ".png":
+			contentType = "image/png"
+		case ".jpg", ".jpeg":
+			contentType = "image/jpeg"
+		case ".gif":
+			contentType = "image/gif"
+		}
+
+		return MsgFileAttached{
+			Name:        filename,
+			ContentType: contentType,
+			Data:        data,
+		}
 	}
 }
 
@@ -726,6 +786,17 @@ func (m mainModel) selectFolder(idx int) (mainModel, tea.Cmd) {
 func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Update filepicker if in filepicker mode (for non-keyboard messages like directory read results)
+	if m.state == stateFileBrowse {
+		if _, ok := msg.(tea.KeyMsg); !ok {
+			var cmd tea.Cmd
+			m.filepicker, cmd = m.filepicker.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -749,6 +820,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h = 3
 			}
 			m.composeBody.SetHeight(h)
+		}
+		if m.state == stateFileBrowse {
+			h := m.height - 17
+			if h < 5 {
+				h = 5
+			}
+			m.filepicker.SetHeight(h)
 		}
 
 	case spinner.TickMsg:
@@ -1092,6 +1170,23 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.inboxKnownIDs = newMap
 
+	case MsgFileAttached:
+		if msg.Err != nil {
+			m.statusMsg = "File read error: " + msg.Err.Error()
+			return m, nil
+		}
+		if len(msg.Data) > 50*1024*1024 {
+			m.statusMsg = "Error: File exceeds the 50MB limit"
+			return m, nil
+		}
+		m.composedFiles = append(m.composedFiles, PendingFile{
+			Name:        msg.Name,
+			ContentType: msg.ContentType,
+			Data:        msg.Data,
+		})
+		m.statusMsg = "Attached " + msg.Name
+		return m, nil
+
 	case editorBodyLoadedMsg:
 		// External editor exited; load returned content into compose body
 		m.composeBody.SetValue(string(msg))
@@ -1105,6 +1200,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mailSentMsg:
 		m.state = stateMain
 		m.statusMsg = "Email sent successfully!"
+		m.composedFiles = nil
+		m.composedImages = nil
 		// Reload current folder
 		if len(m.folders) > 0 {
 			if m.folders[m.selectedFolder].ID == "favorites" {
@@ -1414,6 +1511,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeReplyToID = ""  // not a reply
 			m.composeIsReplyAll = false
 			m.composedImages = nil
+			m.composedFiles = nil
 			m.loadContacts()
 			
 			m.composeTo = textinput.New()
@@ -1702,6 +1800,29 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMain
 			m.statusMsg = "Compose cancelled"
 			m.composedImages = nil
+			m.composedFiles = nil
+		case "ctrl+f":
+			m.state = stateFileBrowse
+			sortBy, sortOrder, lastDir := LoadFilepickerSettings()
+			if lastDir != "" {
+				m.filepicker.CurrentDirectory = lastDir
+			}
+			if sortBy == "Datetime" {
+				m.filepicker.SortBy = filepicker.SortByDatetime
+			} else {
+				m.filepicker.SortBy = filepicker.SortByName
+			}
+			if sortOrder == "desc" {
+				m.filepicker.SortOrder = filepicker.SortDescending
+			} else {
+				m.filepicker.SortOrder = filepicker.SortAscending
+			}
+			h := m.height - 17
+			if h < 5 {
+				h = 5
+			}
+			m.filepicker.SetHeight(h)
+			return m, m.filepicker.Init()
 		case "tab":
 			m.composeStep = (m.composeStep + 1) % 4
 			m.updateComposeFocus()
@@ -1763,8 +1884,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.composeReplyToID,
 				m.composeIsReplyAll,
 				m.composedImages,
+				m.composedFiles,
 			))
 			m.composedImages = nil
+			m.composedFiles = nil
 		default:
 			// Update the focused compose input
 			var cmd tea.Cmd
@@ -1910,6 +2033,33 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pagedown":
 			m.helpViewport.HalfPageDown()
 		}
+
+	case stateFileBrowse:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+
+		switch key.String() {
+		case "esc", "q":
+			m.state = stateCompose
+			return m, nil
+		}
+
+		var cmd tea.Cmd
+		m.filepicker, cmd = m.filepicker.Update(msg)
+
+		if key.String() == "s" || key.String() == "ctrl+s" || key.String() == "o" || key.String() == "ctrl+o" {
+			_ = SaveFilepickerSettings(m.filepicker.SortBy.String(), m.filepicker.SortOrder.String(), m.filepicker.CurrentDirectory)
+		}
+
+		if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+			_ = SaveFilepickerSettings(m.filepicker.SortBy.String(), m.filepicker.SortOrder.String(), m.filepicker.CurrentDirectory)
+			m.state = stateCompose
+			return m, tea.Batch(cmd, attachFileFromFilepathCmd(path))
+		}
+
+		cmds = append(cmds, cmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -1944,6 +2094,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeReplyToID = origMsg.ID   // remember original message so we use the reply endpoint
 	m.composeIsReplyAll = replyAll
 	m.composedImages = nil
+	m.composedFiles = nil
 	m.loadContacts()
 	
 	m.composeTo = textinput.New()
@@ -2396,8 +2547,16 @@ func (m mainModel) View() string {
 		if len(m.composedImages) > 0 {
 			s.WriteString(fmt.Sprintf("   Pasted images: %d\n\n", len(m.composedImages)))
 		}
+		if len(m.composedFiles) > 0 {
+			s.WriteString(fmt.Sprintf("   Attachments: %d\n", len(m.composedFiles)))
+			for _, file := range m.composedFiles {
+				sizeStr := strings.Replace(humanize.Bytes(uint64(len(file.Data))), " ", "", 1)
+				s.WriteString(fmt.Sprintf("     - %s (%s)\n", file.Name, sizeStr))
+			}
+			s.WriteString("\n")
+		}
 
-		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+v] Paste Image  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
+		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+v] Paste Image  |  [Ctrl+f] Add Attachment  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
 	case stateAttachments:
 		// Clear any previous Kitty image previews from the screen
@@ -2482,6 +2641,9 @@ func (m mainModel) View() string {
 		s.WriteString("   " + headerStyle.Render("OUTLOOK TUI HELP & KEYBINDINGS") + "\n\n")
 		s.WriteString(paneActiveStyle.Width(m.width - 4).Height(m.helpViewport.Height).Render(m.helpViewport.View()) + "\n\n")
 		s.WriteString("   " + dimStyle.Render("[Esc/q/?] Close Help  |  [Up/Down/j/k] Scroll  |  [Ctrl+C] Quit") + "\n")
+
+	case stateFileBrowse:
+		s.WriteString(m.renderFilePickerPopup(m.width - 4, m.height - 10))
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -2509,7 +2671,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse) {
 		lines := strings.Split(s.String(), "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -2590,6 +2752,30 @@ func (m mainModel) renderContactsPopup() string {
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderFilePickerPopup(w, h int) string {
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true).Render("Select File to Attach")
+
+	currentDir := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText)).Bold(true).Render("Directory: " + m.filepicker.CurrentDirectory)
+	sortMode := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorYellow)).Render(fmt.Sprintf("Sorted by: %s (%s)", m.filepicker.SortBy.String(), m.filepicker.SortOrder.String()))
+
+	var lines []string
+	lines = append(lines, title, currentDir, sortMode, "")
+
+	// Render the filepicker component
+	lines = append(lines, m.filepicker.View())
+
+	footer := dimStyle.Italic(true).Render("j/k or ↑/↓: Navigate • s: Change Sort • o: Change Order • Enter: Attach • Esc / q: Cancel")
+	lines = append(lines, "", footer)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorGreen)).
+		Padding(1, 2).
+		Width(w).Height(h).
+		Render(strings.Join(lines, "\n"))
 }
 
 // renderLayout1 renders the default side-by-side three-pane layout:

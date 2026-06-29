@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,4 +96,68 @@ func SaveConfig(cfg Config) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// FilepickerSettings holds the filepicker sorting and directory persistence.
+type FilepickerSettings struct {
+	SortBy           string `json:"sort_by"`
+	SortOrder        string `json:"sort_order"`
+	CurrentDirectory string `json:"current_directory,omitempty"`
+}
+
+// LoadFilepickerSettings reads the filepicker sorting settings from filepicker_settings.json.
+// Returns default values if the file does not exist or cannot be parsed.
+func LoadFilepickerSettings() (string, string, string) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "."
+	}
+	if abs, err := filepath.Abs(homeDir); err == nil {
+		homeDir = abs
+	}
+
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "Name", "asc", homeDir
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "filepicker_settings.json"))
+	if err != nil {
+		return "Name", "asc", homeDir
+	}
+	var settings FilepickerSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return "Name", "asc", homeDir
+	}
+	if settings.SortBy == "" {
+		settings.SortBy = "Name"
+	}
+	if settings.SortOrder == "" {
+		settings.SortOrder = "asc"
+	}
+	if settings.CurrentDirectory == "" {
+		settings.CurrentDirectory = homeDir
+	} else {
+		if abs, err := filepath.Abs(settings.CurrentDirectory); err == nil {
+			settings.CurrentDirectory = abs
+		}
+	}
+	return settings.SortBy, settings.SortOrder, settings.CurrentDirectory
+}
+
+// SaveFilepickerSettings writes the current filepicker settings to filepicker_settings.json.
+func SaveFilepickerSettings(sortBy string, sortOrder string, currentDirectory string) error {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return err
+	}
+	settings := FilepickerSettings{
+		SortBy:           sortBy,
+		SortOrder:        sortOrder,
+		CurrentDirectory: currentDirectory,
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal filepicker settings: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "filepicker_settings.json"), data, 0600)
 }

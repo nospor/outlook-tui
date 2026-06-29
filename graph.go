@@ -215,7 +215,28 @@ func makeImageAttachments(images []PastedImage) []Attachment {
 	return atts
 }
 
-func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string, images []PastedImage) error {
+// PendingFile represents a file to be attached to an email.
+type PendingFile struct {
+	Name        string
+	ContentType string
+	Data        []byte
+}
+
+func makeFileAttachments(files []PendingFile) []Attachment {
+	var atts []Attachment
+	for _, f := range files {
+		atts = append(atts, Attachment{
+			OdataType:    "#microsoft.graph.fileAttachment",
+			Name:         f.Name,
+			ContentType:  f.ContentType,
+			ContentBytes: base64.StdEncoding.EncodeToString(f.Data),
+			IsInline:     false,
+		})
+	}
+	return atts
+}
+
+func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string, images []PastedImage, files []PendingFile) error {
 	reqURL := fmt.Sprintf("%s/me/sendMail", graphBaseURL)
 
 	sendReq := struct {
@@ -247,7 +268,6 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
 		})
 		bodyContent = htmlBody
-		sendReq.Message.Attachments = makeImageAttachments(images)
 	}
 
 	sendReq.Message.Body = ItemBody{
@@ -258,6 +278,17 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 	sendReq.Message.ToRecipients = parseAddressStringToRecipients(recipientAddress)
 	sendReq.Message.CcRecipients = parseAddressStringToRecipients(ccAddress)
 	sendReq.SaveToSentItems = "true"
+
+	if len(images) > 0 || len(files) > 0 {
+		var attachments []Attachment
+		if len(images) > 0 {
+			attachments = append(attachments, makeImageAttachments(images)...)
+		}
+		if len(files) > 0 {
+			attachments = append(attachments, makeFileAttachments(files)...)
+		}
+		sendReq.Message.Attachments = attachments
+	}
 
 	jsonBytes, err := json.Marshal(sendReq)
 	if err != nil {
@@ -280,7 +311,7 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 
 // ReplyMessage sends a reply to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/reply on the Graph API.
-func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, images []PastedImage) error {
+func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, images []PastedImage, files []PendingFile) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/reply", graphBaseURL, url.PathEscape(messageID))
 
 	type ReplyReq struct {
@@ -293,24 +324,39 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 	}
 	var replyReq ReplyReq
 
-	if len(images) > 0 {
-		escaped := html.EscapeString(bodyText)
-		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
-		
-		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-			sub := reImg.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-		})
-		
-		replyReq.Message.Body = &ItemBody{
-			ContentType: "HTML",
-			Content:     htmlBody,
+	if len(images) > 0 || len(files) > 0 {
+		var attachments []Attachment
+		if len(images) > 0 {
+			attachments = append(attachments, makeImageAttachments(images)...)
 		}
-		replyReq.Message.Attachments = makeImageAttachments(images)
+		if len(files) > 0 {
+			attachments = append(attachments, makeFileAttachments(files)...)
+		}
+		replyReq.Message.Attachments = attachments
+
+		if len(images) > 0 {
+			escaped := html.EscapeString(bodyText)
+			htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+			
+			reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+			htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+				sub := reImg.FindStringSubmatch(match)
+				if len(sub) < 2 {
+					return match
+				}
+				return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+			})
+			
+			replyReq.Message.Body = &ItemBody{
+				ContentType: "HTML",
+				Content:     htmlBody,
+			}
+		} else {
+			replyReq.Message.Body = &ItemBody{
+				ContentType: "Text",
+				Content:     bodyText,
+			}
+		}
 	} else {
 		replyReq.Comment = bodyText
 	}
@@ -340,7 +386,7 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 
 // ReplyAllMessage sends a reply-all to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/replyAll on the Graph API.
-func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string, images []PastedImage) error {
+func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string, images []PastedImage, files []PendingFile) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/replyAll", graphBaseURL, url.PathEscape(messageID))
 
 	type ReplyReq struct {
@@ -354,24 +400,39 @@ func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress
 	}
 	var replyReq ReplyReq
 
-	if len(images) > 0 {
-		escaped := html.EscapeString(bodyText)
-		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
-		
-		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-			sub := reImg.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-		})
-		
-		replyReq.Message.Body = &ItemBody{
-			ContentType: "HTML",
-			Content:     htmlBody,
+	if len(images) > 0 || len(files) > 0 {
+		var attachments []Attachment
+		if len(images) > 0 {
+			attachments = append(attachments, makeImageAttachments(images)...)
 		}
-		replyReq.Message.Attachments = makeImageAttachments(images)
+		if len(files) > 0 {
+			attachments = append(attachments, makeFileAttachments(files)...)
+		}
+		replyReq.Message.Attachments = attachments
+
+		if len(images) > 0 {
+			escaped := html.EscapeString(bodyText)
+			htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+			
+			reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+			htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+				sub := reImg.FindStringSubmatch(match)
+				if len(sub) < 2 {
+					return match
+				}
+				return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+			})
+			
+			replyReq.Message.Body = &ItemBody{
+				ContentType: "HTML",
+				Content:     htmlBody,
+			}
+		} else {
+			replyReq.Message.Body = &ItemBody{
+				ContentType: "Text",
+				Content:     bodyText,
+			}
+		}
 	} else {
 		replyReq.Comment = bodyText
 	}
