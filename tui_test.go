@@ -310,6 +310,73 @@ func TestJKNavigation(t *testing.T) {
 	}
 }
 
+func TestThreadToggleSelectionPreservation(t *testing.T) {
+	msg1 := Message{ID: "msg1", ConversationID: "conv1ID"}
+	msg2 := Message{ID: "msg2", ConversationID: "conv1ID"}
+
+	m := mainModel{
+		state:            stateMain,
+		activePane:       paneMessages,
+		collapsedThreads: make(map[string]bool),
+		threadGroups: []ThreadGroup{
+			{
+				ConversationID: "conv1ID",
+				Members:        []Message{msg1, msg2},
+			},
+		},
+		width:  100,
+		height: 30,
+	}
+
+	// 1. Initially, build the virtual list and select one of the members (scrolled down in the thread)
+	// (Note: collapsedThreads["conv1ID"] is false by default, so it's expanded)
+	m.buildVirtualList()
+
+	// Check the virtual list contents:
+	// Index 0: Header of Thread 0 (IsHeader: true, ThreadIdx: 0, MemberIdx: -1)
+	// Index 1: Member 0 of Thread 0 (IsHeader: false, ThreadIdx: 0, MemberIdx: 0)
+	// Index 2: Member 1 of Thread 0 (IsHeader: false, ThreadIdx: 0, MemberIdx: 1)
+	if len(m.virtualList) != 3 {
+		t.Fatalf("expected virtualList to have 3 items, got %d", len(m.virtualList))
+	}
+
+	// Select the second member (index 2)
+	m.virtualSelected = 2
+
+	// Press Space to toggle (collapse) the thread
+	updatedModelInterface, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	updatedModel := updatedModelInterface.(mainModel)
+
+	// Check if the thread is collapsed
+	if !updatedModel.collapsedThreads["conv1ID"] {
+		t.Errorf("expected thread to be collapsed")
+	}
+
+	// The virtual list should now only contain the header row (length 1)
+	if len(updatedModel.virtualList) != 1 {
+		t.Fatalf("expected collapsed virtualList to have 1 item, got %d", len(updatedModel.virtualList))
+	}
+
+	// The selection should have moved to the header row (index 0) of the thread
+	if updatedModel.virtualSelected != 0 {
+		t.Errorf("expected virtualSelected to be 0 (the header row), got %d", updatedModel.virtualSelected)
+	}
+
+	// Press Space again to expand the thread
+	updatedModelInterface2, _ := updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	updatedModel2 := updatedModelInterface2.(mainModel)
+
+	// Check if the thread is expanded
+	if updatedModel2.collapsedThreads["conv1ID"] {
+		t.Errorf("expected thread to be expanded")
+	}
+
+	// Selection should remain on the header row (index 0)
+	if updatedModel2.virtualSelected != 0 {
+		t.Errorf("expected virtualSelected to stay at 0 after expanding, got %d", updatedModel2.virtualSelected)
+	}
+}
+
 func TestComposeContactSuggestions(t *testing.T) {
 	m := mainModel{
 		state:       stateCompose,

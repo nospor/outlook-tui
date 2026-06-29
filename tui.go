@@ -1587,13 +1587,24 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(tg.Members) > 1 {
 					cid := tg.ConversationID
 					m.collapsedThreads[cid] = !m.collapsedThreads[cid]
-					// Rebuild virtual list; clamp virtualSelected
+					targetThreadIdx := item.ThreadIdx
+					// Rebuild virtual list and keep selection on the thread's header row
 					m.buildVirtualList()
-					if m.virtualSelected >= len(m.virtualList) {
-						m.virtualSelected = len(m.virtualList) - 1
+					found := false
+					for i, v := range m.virtualList {
+						if v.ThreadIdx == targetThreadIdx && v.IsHeader {
+							m.virtualSelected = i
+							found = true
+							break
+						}
 					}
-					if m.virtualSelected < 0 {
-						m.virtualSelected = 0
+					if !found {
+						if m.virtualSelected >= len(m.virtualList) {
+							m.virtualSelected = len(m.virtualList) - 1
+						}
+						if m.virtualSelected < 0 {
+							m.virtualSelected = 0
+						}
 					}
 				}
 			}
