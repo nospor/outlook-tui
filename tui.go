@@ -2578,24 +2578,6 @@ func (m mainModel) View() string {
 		}
 		s.WriteString("\n   [Up/Down] Select Attachment  |  [Enter] Save to Downloads  |  [Esc] Back\n")
 
-		// Preview the selected attachment if it is an image
-		if len(m.attachments) > 0 && m.selectedAttach >= 0 && m.selectedAttach < len(m.attachments) {
-			currAtt := m.attachments[m.selectedAttach]
-			if isImageAttachment(currAtt) {
-				previewRows := m.height - len(m.attachments) - 10
-				if previewRows > 18 {
-					previewRows = 18
-				}
-				if previewRows >= 5 {
-					s.WriteString("\n   Preview:\n")
-					s.WriteString(renderKittyImagePreview(currAtt, previewRows))
-					for i := 0; i < previewRows; i++ {
-						s.WriteString("\n")
-					}
-				}
-			}
-		}
-
 	case stateURLSelect:
 		s.WriteString("   " + headerStyle.Render("SELECT URL TO COPY TO CLIPBOARD") + "\n\n")
 		for i, url := range m.extractedURLs {
