@@ -96,8 +96,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
   - **`1`** — Cache messages in `~/.cache/outlook-tui/db.db`. On subsequent launches, cached messages for the first folder are displayed immediately while a fresh fetch runs in the background. Switching folders also shows cached messages instantly. Deleting a message or opening it (marking read) updates the cache.
 * `excluded_folders`: A list of folder names (display name or well-known name) that should not be shown in the Folders pane (e.g. `["Junk Email", "RSS Feeds"]`). Matching is case-insensitive.
 * `scroll_lines`: The number of lines to scroll when scrolling the Message Detail pane (defaults to `1`).
+* `image_viewer`: The command/executable used to open image attachments (e.g. `"sxiv"` or `"feh"`). If empty, not specified, or if the attachment is not an image, it defaults to using `xdg-open`.
 
-Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, and 5-line scrolling:
+Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, and sxiv for images:
 ```json
 {
   "client_id": "your-azure-client-id",
@@ -106,7 +107,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "layout": 2,
   "use_sqlite": 1,
   "excluded_folders": ["Junk Email", "RSS Feeds"],
-  "scroll_lines": 5
+  "scroll_lines": 5,
+  "image_viewer": "sxiv"
 }
 ```
 

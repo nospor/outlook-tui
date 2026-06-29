@@ -378,7 +378,7 @@ func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func saveAttachmentCmd(att Attachment) tea.Cmd {
+func saveAttachmentCmd(att Attachment, imageViewer string) tea.Cmd {
 	return func() tea.Msg {
 		data, err := base64.StdEncoding.DecodeString(att.ContentBytes)
 		if err != nil {
@@ -414,8 +414,25 @@ func saveAttachmentCmd(att Attachment) tea.Cmd {
 			return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
 		}
 		
-		// Open the file with xdg-open in the background
-		_ = exec.Command("xdg-open", path).Start()
+		// Open the file with xdg-open or the custom image viewer in the background
+		var cmd *exec.Cmd
+		extLower := strings.ToLower(ext)
+		isImage := extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".gif" || extLower == ".bmp" || extLower == ".webp"
+		
+		if isImage && imageViewer != "" {
+			parts := strings.Fields(imageViewer)
+			if len(parts) > 0 {
+				viewerName := parts[0]
+				args := append(parts[1:], path)
+				cmd = exec.Command(viewerName, args...)
+			} else {
+				cmd = exec.Command("xdg-open", path)
+			}
+		} else {
+			cmd = exec.Command("xdg-open", path)
+		}
+		
+		_ = cmd.Start()
 		
 		return attachmentSavedMsg(path)
 	}
@@ -2059,7 +2076,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Save attachment
 			m.statusMsg = "Downloading attachment..."
-			cmds = append(cmds, saveAttachmentCmd(m.attachments[m.selectedAttach]))
+			cmds = append(cmds, saveAttachmentCmd(m.attachments[m.selectedAttach], m.config.ImageViewer))
 		}
 
 	case stateReplyConfirm:

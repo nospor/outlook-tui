@@ -16,6 +16,7 @@ type Config struct {
 	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
 	ExcludedFolders []string `json:"excluded_folders"`
 	ScrollLines     int      `json:"scroll_lines"`     // defaults to 1
+	ImageViewer     string   `json:"image_viewer"`
 }
 
 func GetConfigDir() (string, error) {
@@ -71,7 +72,7 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") {
 		_ = SaveConfig(cfg)
 	}
 

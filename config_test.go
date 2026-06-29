@@ -33,6 +33,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ScrollLines != 1 {
 		t.Errorf("expected default ScrollLines to be 1, got %d", cfg.ScrollLines)
 	}
+	if cfg.ImageViewer != "" {
+		t.Errorf("expected default ImageViewer to be empty, got %q", cfg.ImageViewer)
+	}
 
 	// Case 2: Config file exists but is missing refresh_time_min
 	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
@@ -90,11 +93,16 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have ScrollLines 1, got %d", savedCfg.ScrollLines)
 	}
 
+	if savedCfg.ImageViewer != "" {
+		t.Errorf("expected saved config to have ImageViewer '', got %q", savedCfg.ImageViewer)
+	}
+
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
 	cfg.ExcludedFolders = []string{"Junk Email", "RSS Feeds"}
 	cfg.ScrollLines = 5
+	cfg.ImageViewer = "sxiv"
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -116,5 +124,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.ScrollLines != 5 {
 		t.Errorf("expected custom ScrollLines to be 5, got %d", cfg.ScrollLines)
+	}
+	if cfg.ImageViewer != "sxiv" {
+		t.Errorf("expected custom ImageViewer to be 'sxiv', got %q", cfg.ImageViewer)
 	}
 }
