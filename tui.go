@@ -661,6 +661,46 @@ func (m *mainModel) updateFavoritesFolderCounts() {
 	}
 }
 
+// updateFolderUnreadCount adjusts the unread count of the folder associated with a message.
+func (m *mainModel) updateFolderUnreadCount(messageID string, isRead bool, wasRead bool) {
+	if isRead == wasRead {
+		return
+	}
+	delta := -1
+	if !isRead {
+		delta = 1
+	}
+
+	// Determine the folder ID for this message
+	var folderID string
+	if len(m.folders) > 0 {
+		selectedFolderID := m.folders[m.selectedFolder].ID
+		if selectedFolderID != "favorites" {
+			folderID = selectedFolderID
+		} else if m.db != nil {
+			// Query the database to find the original folder ID
+			if fID, err := m.db.GetMessageFolderID(messageID); err == nil && fID != "" {
+				folderID = fID
+			}
+		}
+	}
+
+	if folderID != "" {
+		for i := range m.folders {
+			if m.folders[i].ID == folderID {
+				m.folders[i].UnreadItemCount = m.folders[i].UnreadItemCount + delta
+				if m.folders[i].UnreadItemCount < 0 {
+					m.folders[i].UnreadItemCount = 0
+				}
+				break
+			}
+		}
+	}
+
+	// Always update favorites counts in case it's in favorites
+	m.updateFavoritesFolderCounts()
+}
+
 // loadMessageDetail loads the message detail (including body and attachments).
 // If the message body is already cached in the database or in memory, it renders it instantly.
 // If the message is unread, it still triggers fetchMessageDetailCmd to mark it as read.
@@ -1075,8 +1115,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailViewport.GotoTop()
 			
 			// Mark as read and cache body in local UI — update in messages slice and thread groups
+			wasRead := true
+			if am != nil {
+				wasRead = am.IsRead
+			}
 			for i, em := range m.messages {
 				if em.ID == msg.Message.ID {
+					wasRead = m.messages[i].IsRead
 					m.messages[i].IsRead = true
 					m.messages[i].Body = msg.Message.Body
 					m.messages[i].Attachments = msg.Attachments
@@ -1085,6 +1130,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for ti := range m.threadGroups {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == msg.Message.ID {
+						wasRead = m.threadGroups[ti].Members[mi].IsRead
 						m.threadGroups[ti].Members[mi].IsRead = true
 						m.threadGroups[ti].Members[mi].Body = msg.Message.Body
 						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
@@ -1100,6 +1146,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				_ = m.db.UpdateReadStatus(msg.Message.ID, true)
 			}
+			m.updateFolderUnreadCount(msg.Message.ID, true, wasRead)
 			m.statusMsg = "Message details loaded"
 		}
 
@@ -1214,10 +1261,50 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mailDeletedMsg:
 		m.statusMsg = "Message moved to Deleted Items"
+		// Find if the deleted message was unread before deleting
+		wasUnread := false
+		var deletedMsgFolderID string
+		for _, em := range m.messages {
+			if em.ID == msg.MessageID {
+				wasUnread = !em.IsRead
+				break
+			}
+		}
+		if !wasUnread {
+			for _, tg := range m.threadGroups {
+				for _, mem := range tg.Members {
+					if mem.ID == msg.MessageID {
+						wasUnread = !mem.IsRead
+						break
+					}
+				}
+			}
+		}
 		// Remove from SQLite cache and favorites
 		if m.db != nil {
+			if fID, err := m.db.GetMessageFolderID(msg.MessageID); err == nil && fID != "" {
+				deletedMsgFolderID = fID
+			}
 			_ = m.db.DeleteMessage(msg.MessageID)
 			_ = m.db.RemoveFromFavorites(msg.MessageID)
+		}
+		// Update folder unread count in memory
+		if wasUnread && len(m.folders) > 0 {
+			fID := deletedMsgFolderID
+			if fID == "" {
+				fID = m.folders[m.selectedFolder].ID
+			}
+			if fID != "favorites" {
+				for i := range m.folders {
+					if m.folders[i].ID == fID {
+						m.folders[i].UnreadItemCount = m.folders[i].UnreadItemCount - 1
+						if m.folders[i].UnreadItemCount < 0 {
+							m.folders[i].UnreadItemCount = 0
+						}
+						break
+					}
+				}
+			}
 		}
 		// Reload messages
 		if len(m.folders) > 0 {
@@ -1226,7 +1313,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateFavoritesFolderCounts()
 				return m, nil
 			}
-			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
+			return m, tea.Batch(
+				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
+				fetchFoldersCmd(m.graphClient),
+			)
 		}
 
 	case mailRestoredMsg:
@@ -1243,7 +1333,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateFavoritesFolderCounts()
 				return m, nil
 			}
-			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
+			return m, tea.Batch(
+				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
+				fetchFoldersCmd(m.graphClient),
+			)
 		}
 
 	case attachmentSavedMsg:
@@ -1549,6 +1642,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if am := m.activeMessage(); am != nil {
 				targetState := !am.IsRead
 				msgID := am.ID
+				wasRead := am.IsRead
 				// Update in messages slice
 				for i := range m.messages {
 					if m.messages[i].ID == msgID {
@@ -1568,6 +1662,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.db.UpdateReadStatus(msgID, targetState)
 					m.updateFavoritesFolderCounts()
 				}
+				m.updateFolderUnreadCount(msgID, targetState, wasRead)
 				cmds = append(cmds, func() tea.Msg {
 					_ = m.graphClient.MarkAsRead(msgID, targetState)
 					return nil

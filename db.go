@@ -366,6 +366,16 @@ func (d *DB) UpdateReadStatus(messageID string, isRead bool) error {
 	return err
 }
 
+// GetMessageFolderID retrieves the folder ID for a given message ID from the messages cache.
+func (d *DB) GetMessageFolderID(messageID string) (string, error) {
+	var folderID string
+	err := d.db.QueryRow(`SELECT folder_id FROM messages WHERE id = ?`, messageID).Scan(&folderID)
+	if err != nil {
+		return "", err
+	}
+	return folderID, nil
+}
+
 // Contact represents a name and email address pair.
 type Contact struct {
 	Name    string

@@ -110,6 +110,15 @@ func TestDBCache(t *testing.T) {
 		t.Errorf("expected 1 attachment named file.txt, got: %v", fullMsg.Attachments)
 	}
 
+	// Test GetMessageFolderID
+	folderID, err := db.GetMessageFolderID(msg1.ID)
+	if err != nil {
+		t.Fatalf("failed to get message folder ID: %v", err)
+	}
+	if folderID != "inbox" {
+		t.Errorf("expected folder ID 'inbox', got %q", folderID)
+	}
+
 	// 4. Update read status
 	err = db.UpdateReadStatus(msg1.ID, true)
 	if err != nil {

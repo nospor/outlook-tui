@@ -923,6 +923,57 @@ func TestRenderMessagesViewWide_StripNewlines(t *testing.T) {
 	}
 }
 
+func TestUpdateFolderUnreadCount(t *testing.T) {
+	// Create temporary database for testing favorites / folder ID lookup
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	tempDB, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer tempDB.Close()
+
+	// Insert a message so we can test the lookup
+	msg := Message{
+		ID:             "msg_123",
+		ConversationID: "conv_123",
+		Subject:        "Test Subject",
+		IsRead:         false,
+	}
+	if err := tempDB.UpsertMessage("inbox", msg); err != nil {
+		t.Fatalf("failed to insert test message: %v", err)
+	}
+
+	m := mainModel{
+		state: stateMain,
+		db:    tempDB,
+		folders: []MailFolder{
+			{ID: "favorites", DisplayName: "Favorites", UnreadItemCount: 0},
+			{ID: "inbox", DisplayName: "Inbox", UnreadItemCount: 5},
+		},
+		selectedFolder: 1, // selected Inbox
+	}
+
+	// 1. Mark an unread message as read in a regular folder (Inbox)
+	m.updateFolderUnreadCount("msg_123", true, false)
+	if m.folders[1].UnreadItemCount != 4 {
+		t.Errorf("expected Inbox unread count to be 4, got %d", m.folders[1].UnreadItemCount)
+	}
+
+	// 2. Mark a read message as unread in a regular folder (Inbox)
+	m.updateFolderUnreadCount("msg_123", false, true)
+	if m.folders[1].UnreadItemCount != 5 {
+		t.Errorf("expected Inbox unread count to be 5, got %d", m.folders[1].UnreadItemCount)
+	}
+
+	// 3. Select the favorites folder and test lookup of original folder
+	m.selectedFolder = 0 // selected Favorites
+	m.updateFolderUnreadCount("msg_123", true, false)
+	if m.folders[1].UnreadItemCount != 4 {
+		t.Errorf("expected Inbox unread count to be 4 after reading in Favorites, got %d", m.folders[1].UnreadItemCount)
+	}
+}
+
 
 
 
