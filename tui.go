@@ -2371,7 +2371,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 	
 	m.composeBody.SetValue(quotedBody.String())
-	for i := 0; i < m.composeBody.LineCount(); i++ {
+	for m.composeBody.Line() > 0 || m.composeBody.LineInfo().RowOffset > 0 {
 		m.composeBody.CursorUp()
 	}
 	m.composeBody.CursorStart()
