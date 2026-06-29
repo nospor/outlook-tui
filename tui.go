@@ -1671,7 +1671,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeBody.ShowLineNumbers = false
 			m.composeBody.Placeholder = "Type email body here..."
 			m.composeBody.SetWidth(m.width - 20)
-			m.composeBody.SetHeight(10)
+			h := m.height - 18
+			if h < 3 {
+				h = 3
+			}
+			m.composeBody.SetHeight(h)
 		case "d", "delete":
 			// Delete current message
 			if am := m.activeMessage(); am != nil {
@@ -2353,7 +2357,11 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeBody.ShowLineNumbers = false
 	m.composeBody.Placeholder = "Type email body here..."
 	m.composeBody.SetWidth(m.width - 20)
-	m.composeBody.SetHeight(10)
+	h := m.height - 18
+	if h < 3 {
+		h = 3
+	}
+	m.composeBody.SetHeight(h)
 	
 	var quotedBody strings.Builder
 	quotedBody.WriteString("\n\n")
