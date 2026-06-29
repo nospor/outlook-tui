@@ -1378,7 +1378,6 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case attachmentSavedMsg:
 		m.statusMsg = fmt.Sprintf("Saved attachment to: %s", msg)
-		m.state = stateMain
 
 	case youtrackTuiFinishedMsg:
 		m.state = stateMain

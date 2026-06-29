@@ -1121,6 +1121,19 @@ func TestComposeEscapeConfirmation(t *testing.T) {
 	}
 }
 
+func TestAttachmentSavedState(t *testing.T) {
+	m := mainModel{
+		state: stateAttachments,
+	}
+
+	updatedModelInterface, _ := m.Update(attachmentSavedMsg("/path/to/attachment"))
+	updated := updatedModelInterface.(mainModel)
+
+	if updated.state != stateAttachments {
+		t.Errorf("expected state to remain stateAttachments, got %v", updated.state)
+	}
+}
+
 
 
 
