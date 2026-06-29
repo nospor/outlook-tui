@@ -1053,6 +1053,70 @@ func TestUpdateFolderUnreadCount(t *testing.T) {
 	}
 }
 
+func TestComposeEscapeConfirmation(t *testing.T) {
+	// Setup a mainModel in stateCompose
+	m := mainModel{
+		state:       stateCompose,
+		composeStep: 3,
+	}
+	m.composeBody = textarea.New()
+
+	// 1. If body is empty, pressing esc should go directly to stateMain
+	m.composeBody.SetValue("")
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, ok := m2.(mainModel)
+	if !ok {
+		t.Fatalf("expected mainModel")
+	}
+	if updated.state != stateMain {
+		t.Errorf("expected state to be stateMain when body is empty, got %v", updated.state)
+	}
+
+	// 2. If body is filled, pressing esc should go to stateComposeCancelConfirm
+	m.composeBody.SetValue("   some draft content   ")
+	m3, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated2, ok := m3.(mainModel)
+	if !ok {
+		t.Fatalf("expected mainModel")
+	}
+	if updated2.state != stateComposeCancelConfirm {
+		t.Errorf("expected state to be stateComposeCancelConfirm when body is filled, got %v", updated2.state)
+	}
+
+	// 3. From stateComposeCancelConfirm, pressing 'n' should go back to stateCompose
+	updated2.state = stateComposeCancelConfirm
+	m4, _ := updated2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	updated3, ok := m4.(mainModel)
+	if !ok {
+		t.Fatalf("expected mainModel")
+	}
+	if updated3.state != stateCompose {
+		t.Errorf("expected state to go back to stateCompose when pressing 'n', got %v", updated3.state)
+	}
+
+	// 4. From stateComposeCancelConfirm, pressing 'esc' should go back to stateCompose
+	updated2.state = stateComposeCancelConfirm
+	m5, _ := updated2.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated4, ok := m5.(mainModel)
+	if !ok {
+		t.Fatalf("expected mainModel")
+	}
+	if updated4.state != stateCompose {
+		t.Errorf("expected state to go back to stateCompose when pressing 'esc', got %v", updated4.state)
+	}
+
+	// 5. From stateComposeCancelConfirm, pressing 'y' should go to stateMain
+	updated2.state = stateComposeCancelConfirm
+	m6, _ := updated2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	updated5, ok := m6.(mainModel)
+	if !ok {
+		t.Fatalf("expected mainModel")
+	}
+	if updated5.state != stateMain {
+		t.Errorf("expected state to go to stateMain when pressing 'y', got %v", updated5.state)
+	}
+}
+
 
 
 

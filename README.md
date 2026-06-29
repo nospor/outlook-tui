@@ -139,7 +139,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `o`                           | Extract YouTrack URLs from the selected message and open in the external `yt-tui` app (shows a popup list if multiple unique YouTrack URLs exist, ignoring quoted/original text) |
 | `?`                           | Toggle help popup describing app functionality and shortcuts                                                                                |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
-| `Esc`                         | Go back (cancel compose, close attachments list, close help popup, or go back to config)                                                      |
+| `Esc`                         | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)          |
 | `q` (or `Ctrl+C`)             | Quit the application                                                                                                                        |
 
 ---

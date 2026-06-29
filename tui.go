@@ -47,6 +47,7 @@ const (
 	stateYouTrackInstallPrompt
 	stateHelp
 	stateFileBrowse
+	stateComposeCancelConfirm
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -1922,10 +1923,14 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch key.String() {
 		case "esc":
-			m.state = stateMain
-			m.statusMsg = "Compose cancelled"
-			m.composedImages = nil
-			m.composedFiles = nil
+			if strings.TrimSpace(m.composeBody.Value()) != "" {
+				m.state = stateComposeCancelConfirm
+			} else {
+				m.state = stateMain
+				m.statusMsg = "Compose cancelled"
+				m.composedImages = nil
+				m.composedFiles = nil
+			}
 		case "ctrl+f":
 			m.state = stateFileBrowse
 			sortBy, sortOrder, lastDir := LoadFilepickerSettings()
@@ -2185,6 +2190,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		cmds = append(cmds, cmd)
+
+	case stateComposeCancelConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "y", "Y":
+			m.state = stateMain
+			m.statusMsg = "Compose cancelled"
+			m.composedImages = nil
+			m.composedFiles = nil
+		case "n", "N", "esc":
+			m.state = stateCompose
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -2581,6 +2601,12 @@ func (m mainModel) View() string {
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("[s]") + " Reply to Sender Only\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render("[a]") + " Reply All\n\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorOverlay)).Render("[c]") + " Cancel / Go Back\n")
+
+	case stateComposeCancelConfirm:
+		s.WriteString("   " + headerStyle.Render("DISCARD EMAIL?") + "\n\n")
+		s.WriteString("   You have draft content in the body. Do you really want to quit composing?\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back\n")
 
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
