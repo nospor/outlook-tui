@@ -190,6 +190,10 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "<img src=\"https://example.com/external.png\">",
 			expected: "\x1b[1;38;2;203;166;247m[image]\x1b[0m",
 		},
+		{
+			input:    "Cronic detected failure or error output for the command:\nbash /opt/deploy/check_error_log.sh /var/log/nginx/barb\n\nRESULT CODE: 1\n\nERROR OUTPUT:\n< 2026/06/29 10:05:58 [error] 10792#10792: *5205807 FastCGI sent in stderr",
+			expected: "Cronic detected failure or error output for the command:\nbash /opt/deploy/check_error_log.sh /var/log/nginx/barb\n\nRESULT CODE: 1\n\nERROR OUTPUT:\n< 2026/06/29 10:05:58 [error] 10792#10792: *5205807 FastCGI sent in stderr",
+		},
 	}
 
 	for _, tt := range tests {

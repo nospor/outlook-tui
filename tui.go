@@ -3640,10 +3640,32 @@ func formatBodyContent(htmlContent string) string {
 	// Strip all other HTML tags
 	var builder strings.Builder
 	inTag := false
-	for _, r := range res {
+	runes := []rune(res)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		if r == '<' {
-			inTag = true
-			continue
+			// Check if this '<' actually starts a tag/comment/processing instruction.
+			// It must be followed by at least one character, which must be:
+			// - a letter (a-z, A-Z)
+			// - '/' followed by a letter (a-z, A-Z)
+			// - '!' (e.g., comment or doctype)
+			// - '?' (e.g., processing instruction)
+			isTag := false
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '!' || next == '?' {
+					isTag = true
+				} else if next == '/' && i+2 < len(runes) {
+					next2 := runes[i+2]
+					if (next2 >= 'a' && next2 <= 'z') || (next2 >= 'A' && next2 <= 'Z') {
+						isTag = true
+					}
+				}
+			}
+			if isTag {
+				inTag = true
+				continue
+			}
 		}
 		if r == '>' {
 			if inTag {
