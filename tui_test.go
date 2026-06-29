@@ -883,6 +883,46 @@ func TestHelpKey(t *testing.T) {
 	}
 }
 
+func TestRenderMessagesViewWide_StripNewlines(t *testing.T) {
+	m := mainModel{
+		state:      stateMain,
+		activePane: paneMessages,
+		config:     Config{Layout: 2},
+		width:      100,
+		height:     30,
+	}
+	m.folders = []MailFolder{{DisplayName: "Inbox", ID: "inbox"}}
+	msg := Message{
+		ID:             "msg1ID",
+		ConversationID: "conv1ID",
+		Subject:        "Hello",
+		IsRead:         true,
+		BodyPreview:    "Line 1\r\nLine 2\nLine 3",
+		From:           Recipient{EmailAddress: EmailAddress{Name: "Sender", Address: "sender@example.com"}},
+	}
+	m.threadGroups = []ThreadGroup{
+		{
+			ConversationID: "conv1ID",
+			Members:        []Message{msg, msg},
+		},
+	}
+	m.virtualList = []MessageListItem{
+		{ThreadIdx: 0, MemberIdx: -1, IsHeader: true},
+		{ThreadIdx: 0, MemberIdx: 1, IsHeader: false},
+	}
+	m.virtualSelected = 1
+
+	messagesView := m.renderMessagesViewWide(20, 80)
+
+	if strings.Contains(messagesView, "Line 1\nLine 2") || strings.Contains(messagesView, "Line 1\r\nLine 2") {
+		t.Errorf("expected view to have newlines stripped from preview, but found raw newlines. View:\n%s", messagesView)
+	}
+
+	if !strings.Contains(messagesView, "Line 1 Line 2 Line 3") {
+		t.Errorf("expected view to contain stripped preview 'Line 1 Line 2 Line 3', got:\n%s", messagesView)
+	}
+}
+
 
 
 

@@ -3168,7 +3168,8 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 				spaceCount = 2
 			}
 			line1 := leftPart + strings.Repeat(" ", spaceCount) + rightPart
-			line2 := fmt.Sprintf("    %s", msg.BodyPreview)
+			preview := strings.Join(strings.Fields(msg.BodyPreview), " ")
+			line2 := fmt.Sprintf("    %s", preview)
 			if len(line2) > availWidth-2 {
 				line2 = line2[:availWidth-5] + "..."
 			}
