@@ -320,45 +320,37 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 			Body         *ItemBody    `json:"body,omitempty"`
 			Attachments  []Attachment `json:"attachments,omitempty"`
 		} `json:"message"`
-		Comment string `json:"comment,omitempty"`
 	}
 	var replyReq ReplyReq
 
-	if len(images) > 0 || len(files) > 0 {
-		var attachments []Attachment
-		if len(images) > 0 {
-			attachments = append(attachments, makeImageAttachments(images)...)
-		}
-		if len(files) > 0 {
-			attachments = append(attachments, makeFileAttachments(files)...)
-		}
+	var attachments []Attachment
+	if len(images) > 0 {
+		attachments = append(attachments, makeImageAttachments(images)...)
+	}
+	if len(files) > 0 {
+		attachments = append(attachments, makeFileAttachments(files)...)
+	}
+	if len(attachments) > 0 {
 		replyReq.Message.Attachments = attachments
+	}
 
-		if len(images) > 0 {
-			escaped := html.EscapeString(bodyText)
-			htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
-			
-			reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-			htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-				sub := reImg.FindStringSubmatch(match)
-				if len(sub) < 2 {
-					return match
-				}
-				return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-			})
-			
-			replyReq.Message.Body = &ItemBody{
-				ContentType: "HTML",
-				Content:     htmlBody,
+	escaped := html.EscapeString(bodyText)
+	htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+
+	if len(images) > 0 {
+		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+			sub := reImg.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
 			}
-		} else {
-			replyReq.Message.Body = &ItemBody{
-				ContentType: "Text",
-				Content:     bodyText,
-			}
-		}
-	} else {
-		replyReq.Comment = bodyText
+			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+		})
+	}
+
+	replyReq.Message.Body = &ItemBody{
+		ContentType: "HTML",
+		Content:     htmlBody,
 	}
 
 	if toAddress != "" {
@@ -396,45 +388,37 @@ func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress
 			Body         *ItemBody    `json:"body,omitempty"`
 			Attachments  []Attachment `json:"attachments,omitempty"`
 		} `json:"message"`
-		Comment string `json:"comment,omitempty"`
 	}
 	var replyReq ReplyReq
 
-	if len(images) > 0 || len(files) > 0 {
-		var attachments []Attachment
-		if len(images) > 0 {
-			attachments = append(attachments, makeImageAttachments(images)...)
-		}
-		if len(files) > 0 {
-			attachments = append(attachments, makeFileAttachments(files)...)
-		}
+	var attachments []Attachment
+	if len(images) > 0 {
+		attachments = append(attachments, makeImageAttachments(images)...)
+	}
+	if len(files) > 0 {
+		attachments = append(attachments, makeFileAttachments(files)...)
+	}
+	if len(attachments) > 0 {
 		replyReq.Message.Attachments = attachments
+	}
 
-		if len(images) > 0 {
-			escaped := html.EscapeString(bodyText)
-			htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
-			
-			reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-			htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-				sub := reImg.FindStringSubmatch(match)
-				if len(sub) < 2 {
-					return match
-				}
-				return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-			})
-			
-			replyReq.Message.Body = &ItemBody{
-				ContentType: "HTML",
-				Content:     htmlBody,
+	escaped := html.EscapeString(bodyText)
+	htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
+
+	if len(images) > 0 {
+		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
+			sub := reImg.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
 			}
-		} else {
-			replyReq.Message.Body = &ItemBody{
-				ContentType: "Text",
-				Content:     bodyText,
-			}
-		}
-	} else {
-		replyReq.Comment = bodyText
+			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+		})
+	}
+
+	replyReq.Message.Body = &ItemBody{
+		ContentType: "HTML",
+		Content:     htmlBody,
 	}
 
 	if toAddress != "" {
