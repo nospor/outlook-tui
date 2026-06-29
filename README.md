@@ -130,9 +130,9 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `Ctrl+g`                      | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view. |
 | `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
 | `U`                           | Recover/undelete the selected message (moves it back to the Inbox)                                                                          |
-| `r`                           | Toggle the selected message's Read/Unread status                                                                                            |
+| `R`                           | Toggle the selected message's Read/Unread status                                                                                            |
 | `f`                           | Toggle Favorite status (adds/removes the selected message to/from the local Favorites folder)                                                |
-| `R`                           | Reload/refresh messages in the selected folder                                                                                               |
+| `r`                           | Reload/refresh messages in the selected folder                                                                                               |
 | `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
 | `a`                           | View and select attachments on the current email                                                                                            |
 | `u`                           | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text)   |

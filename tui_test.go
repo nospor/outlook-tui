@@ -731,7 +731,7 @@ func TestReloadFolderKey(t *testing.T) {
 
 	keyMsg := tea.KeyMsg{
 		Type:  tea.KeyRunes,
-		Runes: []rune("R"),
+		Runes: []rune("r"),
 	}
 
 	updatedModelInterface, cmd := m.Update(keyMsg)

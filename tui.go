@@ -1668,7 +1668,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Restoring message to Inbox..."
 				cmds = append(cmds, restoreMailCmd(m.graphClient, am.ID))
 			}
-		case "r":
+		case "R":
 			// Mark message Read/Unread
 			if am := m.activeMessage(); am != nil {
 				targetState := !am.IsRead
@@ -1735,7 +1735,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		case "R":
+		case "r":
 			// Reload selected folder
 			if len(m.folders) > 0 {
 				if m.folders[m.selectedFolder].ID == "favorites" {
@@ -2791,11 +2791,11 @@ func (m mainModel) View() string {
 		
 		var keysText string
 		if m.width >= 160 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [?] Help | [q] Quit"
+			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [?] Help | [q] Quit"
 		} else if m.width >= 130 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [R] Reload | [M] More | [r] Read | [f] Fav | [o] YouTrack | [?] Help | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [o] YouTrack | [?] Help | [q] Quit"
 		} else if m.width >= 95 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [R] Reload | [M] More | [?] Help | [q] Quit"
+			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
 		} else {
 			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
 		}
@@ -3049,7 +3049,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [J] / [K]           Navigate next/prev pane / scroll",
 		"  [PageUp]/[PageDown] Scroll detail view half page",
 		"  [Space]             Toggle collapse/expand thread",
-		"  [R]                 Reload current folder",
+		"  [r]                 Reload current folder",
 		"  [M]                 Load more messages (paginate)",
 	}
 
@@ -3060,7 +3060,7 @@ func (m mainModel) renderHelpContent() string {
 		"",
 		"  [n]                 Compose new email",
 		"  [A]                 Reply or Reply All to message",
-		"  [r]                 Toggle Read / Unread status",
+		"  [R]                 Toggle Read / Unread status",
 		"  [f]                 Toggle Favorite status (local)",
 		"  [d] / [Delete]      Move message to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
