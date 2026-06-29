@@ -305,11 +305,17 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			return errMsg(err)
 		}
 		
+		// Check if message has attachments or inline images in its body
+		hasInline := msg.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(msg.Body.Content)
+
 		// If message has attachments, fetch them
 		var atts []Attachment
-		if msg.HasAttachments {
+		if msg.HasAttachments || hasInline {
 			atts, _ = gc.GetAttachments(msgID)
 			msg.Attachments = atts
+			if len(atts) > 0 {
+				msg.HasAttachments = true
+			}
 		}
 
 		// Also mark message as read if unread
@@ -721,7 +727,8 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content), m.detailViewport.Width))
 		m.detailViewport.GotoTop()
 
-		if am.HasAttachments && len(am.Attachments) == 0 {
+		hasInline := am.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(am.Body.Content)
+		if (am.HasAttachments || hasInline) && len(am.Attachments) == 0 {
 			m.statusMsg = "Loading attachments..."
 			return m, fetchAttachmentsCmd(m.graphClient, am.ID)
 		}
@@ -769,7 +776,8 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 				}
 			}
 
-			if cached.HasAttachments && len(cached.Attachments) == 0 {
+			hasInline := cached.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(cached.Body.Content)
+			if (cached.HasAttachments || hasInline) && len(cached.Attachments) == 0 {
 				m.statusMsg = "Loading attachments..."
 				return m, fetchAttachmentsCmd(m.graphClient, am.ID)
 			}
@@ -1125,6 +1133,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messages[i].IsRead = true
 					m.messages[i].Body = msg.Message.Body
 					m.messages[i].Attachments = msg.Attachments
+					m.messages[i].HasAttachments = msg.Message.HasAttachments
 				}
 			}
 			for ti := range m.threadGroups {
@@ -1134,6 +1143,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.threadGroups[ti].Members[mi].IsRead = true
 						m.threadGroups[ti].Members[mi].Body = msg.Message.Body
 						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
+						m.threadGroups[ti].Members[mi].HasAttachments = msg.Message.HasAttachments
 					}
 				}
 			}
@@ -1160,12 +1170,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i, em := range m.messages {
 				if em.ID == msg.MessageID {
 					m.messages[i].Attachments = msg.Attachments
+					if len(msg.Attachments) > 0 {
+						m.messages[i].HasAttachments = true
+					}
 				}
 			}
 			for ti := range m.threadGroups {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == msg.MessageID {
 						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
+						if len(msg.Attachments) > 0 {
+							m.threadGroups[ti].Members[mi].HasAttachments = true
+						}
 					}
 				}
 			}
@@ -1180,6 +1196,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if err == nil && cached != nil {
 					cached.Attachments = msg.Attachments
+					if len(msg.Attachments) > 0 {
+						cached.HasAttachments = true
+					}
 					if m.folders[m.selectedFolder].ID == "favorites" {
 						_ = m.db.UpsertFavoriteMessage(*cached)
 					} else if m.config.UseSQLite == 1 {
@@ -2675,7 +2694,11 @@ func (m mainModel) View() string {
 			}
 			
 			sizeKB := att.Size / 1024
-			line := fmt.Sprintf("%s %s (%d KB) [%s]", indicator, att.Name, sizeKB, att.ContentType)
+			inlineStr := ""
+			if att.IsInline {
+				inlineStr = " [inline]"
+			}
+			line := fmt.Sprintf("%s %s (%d KB) [%s]%s", indicator, att.Name, sizeKB, att.ContentType, inlineStr)
 			if i == m.selectedAttach {
 				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
 			} else {
@@ -3551,6 +3574,21 @@ func formatBodyContent(htmlContent string) string {
 
 	// Replace <img> tags with a styled "[image]" placeholder
 	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
+		altReg := regexp.MustCompile(`(?i)alt\s*=\s*['"]([^'"]+)['"]`)
+		altMatches := altReg.FindStringSubmatch(match)
+		if len(altMatches) > 1 {
+			return imagePlaceholderStyle.Render(fmt.Sprintf("[image: %s]", altMatches[1]))
+		}
+		
+		srcReg := regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:([^'"\s>]+)['"]?`)
+		srcMatches := srcReg.FindStringSubmatch(match)
+		if len(srcMatches) > 1 {
+			cid := srcMatches[1]
+			if idx := strings.Index(cid, "@"); idx >= 0 {
+				cid = cid[:idx]
+			}
+			return imagePlaceholderStyle.Render(fmt.Sprintf("[image: %s]", cid))
+		}
 		return imagePlaceholderStyle.Render("[image]")
 	})
 

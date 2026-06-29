@@ -178,6 +178,18 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "> Please visit https://example.com/.",
 			expected: "\x1b[38;2;166;173;200m> Please visit \x1b[38;2;137;180;250;4mhttps://example.com/\x1b[24;38;2;166;173;200m.\x1b[0m",
 		},
+		{
+			input:    "<img src=\"cid:image001.png@01D7\">",
+			expected: "\x1b[1;38;2;203;166;247m[image: image001.png]\x1b[0m",
+		},
+		{
+			input:    "<img src=\"cid:image002.jpg\" alt=\"Landscape Image\">",
+			expected: "\x1b[1;38;2;203;166;247m[image: Landscape Image]\x1b[0m",
+		},
+		{
+			input:    "<img src=\"https://example.com/external.png\">",
+			expected: "\x1b[1;38;2;203;166;247m[image]\x1b[0m",
+		},
 	}
 
 	for _, tt := range tests {
