@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -318,17 +319,24 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			return errMsg(err)
 		}
 		
-		// Check if message has attachments or inline images in its body
+		// Check if message has attachments or inline images/remote images in its body
 		hasInline := msg.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(msg.Body.Content)
+		hasRemote := msg.Body.ContentType == "html" && regexp.MustCompile(`(?i)<img\b[^>]*src\s*=\s*['"]?https?://`).MatchString(msg.Body.Content)
 
 		// If message has attachments, fetch them
 		var atts []Attachment
 		if msg.HasAttachments || hasInline {
 			atts, _ = gc.GetAttachments(msgID)
-			msg.Attachments = atts
-			if len(atts) > 0 {
-				msg.HasAttachments = true
-			}
+		}
+
+		if hasRemote {
+			remoteAtts := extractRemoteImages(msg.Body.Content)
+			atts = append(atts, remoteAtts...)
+		}
+
+		msg.Attachments = atts
+		if len(atts) > 0 {
+			msg.HasAttachments = true
 		}
 
 		// Also mark message as read if unread
@@ -419,9 +427,27 @@ func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 
 func saveAttachmentCmd(att Attachment, imageViewer string) tea.Cmd {
 	return func() tea.Msg {
-		data, err := base64.StdEncoding.DecodeString(att.ContentBytes)
-		if err != nil {
-			return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+		var data []byte
+		var err error
+
+		if att.OdataType == "#outlook-tui.remoteImage" {
+			resp, errGet := http.Get(att.ContentId)
+			if errGet != nil {
+				return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
+			}
+			data, err = io.ReadAll(resp.Body)
+			if err != nil {
+				return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
+			}
+		} else {
+			data, err = base64.StdEncoding.DecodeString(att.ContentBytes)
+			if err != nil {
+				return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+			}
 		}
 		
 		home, err := os.UserHomeDir()
@@ -785,7 +811,8 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		m.detailViewport.GotoTop()
 
 		hasInline := am.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(am.Body.Content)
-		if (am.HasAttachments || hasInline) && len(am.Attachments) == 0 {
+		hasRemote := am.Body.ContentType == "html" && regexp.MustCompile(`(?i)<img\b[^>]*src\s*=\s*['"]?https?://`).MatchString(am.Body.Content)
+		if (am.HasAttachments || hasInline || hasRemote) && len(am.Attachments) == 0 {
 			m.statusMsg = "Loading attachments..."
 			return m, fetchAttachmentsCmd(m.graphClient, am.ID)
 		}
@@ -834,7 +861,8 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 			}
 
 			hasInline := cached.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(cached.Body.Content)
-			if (cached.HasAttachments || hasInline) && len(cached.Attachments) == 0 {
+			hasRemote := cached.Body.ContentType == "html" && regexp.MustCompile(`(?i)<img\b[^>]*src\s*=\s*['"]?https?://`).MatchString(cached.Body.Content)
+			if (cached.HasAttachments || hasInline || hasRemote) && len(cached.Attachments) == 0 {
 				m.statusMsg = "Loading attachments..."
 				return m, fetchAttachmentsCmd(m.graphClient, am.ID)
 			}
@@ -1219,6 +1247,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case attachmentsFetchedMsg:
 		if am := m.activeMessage(); am != nil && am.ID == msg.MessageID {
+			if m.detailMessage != nil && m.detailMessage.ID == msg.MessageID {
+				remoteAtts := extractRemoteImages(m.detailMessage.Body.Content)
+				msg.Attachments = append(msg.Attachments, remoteAtts...)
+			}
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
 			m = m.updateViewportSize()
@@ -4443,6 +4475,91 @@ func formatBodyContent(htmlContent string) string {
 		}
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// extractRemoteImages parses the HTML body content to find all <img> tags with remote http/https src URLs,
+// and returns them as virtual Attachment objects that can be downloaded/viewed.
+func extractRemoteImages(htmlContent string) []Attachment {
+	var atts []Attachment
+	imgReg := regexp.MustCompile(`(?i)<img\b([^>]*)>`)
+	srcReg := regexp.MustCompile(`(?i)src\s*=\s*['"]([^'"]+)['"]`)
+	altReg := regexp.MustCompile(`(?i)alt\s*=\s*['"]([^'"]+)['"]`)
+	
+	matches := imgReg.FindAllStringSubmatch(htmlContent, -1)
+	seenUrls := make(map[string]bool)
+	
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		attrs := match[1]
+		srcMatch := srcReg.FindStringSubmatch(attrs)
+		if len(srcMatch) < 2 {
+			continue
+		}
+		src := srcMatch[1]
+		
+		// Only handle http/https URLs
+		if !strings.HasPrefix(strings.ToLower(src), "http://") && !strings.HasPrefix(strings.ToLower(src), "https://") {
+			continue
+		}
+		
+		// Avoid duplicates
+		if seenUrls[src] {
+			continue
+		}
+		seenUrls[src] = true
+		
+		// Get a name for the attachment
+		name := ""
+		altMatch := altReg.FindStringSubmatch(attrs)
+		if len(altMatch) > 1 {
+			name = altMatch[1]
+		}
+		
+		// If alt is not present or clean, derive name from URL path
+		if name == "" {
+			parsedURL, err := url.Parse(src)
+			if err == nil {
+				path := parsedURL.Path
+				if path != "" && path != "/" {
+					name = filepath.Base(path)
+				}
+			}
+		}
+		
+		// If still empty, give a generic name
+		if name == "" || name == "." {
+			name = "remote_image"
+		}
+		
+		// Clean up name and ensure it has an extension (default to .png/jpg if missing)
+		name = cleanFilename(name)
+		ext := filepath.Ext(name)
+		extLower := strings.ToLower(ext)
+		if extLower != ".png" && extLower != ".jpg" && extLower != ".jpeg" && extLower != ".gif" && extLower != ".bmp" && extLower != ".webp" {
+			name = name + ".png" // default extension for rendering/viewing
+		}
+		
+		atts = append(atts, Attachment{
+			OdataType:   "#outlook-tui.remoteImage",
+			Name:        name,
+			ContentType: "image/png", // default fallback
+			IsInline:    true,
+			ContentId:   src, // Store the remote URL in ContentId
+		})
+	}
+	return atts
+}
+
+func cleanFilename(s string) string {
+	// replace illegal characters with underscores
+	reg := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+	cleaned := reg.ReplaceAllString(s, "_")
+	if cleaned == "" {
+		cleaned = "image"
+	}
+	return cleaned
 }
 
 // replaceAnchorTags finds <a> tags with hrefs and replaces them in-place.
