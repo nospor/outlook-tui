@@ -3072,6 +3072,11 @@ var (
 func (m mainModel) View() string {
 	var s strings.Builder
 
+	if m.state == stateAttachments {
+		// Clear any previous Kitty image previews from the screen
+		s.WriteString("\033_Ga=d,d=A\033\\")
+	}
+
 	// Top Title Bar
 	s.WriteString(titleStyle.Render(fmt.Sprintf("OUTLOOK TUI v1.0 | %d x %d", m.width, m.height)))
 	s.WriteString("\n\n")
@@ -3115,7 +3120,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateDeleteThreadConfirm:
+	case stateMain, stateYankSelect, stateURLSelect, stateDeleteThreadConfirm, stateAttachments:
 		if m.config.Layout == 2 {
 			s.WriteString(m.renderLayout2())
 		} else {
@@ -3193,29 +3198,7 @@ func (m mainModel) View() string {
 
 		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+v] Paste Image  |  [Ctrl+f] Add Attachment  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
-	case stateAttachments:
-		// Clear any previous Kitty image previews from the screen
-		s.WriteString("\033_Ga=d,d=A\033\\")
-		s.WriteString("   " + headerStyle.Render("ATTACHMENTS IN CURRENT EMAIL") + "\n\n")
-		for i, att := range m.attachments {
-			indicator := "  "
-			if i == m.selectedAttach {
-				indicator = "> "
-			}
-			
-			sizeKB := att.Size / 1024
-			inlineStr := ""
-			if att.IsInline {
-				inlineStr = " [inline]"
-			}
-			line := fmt.Sprintf("%s %s (%d KB) [%s]%s", indicator, att.Name, sizeKB, att.ContentType, inlineStr)
-			if i == m.selectedAttach {
-				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
-			} else {
-				s.WriteString("   " + line + "\n")
-			}
-		}
-		s.WriteString("\n   [Up/Down] Select Attachment  |  [Enter] Save to Downloads  |  [Esc] Back\n")
+
 
 
 	case stateYouTrackURLSelect:
@@ -3252,7 +3235,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
@@ -3264,6 +3247,8 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Copy to Clipboard"
 		} else if m.state == stateDeleteThreadConfirm {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
+		} else if m.state == stateAttachments {
+			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
 		} else {
 			if m.width >= 160 {
 				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
@@ -3307,6 +3292,70 @@ func (m mainModel) View() string {
 		}
 		modalHeight := 11
 		dropdownView := m.renderDeleteThreadConfirmPopup(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateAttachments {
+		// Calculate modal size based on longest attachment name
+		longestAttach := 0
+		for _, att := range m.attachments {
+			sizeKB := att.Size / 1024
+			inlineStr := ""
+			if att.IsInline {
+				inlineStr = " [inline]"
+			}
+			lineLen := len(fmt.Sprintf("   %s (%d KB) [%s]%s", att.Name, sizeKB, att.ContentType, inlineStr))
+			if lineLen > longestAttach {
+				longestAttach = lineLen
+			}
+		}
+		modalWidth := longestAttach + 8
+		if modalWidth < 46 {
+			modalWidth = 46
+		}
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 20 {
+			modalWidth = 20
+		}
+
+		maxVisible := 10
+		totalAttach := len(m.attachments)
+		visibleCount := totalAttach
+		if visibleCount > maxVisible {
+			visibleCount = maxVisible
+		}
+
+		startIdx := 0
+		if totalAttach > maxVisible {
+			startIdx = m.selectedAttach - maxVisible/2
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			endIdx := startIdx + maxVisible
+			if endIdx > totalAttach {
+				startIdx = totalAttach - maxVisible
+			}
+		}
+
+		contentLines := 2 + visibleCount // Header + empty spacer + visible items
+		if startIdx > 0 {
+			contentLines++
+		}
+		if startIdx+visibleCount < totalAttach {
+			contentLines++
+		}
+		modalHeight := contentLines + 2 // borders
+
+		dropdownView := m.renderAttachmentsDropdown(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -3379,7 +3428,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -4304,6 +4353,99 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ColorRed)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderAttachmentsDropdown(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	headerText := " SELECT ATTACHMENT: "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	maxVisible := 10
+	totalAttach := len(m.attachments)
+
+	startIdx := 0
+	endIdx := totalAttach
+
+	if totalAttach > maxVisible {
+		startIdx = m.selectedAttach - maxVisible/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		endIdx = startIdx + maxVisible
+		if endIdx > totalAttach {
+			endIdx = totalAttach
+			startIdx = endIdx - maxVisible
+		}
+	}
+
+	if startIdx > 0 {
+		upText := "  ▲ ... more attachments above ..."
+		if len(upText) < dropdownWidth-2 {
+			upText = upText + strings.Repeat(" ", dropdownWidth-2-len(upText))
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render(upText))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		att := m.attachments[i]
+		indicator := "  "
+		if i == m.selectedAttach {
+			indicator = "> "
+		}
+
+		sizeKB := att.Size / 1024
+		inlineStr := ""
+		if att.IsInline {
+			inlineStr = " [inline]"
+		}
+		line := fmt.Sprintf("%s%s (%d KB) [%s]%s", indicator, att.Name, sizeKB, att.ContentType, inlineStr)
+
+		// Pad/crop line
+		if len(line) < dropdownWidth-2 {
+			line = line + strings.Repeat(" ", dropdownWidth-2-len(line))
+		} else if len(line) > dropdownWidth-2 {
+			line = line[:dropdownWidth-5] + "..."
+		}
+
+		if i == m.selectedAttach {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorViolet)).
+				Bold(true).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	if endIdx < totalAttach {
+		downText := "  ▼ ... more attachments below ..."
+		if len(downText) < dropdownWidth-2 {
+			downText = downText + strings.Repeat(" ", dropdownWidth-2-len(downText))
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render(downText))
+	}
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
