@@ -3705,6 +3705,11 @@ func formatBodyContent(htmlContent string) string {
 	res = strings.ReplaceAll(res, "</p>", "\n\n")
 	res = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
 	res = strings.ReplaceAll(res, "</div>", "\n")
+	res = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n• ")
+	res = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
 	
 	// Strip all other HTML tags
 	var builder strings.Builder
@@ -4093,6 +4098,11 @@ func extractURLsFromMainMessage(htmlContent string) []string {
 	res = strings.ReplaceAll(res, "</p>", "\n\n")
 	res = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
 	res = strings.ReplaceAll(res, "</div>", "\n")
+	res = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n• ")
+	res = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
 
 	// 3. Strip other HTML tags.
 	var builder strings.Builder

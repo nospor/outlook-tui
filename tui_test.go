@@ -194,6 +194,18 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "Cronic detected failure or error output for the command:\nbash /opt/deploy/check_error_log.sh /var/log/nginx/barb\n\nRESULT CODE: 1\n\nERROR OUTPUT:\n< 2026/06/29 10:05:58 [error] 10792#10792: *5205807 FastCGI sent in stderr",
 			expected: "Cronic detected failure or error output for the command:\nbash /opt/deploy/check_error_log.sh /var/log/nginx/barb\n\nRESULT CODE: 1\n\nERROR OUTPUT:\n< 2026/06/29 10:05:58 [error] 10792#10792: *5205807 FastCGI sent in stderr",
 		},
+		{
+			input:    "<ul><li>Item 1</li><li>Item 2</li></ul>",
+			expected: "• Item 1\n• Item 2",
+		},
+		{
+			input:    "<h1>My Header</h1>Some content",
+			expected: "My Header\n\nSome content",
+		},
+		{
+			input:    "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>",
+			expected: " A B\n C D",
+		},
 	}
 
 	for _, tt := range tests {
