@@ -435,7 +435,38 @@ func hashMsgID(msgID string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func saveAttachmentCmd(msgID string, atts []Attachment, selectedIdx int, imageViewer string) tea.Cmd {
+func getAndEnsureDownloadDir(configuredDir string) string {
+	var downloadDir string
+	if configuredDir != "" {
+		resolved := configuredDir
+		if strings.HasPrefix(resolved, "~/") {
+			if home, errHome := os.UserHomeDir(); errHome == nil {
+				resolved = filepath.Join(home, resolved[2:])
+			}
+		} else if resolved == "~" {
+			if home, errHome := os.UserHomeDir(); errHome == nil {
+				resolved = home
+			}
+		}
+		downloadDir = filepath.Clean(resolved)
+	} else {
+		if home, errHome := os.UserHomeDir(); errHome == nil {
+			downloadDir = filepath.Join(home, "Downloads")
+		} else {
+			downloadDir = "."
+		}
+	}
+
+	if errMk := os.MkdirAll(downloadDir, 0755); errMk != nil {
+		if home, errHome := os.UserHomeDir(); errHome == nil {
+			return home
+		}
+		return "."
+	}
+	return downloadDir
+}
+
+func saveAttachmentCmd(msgID string, atts []Attachment, selectedIdx int, imageViewer string, attachmentDir string) tea.Cmd {
 	return func() tea.Msg {
 		if len(atts) == 0 || selectedIdx < 0 || selectedIdx >= len(atts) {
 			return errMsg(fmt.Errorf("invalid attachment selection"))
@@ -445,19 +476,10 @@ func saveAttachmentCmd(msgID string, atts []Attachment, selectedIdx int, imageVi
 		extLower := strings.ToLower(filepath.Ext(selectedAtt.Name))
 		isImage := extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".gif" || extLower == ".bmp" || extLower == ".webp"
 
+		downloadDir := getAndEnsureDownloadDir(attachmentDir)
+
 		// If it's not an image, or no custom image viewer is configured, download only the selected attachment and open with xdg-open.
 		if !isImage || imageViewer == "" {
-			home, errDir := os.UserHomeDir()
-			var downloadDir string
-			if errDir == nil {
-				downloadDir = filepath.Join(home, "Downloads")
-				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
-					downloadDir = home
-				}
-			} else {
-				downloadDir = "."
-			}
-
 			var fileName string
 			if msgID != "" {
 				fileName = hashMsgID(msgID) + "_" + selectedAtt.Name
@@ -539,17 +561,6 @@ func saveAttachmentCmd(msgID string, atts []Attachment, selectedIdx int, imageVi
 		var selectedSavedPath string
 		for i, imgAtt := range imageAtts {
 			isCurrent := (i == selectedImageIndex)
-
-			home, errDir := os.UserHomeDir()
-			var downloadDir string
-			if errDir == nil {
-				downloadDir = filepath.Join(home, "Downloads")
-				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
-					downloadDir = home
-				}
-			} else {
-				downloadDir = "."
-			}
 
 			var fileName string
 			if msgID != "" {
@@ -2468,7 +2479,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if am := m.activeMessage(); am != nil {
 				msgID = am.ID
 			}
-			cmds = append(cmds, saveAttachmentCmd(msgID, m.attachments, m.selectedAttach, m.config.ImageViewer))
+			cmds = append(cmds, saveAttachmentCmd(msgID, m.attachments, m.selectedAttach, m.config.ImageViewer, m.config.AttachmentDir))
 		}
 
 	case stateReplyConfirm:

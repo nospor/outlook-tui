@@ -36,6 +36,10 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ImageViewer != "" {
 		t.Errorf("expected default ImageViewer to be empty, got %q", cfg.ImageViewer)
 	}
+	expectedDefaultDir := filepath.Join(tempDir, "Downloads")
+	if cfg.AttachmentDir != expectedDefaultDir {
+		t.Errorf("expected default AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
+	}
 
 	// Case 2: Config file exists but is missing refresh_time_min
 	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
@@ -69,6 +73,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ScrollLines != 1 {
 		t.Errorf("expected populated ScrollLines to be 1, got %d", cfg.ScrollLines)
 	}
+	if cfg.AttachmentDir != expectedDefaultDir {
+		t.Errorf("expected populated AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
+	}
 
 	// Verify it was written back to disk
 	savedData, err := os.ReadFile(configPath)
@@ -97,12 +104,17 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have ImageViewer '', got %q", savedCfg.ImageViewer)
 	}
 
+	if savedCfg.AttachmentDir != expectedDefaultDir {
+		t.Errorf("expected saved config to have AttachmentDir %q, got %q", expectedDefaultDir, savedCfg.AttachmentDir)
+	}
+
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
 	cfg.ExcludedFolders = []string{"Junk Email", "RSS Feeds"}
 	cfg.ScrollLines = 5
 	cfg.ImageViewer = "sxiv"
+	cfg.AttachmentDir = "/custom/download/dir"
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -127,5 +139,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.ImageViewer != "sxiv" {
 		t.Errorf("expected custom ImageViewer to be 'sxiv', got %q", cfg.ImageViewer)
+	}
+	if cfg.AttachmentDir != "/custom/download/dir" {
+		t.Errorf("expected custom AttachmentDir to be '/custom/download/dir', got %q", cfg.AttachmentDir)
 	}
 }

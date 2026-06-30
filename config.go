@@ -17,6 +17,7 @@ type Config struct {
 	ExcludedFolders []string `json:"excluded_folders"`
 	ScrollLines     int      `json:"scroll_lines"`     // defaults to 1
 	ImageViewer     string   `json:"image_viewer"`
+	AttachmentDir   string   `json:"attachment_dir"`
 }
 
 func GetConfigDir() (string, error) {
@@ -38,6 +39,12 @@ func LoadConfig() (Config, error) {
 	path := filepath.Join(dir, "config.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
+		defaultAttachmentDir := ""
+		if home, errHome := os.UserHomeDir(); errHome == nil {
+			defaultAttachmentDir = filepath.Join(home, "Downloads")
+		} else {
+			defaultAttachmentDir = "."
+		}
 		return Config{
 			ClientID:       "",
 			TenantID:       "common",
@@ -45,6 +52,7 @@ func LoadConfig() (Config, error) {
 			Layout:         1,
 			UseSQLite:      0,
 			ScrollLines:    1,
+			AttachmentDir:  defaultAttachmentDir,
 		}, nil
 	}
 	
@@ -72,7 +80,16 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") {
+	if cfg.AttachmentDir == "" {
+		if home, errHome := os.UserHomeDir(); errHome == nil {
+			cfg.AttachmentDir = filepath.Join(home, "Downloads")
+		} else {
+			cfg.AttachmentDir = "."
+		}
+		_ = SaveConfig(cfg)
+	}
+
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") {
 		_ = SaveConfig(cfg)
 	}
 
