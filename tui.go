@@ -3090,13 +3090,7 @@ func (m mainModel) View() string {
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back\n")
 
-	case stateDeleteThreadConfirm:
-		s.WriteString("   " + headerStyle.Render("DELETE THREAD?") + "\n\n")
-		s.WriteString(fmt.Sprintf("   You are about to delete all %d message(s) in the thread:\n", len(m.deleteThreadMsgIDs)))
-		s.WriteString(fmt.Sprintf("   \"%s\"\n\n", m.deleteThreadSubject))
-		s.WriteString("   Do you really want to delete this entire thread?\n\n")
-		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, delete thread\n")
-		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep thread / Go Back\n")
+
 
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
@@ -3121,7 +3115,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect:
+	case stateMain, stateYankSelect, stateURLSelect, stateDeleteThreadConfirm:
 		if m.config.Layout == 2 {
 			s.WriteString(m.renderLayout2())
 		} else {
@@ -3258,7 +3252,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
@@ -3268,6 +3262,8 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
 		} else if m.state == stateURLSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Copy to Clipboard"
+		} else if m.state == stateDeleteThreadConfirm {
+			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
 		} else {
 			if m.width >= 160 {
 				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
@@ -3291,6 +3287,26 @@ func (m mainModel) View() string {
 		modalWidth := 46
 		modalHeight := 7
 		dropdownView := m.renderYankDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateDeleteThreadConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 11
+		dropdownView := m.renderDeleteThreadConfirmPopup(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -3363,7 +3379,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -4222,6 +4238,72 @@ func (m mainModel) renderYankDropdown(width int) string {
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	headerText := " DELETE THREAD? "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line1 := fmt.Sprintf("You are about to delete all %d message(s) in the thread:", len(m.deleteThreadMsgIDs))
+	if len(line1) < dropdownWidth-2 {
+		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
+	} else if len(line1) > dropdownWidth-2 {
+		line1 = line1[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line1)
+
+	subjText := fmt.Sprintf("  \"%s\"", m.deleteThreadSubject)
+	if len(subjText) < dropdownWidth-2 {
+		subjText = subjText + strings.Repeat(" ", dropdownWidth-2-len(subjText))
+	} else if len(subjText) > dropdownWidth-2 {
+		subjText = subjText[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(subjText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line2 := "Do you really want to delete this entire thread?"
+	if len(line2) < dropdownWidth-2 {
+		line2 = line2 + strings.Repeat(" ", dropdownWidth-2-len(line2))
+	} else if len(line2) > dropdownWidth-2 {
+		line2 = line2[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line2)
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	btnYesRaw := "  [y] Yes, delete thread"
+	paddingYes := dropdownWidth - 2 - len(btnYesRaw)
+	if paddingYes < 0 {
+		paddingYes = 0
+	}
+	btnYesRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, delete thread" + strings.Repeat(" ", paddingYes)
+	rows = append(rows, btnYesRendered)
+
+	btnNoRaw := "  [n] No, keep thread / Go Back"
+	paddingNo := dropdownWidth - 2 - len(btnNoRaw)
+	if paddingNo < 0 {
+		paddingNo = 0
+	}
+	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep thread / Go Back" + strings.Repeat(" ", paddingNo)
+	rows = append(rows, btnNoRendered)
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorRed)).
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
