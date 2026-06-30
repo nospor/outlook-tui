@@ -206,6 +206,10 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>",
 			expected: " A B\n C D",
 		},
+		{
+			input:    `<a href="https://adwantedintl.sharepoint.com/:p:/s/HR/IQAbvgiWAYTRTaDwie8L0ze9AfbCDwDoidEwS4Na7NrzWRg?e=YoFq52"><img src="cid:4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e">Employment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx</a>`,
+			expected: "\x1b[38;2;137;180;250;4m\x1b[1;38;2;203;166;247m[image: 4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e]\x1b[0m\x1b[38;2;137;180;250;4mEmployment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx\x1b[24;39m ",
+		},
 	}
 
 	for _, tt := range tests {

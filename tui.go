@@ -3939,8 +3939,7 @@ func formatBodyContent(htmlContent string) string {
 			} else {
 				endCode = "\x1b[24;39m"
 			}
-			lineWithURLs = strings.ReplaceAll(lineWithURLs, "\x01", startCode)
-			lineWithURLs = strings.ReplaceAll(lineWithURLs, "\x02", endCode)
+			lineWithURLs = replaceLinkMarkers(lineWithURLs, startCode, endCode)
 			
 			if isDimmed {
 				cleaned = append(cleaned, dimStyle.Render(lineWithURLs))
@@ -4018,6 +4017,45 @@ func replaceAnchorTags(htmlContent string, forDisplay bool) string {
 		// makes the regex capture `…/SR-14)Created` as the URL.
 		return fmt.Sprintf("%s (%s) ", text, displayURL)
 	})
+}
+
+// replaceLinkMarkers replaces '\x01' and '\x02' with startCode and endCode.
+// Within the link boundaries, if any style reset sequence (like \x1b[0m, \x1b[m, \x1b[39m, \x1b[24m)
+// is encountered, it is immediately followed by startCode to restore the link's styling.
+func replaceLinkMarkers(line string, startCode, endCode string) string {
+	var buf strings.Builder
+	inLink := false
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '\x01' {
+			buf.WriteString(startCode)
+			inLink = true
+		} else if r == '\x02' {
+			buf.WriteString(endCode)
+			inLink = false
+		} else if inLink && r == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
+			// Find the termination of this ANSI escape sequence (usually 'm')
+			j := i + 2
+			for j < len(runes) && (runes[j] == ';' || (runes[j] >= '0' && runes[j] <= '9')) {
+				j++
+			}
+			if j < len(runes) && runes[j] == 'm' {
+				params := string(runes[i+2 : j])
+				isReset := params == "0" || params == "" || params == "39" || params == "24"
+				buf.WriteString(string(runes[i : j+1]))
+				if isReset {
+					buf.WriteString(startCode)
+				}
+				i = j
+			} else {
+				buf.WriteRune(r)
+			}
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return buf.String()
 }
 
 // styleURLs finds URLs in a string and colors them in Cyan/Blue with underline.
