@@ -3402,7 +3402,7 @@ func (m mainModel) renderHelpContent() string {
 	}
 
 	// Build two column section dynamically based on width
-	if m.helpViewport.Width >= 110 {
+	if m.helpViewport.Width >= 130 {
 		maxLen := len(col1Lines)
 		if len(col2Lines) > maxLen {
 			maxLen = len(col2Lines)
@@ -3420,8 +3420,8 @@ func (m mainModel) renderHelpContent() string {
 			col2Text.WriteString(col2Lines[i] + "\n")
 		}
 
-		col1Style := lipgloss.NewStyle().Width(52)
-		col2Style := lipgloss.NewStyle().Width(52)
+		col1Style := lipgloss.NewStyle().Width(65)
+		col2Style := lipgloss.NewStyle().Width(65)
 
 		columns := lipgloss.JoinHorizontal(
 			lipgloss.Top,
