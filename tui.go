@@ -3665,7 +3665,7 @@ func (m mainModel) renderMetaBlock(width int) string {
 func formatBodyContent(htmlContent string) string {
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
 	// First, replace <a> tags so that URLs are preserved before tag stripping
-	res := replaceAnchorTags(htmlContent)
+	res := replaceAnchorTags(htmlContent, true)
 
 	// Replace <img> tags with a styled "[image]" placeholder
 	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
@@ -3768,6 +3768,17 @@ func formatBodyContent(htmlContent string) string {
 			// Apply URL styling
 			lineWithURLs := styleURLs(l, isDimmed)
 			
+			// Replace link markers with ANSI escape codes
+			startCode := "\x1b[38;2;137;180;250;4m"
+			var endCode string
+			if isDimmed {
+				endCode = "\x1b[24;38;2;166;173;200m"
+			} else {
+				endCode = "\x1b[24;39m"
+			}
+			lineWithURLs = strings.ReplaceAll(lineWithURLs, "\x01", startCode)
+			lineWithURLs = strings.ReplaceAll(lineWithURLs, "\x02", endCode)
+			
 			if isDimmed {
 				cleaned = append(cleaned, dimStyle.Render(lineWithURLs))
 			} else {
@@ -3778,10 +3789,14 @@ func formatBodyContent(htmlContent string) string {
 	return strings.Join(cleaned, "\n")
 }
 
-// replaceAnchorTags finds <a> tags with hrefs and replaces them in-place with:
-// - "text (url)" if text and url are substantially different.
-// - "url" if they are the same or if text is empty.
-func replaceAnchorTags(htmlContent string) string {
+// replaceAnchorTags finds <a> tags with hrefs and replaces them in-place.
+// If forDisplay is true:
+//   - If the text and URL are the same, returns the URL wrapped in blue/cyan link styling.
+//   - If they are different, returns the text wrapped in blue/cyan link styling, hiding the URL.
+// If forDisplay is false:
+//   - Returns "text (url)" if text and url are substantially different.
+//   - Returns "url" if they are the same or if text is empty.
+func replaceAnchorTags(htmlContent string, forDisplay bool) string {
 	anchorRx := regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)</a>`)
 	return anchorRx.ReplaceAllStringFunc(htmlContent, func(match string) string {
 		submatches := anchorRx.FindStringSubmatch(match)
@@ -3796,6 +3811,13 @@ func replaceAnchorTags(htmlContent string) string {
 			return text
 		}
 		if text == "" {
+			if forDisplay {
+				lowerURL := strings.ToLower(url)
+				if strings.HasPrefix(lowerURL, "http://") || strings.HasPrefix(lowerURL, "https://") {
+					return url
+				}
+				return "\x01" + url + "\x02"
+			}
 			return url
 		}
 
@@ -3812,7 +3834,18 @@ func replaceAnchorTags(htmlContent string) string {
 		cleanURL := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(displayURL), "https://"), "http://"), "/")
 
 		if cleanText == cleanURL {
+			if forDisplay {
+				lowerDisplayURL := strings.ToLower(displayURL)
+				if strings.HasPrefix(lowerDisplayURL, "http://") || strings.HasPrefix(lowerDisplayURL, "https://") {
+					return displayURL
+				}
+				return "\x01" + displayURL + "\x02"
+			}
 			return displayURL
+		}
+
+		if forDisplay {
+			return "\x01" + text + "\x02 "
 		}
 
 		// Append a trailing space so that text immediately following </a> (with no
@@ -3827,7 +3860,7 @@ func replaceAnchorTags(htmlContent string) string {
 // styleURLs finds URLs in a string and colors them in Cyan/Blue with underline.
 // It restores the correct style at the end of each URL depending on whether the line is dimmed.
 func styleURLs(line string, isDimmed bool) string {
-	urlRx := regexp.MustCompile(`https?://[^\s<>"\x1b]+`)
+	urlRx := regexp.MustCompile(`https?://[^\s<>"\x1b\x01\x02]+`)
 	
 	// Start code: Cyan foreground (#89B4FA) and Underline (4)
 	startCode := "\x1b[38;2;137;180;250;4m"
@@ -3902,7 +3935,10 @@ func isOriginalMessageStart(line string) bool {
 // stripANSICodes removes ANSI escape sequences from a string
 func stripANSICodes(s string) string {
 	re := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-	return re.ReplaceAllString(s, "")
+	s = re.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\x01", "")
+	s = strings.ReplaceAll(s, "\x02", "")
+	return s
 }
 
 func sortFolders(folders []MailFolder, excluded []string, db *DB) []MailFolder {
@@ -4049,7 +4085,7 @@ func renderTopBorderWithTitle(width int, title string, active bool) string {
 // excluding any URLs in quoted lines or block dividers/original message blocks.
 func extractURLsFromMainMessage(htmlContent string) []string {
 	// 1. Replace anchor tags to make href values visible.
-	res := replaceAnchorTags(htmlContent)
+	res := replaceAnchorTags(htmlContent, false)
 
 	// 2. Convert HTML line breaks to real newlines to preserve message structure.
 	res = regexp.MustCompile(`(?i)<br(?:\s*\/)?>`).ReplaceAllString(res, "\n")
