@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/base64"
 	"fmt"
 	"html"
@@ -426,7 +427,15 @@ func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) tea.Cmd {
+func hashMsgID(msgID string) string {
+	if msgID == "" {
+		return ""
+	}
+	h := md5.Sum([]byte(msgID))
+	return fmt.Sprintf("%x", h)
+}
+
+func saveAttachmentCmd(msgID string, atts []Attachment, selectedIdx int, imageViewer string) tea.Cmd {
 	return func() tea.Msg {
 		if len(atts) == 0 || selectedIdx < 0 || selectedIdx >= len(atts) {
 			return errMsg(fmt.Errorf("invalid attachment selection"))
@@ -438,29 +447,6 @@ func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) t
 
 		// If it's not an image, or no custom image viewer is configured, download only the selected attachment and open with xdg-open.
 		if !isImage || imageViewer == "" {
-			var data []byte
-			var err error
-
-			if selectedAtt.OdataType == "#outlook-tui.remoteImage" {
-				resp, errGet := http.Get(selectedAtt.ContentId)
-				if errGet != nil {
-					return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
-				}
-				data, err = io.ReadAll(resp.Body)
-				if err != nil {
-					return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
-				}
-			} else {
-				data, err = base64.StdEncoding.DecodeString(selectedAtt.ContentBytes)
-				if err != nil {
-					return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
-				}
-			}
-
 			home, errDir := os.UserHomeDir()
 			var downloadDir string
 			if errDir == nil {
@@ -472,20 +458,61 @@ func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) t
 				downloadDir = "."
 			}
 
-			path := filepath.Join(downloadDir, selectedAtt.Name)
-			ext := filepath.Ext(selectedAtt.Name)
-			base := strings.TrimSuffix(selectedAtt.Name, ext)
-			counter := 1
-			for {
-				if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
-					break
+			var fileName string
+			if msgID != "" {
+				fileName = hashMsgID(msgID) + "_" + selectedAtt.Name
+			} else {
+				fileName = selectedAtt.Name
+			}
+			path := filepath.Join(downloadDir, fileName)
+
+			var exists bool
+			if msgID != "" {
+				if stat, errStat := os.Stat(path); errStat == nil && !stat.IsDir() {
+					exists = true
 				}
-				path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
-				counter++
 			}
 
-			if err := os.WriteFile(path, data, 0644); err != nil {
-				return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
+			if !exists {
+				var data []byte
+				var err error
+
+				if selectedAtt.OdataType == "#outlook-tui.remoteImage" {
+					resp, errGet := http.Get(selectedAtt.ContentId)
+					if errGet != nil {
+						return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
+					}
+					defer resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
+					}
+					data, err = io.ReadAll(resp.Body)
+					if err != nil {
+						return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
+					}
+				} else {
+					data, err = base64.StdEncoding.DecodeString(selectedAtt.ContentBytes)
+					if err != nil {
+						return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+					}
+				}
+
+				if msgID == "" {
+					ext := filepath.Ext(selectedAtt.Name)
+					base := strings.TrimSuffix(selectedAtt.Name, ext)
+					counter := 1
+					for {
+						if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
+							break
+						}
+						path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
+						counter++
+					}
+				}
+
+				if err := os.WriteFile(path, data, 0644); err != nil {
+					return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
+				}
 			}
 
 			cmd := exec.Command("xdg-open", path)
@@ -512,6 +539,41 @@ func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) t
 		var selectedSavedPath string
 		for i, imgAtt := range imageAtts {
 			isCurrent := (i == selectedImageIndex)
+
+			home, errDir := os.UserHomeDir()
+			var downloadDir string
+			if errDir == nil {
+				downloadDir = filepath.Join(home, "Downloads")
+				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
+					downloadDir = home
+				}
+			} else {
+				downloadDir = "."
+			}
+
+			var fileName string
+			if msgID != "" {
+				fileName = hashMsgID(msgID) + "_" + imgAtt.Name
+			} else {
+				fileName = imgAtt.Name
+			}
+			path := filepath.Join(downloadDir, fileName)
+
+			var exists bool
+			if msgID != "" {
+				if stat, errStat := os.Stat(path); errStat == nil && !stat.IsDir() {
+					exists = true
+				}
+			}
+
+			if exists {
+				savedPaths = append(savedPaths, path)
+				if isCurrent {
+					selectedSavedPath = path
+				}
+				continue
+			}
+
 			var data []byte
 			var err error
 
@@ -523,14 +585,8 @@ func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) t
 					}
 					continue
 				}
-				defer resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					if isCurrent {
-						return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
-					}
-					continue
-				}
 				data, err = io.ReadAll(resp.Body)
+				resp.Body.Close()
 				if err != nil {
 					if isCurrent {
 						return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
@@ -547,27 +603,17 @@ func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) t
 				}
 			}
 
-			home, errDir := os.UserHomeDir()
-			var downloadDir string
-			if errDir == nil {
-				downloadDir = filepath.Join(home, "Downloads")
-				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
-					downloadDir = home
+			if msgID == "" {
+				ext := filepath.Ext(imgAtt.Name)
+				base := strings.TrimSuffix(imgAtt.Name, ext)
+				counter := 1
+				for {
+					if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
+						break
+					}
+					path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
+					counter++
 				}
-			} else {
-				downloadDir = "."
-			}
-
-			path := filepath.Join(downloadDir, imgAtt.Name)
-			ext := filepath.Ext(imgAtt.Name)
-			base := strings.TrimSuffix(imgAtt.Name, ext)
-			counter := 1
-			for {
-				if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
-					break
-				}
-				path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
-				counter++
 			}
 
 			if err := os.WriteFile(path, data, 0644); err != nil {
@@ -2418,7 +2464,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Save attachment
 			m.statusMsg = "Downloading attachment..."
-			cmds = append(cmds, saveAttachmentCmd(m.attachments, m.selectedAttach, m.config.ImageViewer))
+			var msgID string
+			if am := m.activeMessage(); am != nil {
+				msgID = am.ID
+			}
+			cmds = append(cmds, saveAttachmentCmd(msgID, m.attachments, m.selectedAttach, m.config.ImageViewer))
 		}
 
 	case stateReplyConfirm:
