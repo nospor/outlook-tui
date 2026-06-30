@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -48,6 +49,7 @@ const (
 	stateHelp
 	stateFileBrowse
 	stateComposeCancelConfirm
+	stateDeleteThreadConfirm
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -95,6 +97,10 @@ type (
 	statusUpdateMsg     string
 	mailSentMsg         struct{}
 	mailDeletedMsg      struct{ MessageID string }
+	multipleMailsDeletedMsg struct {
+		MessageIDs []string
+		Errors     []error
+	}
 	mailRestoredMsg     struct{ MessageID string }
 	attachmentSavedMsg  string
 	userEmailFetchedMsg string
@@ -164,6 +170,10 @@ type mainModel struct {
 	// URL select state
 	extractedURLs   []string
 	selectedURLIdx  int
+
+	// Thread deletion confirm state
+	deleteThreadMsgIDs  []string
+	deleteThreadSubject string
 }
 
 func initialModel() mainModel {
@@ -365,6 +375,33 @@ func deleteMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return mailDeletedMsg{MessageID: msgID}
+	}
+}
+
+func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		var wg sync.WaitGroup
+		errs := make([]error, len(msgIDs))
+		for i, id := range msgIDs {
+			wg.Add(1)
+			go func(idx int, msgID string) {
+				defer wg.Done()
+				errs[idx] = gc.DeleteMessage(msgID)
+			}(i, id)
+		}
+		wg.Wait()
+
+		var actualErrors []error
+		for _, err := range errs {
+			if err != nil {
+				actualErrors = append(actualErrors, err)
+			}
+		}
+
+		return multipleMailsDeletedMsg{
+			MessageIDs: msgIDs,
+			Errors:     actualErrors,
+		}
 	}
 }
 
@@ -1401,6 +1438,83 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
+	case multipleMailsDeletedMsg:
+		if len(msg.Errors) > 0 {
+			m.statusMsg = fmt.Sprintf("Deleted thread with %d errors (e.g. %v)", len(msg.Errors), msg.Errors[0])
+		} else {
+			m.statusMsg = "Thread moved to Deleted Items"
+		}
+
+		// Find if any of the deleted messages were unread before deleting
+		// and remove them from SQLite cache and favorites
+		var deletedMsgFolderIDs []string
+		unreadCount := 0
+
+		for _, targetID := range msg.MessageIDs {
+			wasUnread := false
+			for _, em := range m.messages {
+				if em.ID == targetID {
+					wasUnread = !em.IsRead
+					break
+				}
+			}
+			if !wasUnread {
+				for _, tg := range m.threadGroups {
+					for _, mem := range tg.Members {
+						if mem.ID == targetID {
+							wasUnread = !mem.IsRead
+							break
+						}
+					}
+				}
+			}
+			if wasUnread {
+				unreadCount++
+			}
+			if m.db != nil {
+				if fID, err := m.db.GetMessageFolderID(targetID); err == nil && fID != "" {
+					deletedMsgFolderIDs = append(deletedMsgFolderIDs, fID)
+				}
+				_ = m.db.DeleteMessage(targetID)
+				_ = m.db.RemoveFromFavorites(targetID)
+			}
+		}
+
+		// Update folder unread count in memory
+		if unreadCount > 0 && len(m.folders) > 0 {
+			fID := ""
+			if len(deletedMsgFolderIDs) > 0 {
+				fID = deletedMsgFolderIDs[0]
+			}
+			if fID == "" {
+				fID = m.folders[m.selectedFolder].ID
+			}
+			if fID != "favorites" {
+				for i := range m.folders {
+					if m.folders[i].ID == fID {
+						m.folders[i].UnreadItemCount = m.folders[i].UnreadItemCount - unreadCount
+						if m.folders[i].UnreadItemCount < 0 {
+							m.folders[i].UnreadItemCount = 0
+						}
+						break
+					}
+				}
+			}
+		}
+
+		// Reload messages
+		if len(m.folders) > 0 {
+			if m.folders[m.selectedFolder].ID == "favorites" {
+				m, _ = m.loadCachedFolderMessages()
+				m.updateFavoritesFolderCounts()
+				return m, nil
+			}
+			return m, tea.Batch(
+				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
+				fetchFoldersCmd(m.graphClient),
+			)
+		}
+
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
 		// Remove from SQLite cache (as it is leaving the current folder, e.g. Deleted Items) and favorites
@@ -1726,6 +1840,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if am := m.activeMessage(); am != nil {
 				m.statusMsg = "Moving message to Deleted Items..."
 				cmds = append(cmds, deleteMailCmd(m.graphClient, am.ID))
+			}
+		case "D":
+			// Delete current thread with confirmation
+			if am := m.activeMessage(); am != nil {
+				item := m.virtualList[m.virtualSelected]
+				tg := m.threadGroups[item.ThreadIdx]
+				var ids []string
+				for _, mem := range tg.Members {
+					ids = append(ids, mem.ID)
+				}
+				if len(ids) > 0 {
+					m.deleteThreadMsgIDs = ids
+					m.deleteThreadSubject = tg.Subject
+					m.state = stateDeleteThreadConfirm
+				}
 			}
 		case "U":
 			// Undelete/Restore current message to Inbox
@@ -2270,6 +2399,26 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n", "N", "esc":
 			m.state = stateCompose
 		}
+
+	case stateDeleteThreadConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "y", "Y":
+			m.state = stateMain
+			if len(m.deleteThreadMsgIDs) > 0 {
+				m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+				cmds = append(cmds, deleteMultipleMailsCmd(m.graphClient, m.deleteThreadMsgIDs))
+			}
+			m.deleteThreadMsgIDs = nil
+			m.deleteThreadSubject = ""
+		case "n", "N", "esc":
+			m.state = stateMain
+			m.deleteThreadMsgIDs = nil
+			m.deleteThreadSubject = ""
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -2676,6 +2825,14 @@ func (m mainModel) View() string {
 		s.WriteString("   You have draft content in the body. Do you really want to quit composing?\n\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back\n")
+
+	case stateDeleteThreadConfirm:
+		s.WriteString("   " + headerStyle.Render("DELETE THREAD?") + "\n\n")
+		s.WriteString(fmt.Sprintf("   You are about to delete all %d message(s) in the thread:\n", len(m.deleteThreadMsgIDs)))
+		s.WriteString(fmt.Sprintf("   \"%s\"\n\n", m.deleteThreadSubject))
+		s.WriteString("   Do you really want to delete this entire thread?\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, delete thread\n")
+		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep thread / Go Back\n")
 
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
@@ -3132,6 +3289,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [R]                 Toggle Read / Unread status",
 		"  [f]                 Toggle Favorite status (local)",
 		"  [d] / [Delete]      Move message to Deleted Items",
+		"  [D]                 Move entire thread to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
 		"  [a]                 Open attachments pane (if any)",
 		"  [u]                 Extract URLs from email body",
