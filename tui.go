@@ -4869,6 +4869,23 @@ func formatBodyContent(htmlContent string) string {
 	unescaped := html.UnescapeString(builder.String())
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
+
+	// Replace various Unicode space characters with regular spaces to prevent display issues
+	for _, spaceChar := range []string{
+		"\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005",
+		"\u2006", "\u2007", "\u2008", "\u2009", "\u200a", "\u202f",
+		"\u205f", "\u3000",
+	} {
+		unescaped = strings.ReplaceAll(unescaped, spaceChar, " ")
+	}
+
+	// Strip zero-width and invisible formatting characters that break line wrapping and terminal layout
+	for _, formatChar := range []string{
+		"\u00ad", "\u034f", "\u200b", "\u200c", "\u200d", "\u200e",
+		"\u200f", "\ufeff",
+	} {
+		unescaped = strings.ReplaceAll(unescaped, formatChar, "")
+	}
 	
 	// Clean up whitespace and apply dimming/URL styling to lines
 	lines := strings.Split(unescaped, "\n")
