@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -425,81 +426,225 @@ func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func saveAttachmentCmd(att Attachment, imageViewer string) tea.Cmd {
+func saveAttachmentCmd(atts []Attachment, selectedIdx int, imageViewer string) tea.Cmd {
 	return func() tea.Msg {
-		var data []byte
-		var err error
+		if len(atts) == 0 || selectedIdx < 0 || selectedIdx >= len(atts) {
+			return errMsg(fmt.Errorf("invalid attachment selection"))
+		}
 
-		if att.OdataType == "#outlook-tui.remoteImage" {
-			resp, errGet := http.Get(att.ContentId)
-			if errGet != nil {
-				return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
+		selectedAtt := atts[selectedIdx]
+		extLower := strings.ToLower(filepath.Ext(selectedAtt.Name))
+		isImage := extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".gif" || extLower == ".bmp" || extLower == ".webp"
+
+		// If it's not an image, or no custom image viewer is configured, download only the selected attachment and open with xdg-open.
+		if !isImage || imageViewer == "" {
+			var data []byte
+			var err error
+
+			if selectedAtt.OdataType == "#outlook-tui.remoteImage" {
+				resp, errGet := http.Get(selectedAtt.ContentId)
+				if errGet != nil {
+					return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
+				}
+				data, err = io.ReadAll(resp.Body)
+				if err != nil {
+					return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
+				}
+			} else {
+				data, err = base64.StdEncoding.DecodeString(selectedAtt.ContentBytes)
+				if err != nil {
+					return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+				}
 			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
+
+			home, errDir := os.UserHomeDir()
+			var downloadDir string
+			if errDir == nil {
+				downloadDir = filepath.Join(home, "Downloads")
+				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
+					downloadDir = home
+				}
+			} else {
+				downloadDir = "."
 			}
-			data, err = io.ReadAll(resp.Body)
-			if err != nil {
-				return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
+
+			path := filepath.Join(downloadDir, selectedAtt.Name)
+			ext := filepath.Ext(selectedAtt.Name)
+			base := strings.TrimSuffix(selectedAtt.Name, ext)
+			counter := 1
+			for {
+				if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
+					break
+				}
+				path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
+				counter++
 			}
-		} else {
-			data, err = base64.StdEncoding.DecodeString(att.ContentBytes)
-			if err != nil {
-				return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
+			}
+
+			cmd := exec.Command("xdg-open", path)
+			_ = cmd.Start()
+
+			return attachmentSavedMsg(path)
+		}
+
+		// Download all image attachments, identifying the selected one.
+		var imageAtts []Attachment
+		var selectedImageIndex = -1
+		for idx, a := range atts {
+			aExtLower := strings.ToLower(filepath.Ext(a.Name))
+			aIsImage := aExtLower == ".png" || aExtLower == ".jpg" || aExtLower == ".jpeg" || aExtLower == ".gif" || aExtLower == ".bmp" || aExtLower == ".webp"
+			if aIsImage {
+				if idx == selectedIdx {
+					selectedImageIndex = len(imageAtts)
+				}
+				imageAtts = append(imageAtts, a)
 			}
 		}
-		
-		home, err := os.UserHomeDir()
-		var downloadDir string
-		if err == nil {
-			downloadDir = filepath.Join(home, "Downloads")
-			// Fallback to home or current dir if Downloads folder doesn't exist
-			if _, err := os.Stat(downloadDir); os.IsNotExist(err) {
-				downloadDir = home
+
+		savedPaths := []string{}
+		var selectedSavedPath string
+		for i, imgAtt := range imageAtts {
+			isCurrent := (i == selectedImageIndex)
+			var data []byte
+			var err error
+
+			if imgAtt.OdataType == "#outlook-tui.remoteImage" {
+				resp, errGet := http.Get(imgAtt.ContentId)
+				if errGet != nil {
+					if isCurrent {
+						return errMsg(fmt.Errorf("failed to download remote image: %w", errGet))
+					}
+					continue
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					if isCurrent {
+						return errMsg(fmt.Errorf("failed to download remote image: status %d", resp.StatusCode))
+					}
+					continue
+				}
+				data, err = io.ReadAll(resp.Body)
+				if err != nil {
+					if isCurrent {
+						return errMsg(fmt.Errorf("failed to read remote image content: %w", err))
+					}
+					continue
+				}
+			} else {
+				data, err = base64.StdEncoding.DecodeString(imgAtt.ContentBytes)
+				if err != nil {
+					if isCurrent {
+						return errMsg(fmt.Errorf("failed to decode attachment: %w", err))
+					}
+					continue
+				}
 			}
-		} else {
-			downloadDir = "."
+
+			home, errDir := os.UserHomeDir()
+			var downloadDir string
+			if errDir == nil {
+				downloadDir = filepath.Join(home, "Downloads")
+				if _, errStat := os.Stat(downloadDir); os.IsNotExist(errStat) {
+					downloadDir = home
+				}
+			} else {
+				downloadDir = "."
+			}
+
+			path := filepath.Join(downloadDir, imgAtt.Name)
+			ext := filepath.Ext(imgAtt.Name)
+			base := strings.TrimSuffix(imgAtt.Name, ext)
+			counter := 1
+			for {
+				if _, errStat := os.Stat(path); os.IsNotExist(errStat) {
+					break
+				}
+				path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
+				counter++
+			}
+
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				if isCurrent {
+					return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
+				}
+				continue
+			}
+
+			savedPaths = append(savedPaths, path)
+			if isCurrent {
+				selectedSavedPath = path
+			}
 		}
-		
-		path := filepath.Join(downloadDir, att.Name)
-		// Ensure unique filename if exists
-		ext := filepath.Ext(att.Name)
-		base := strings.TrimSuffix(att.Name, ext)
-		counter := 1
-		for {
-			if _, err := os.Stat(path); os.IsNotExist(err) {
+
+		if selectedSavedPath == "" {
+			return errMsg(fmt.Errorf("failed to save the selected image attachment"))
+		}
+
+		newSelectedIdx := -1
+		for idx, p := range savedPaths {
+			if p == selectedSavedPath {
+				newSelectedIdx = idx
 				break
 			}
-			path = filepath.Join(downloadDir, fmt.Sprintf("%s (%d)%s", base, counter, ext))
-			counter++
 		}
-		
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			return errMsg(fmt.Errorf("failed to write attachment file: %w", err))
-		}
-		
-		// Open the file with xdg-open or the custom image viewer in the background
+
 		var cmd *exec.Cmd
-		extLower := strings.ToLower(ext)
-		isImage := extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".gif" || extLower == ".bmp" || extLower == ".webp"
-		
-		if isImage && imageViewer != "" {
-			parts := strings.Fields(imageViewer)
-			if len(parts) > 0 {
-				viewerName := parts[0]
-				args := append(parts[1:], path)
-				cmd = exec.Command(viewerName, args...)
+		parts := strings.Fields(imageViewer)
+		if len(parts) > 0 {
+			viewerName := parts[0]
+			viewerBase := filepath.Base(viewerName)
+
+			var args []string
+			if viewerBase == "sxiv" || viewerBase == "nsxiv" {
+				if newSelectedIdx != -1 {
+					args = append(parts[1:], "-n", strconv.Itoa(newSelectedIdx+1))
+				} else {
+					args = parts[1:]
+				}
+				args = append(args, savedPaths...)
+			} else if viewerBase == "feh" {
+				if selectedSavedPath != "" {
+					args = append(parts[1:], "--start-at", selectedSavedPath)
+				} else {
+					args = parts[1:]
+				}
+				args = append(args, savedPaths...)
+			} else if viewerBase == "imv" {
+				if selectedSavedPath != "" {
+					args = append(parts[1:], "-n", selectedSavedPath)
+				} else {
+					args = parts[1:]
+				}
+				args = append(args, savedPaths...)
 			} else {
-				cmd = exec.Command("xdg-open", path)
+				// Reorder so that selectedSavedPath is first, followed by the rest
+				var reorderedPaths []string
+				if selectedSavedPath != "" {
+					reorderedPaths = append(reorderedPaths, selectedSavedPath)
+				}
+				for idx, p := range savedPaths {
+					if idx != newSelectedIdx {
+						reorderedPaths = append(reorderedPaths, p)
+					}
+				}
+				args = append(parts[1:], reorderedPaths...)
 			}
+
+			cmd = exec.Command(viewerName, args...)
 		} else {
-			cmd = exec.Command("xdg-open", path)
+			cmd = exec.Command("xdg-open", selectedSavedPath)
 		}
-		
+
 		_ = cmd.Start()
-		
-		return attachmentSavedMsg(path)
+
+		return attachmentSavedMsg(selectedSavedPath)
 	}
 }
 
@@ -2273,7 +2418,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Save attachment
 			m.statusMsg = "Downloading attachment..."
-			cmds = append(cmds, saveAttachmentCmd(m.attachments[m.selectedAttach], m.config.ImageViewer))
+			cmds = append(cmds, saveAttachmentCmd(m.attachments, m.selectedAttach, m.config.ImageViewer))
 		}
 
 	case stateReplyConfirm:
