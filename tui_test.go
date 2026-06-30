@@ -1150,6 +1150,105 @@ func TestAttachmentSavedState(t *testing.T) {
 	}
 }
 
+func TestExtractCleanText(t *testing.T) {
+	htmlInput := `Hello standard user.
+Please view <a href="https://example.com">this site</a>.
+<img alt="smile" src="cid:123"/>
+<br>
+And here is more text.
+-----Original Message-----
+From: someone@example.com
+Sent: yesterday
+To: user
+Quoted content: https://google.com
+> inside a blockquote
+`
+
+	t.Run("without quoting", func(t *testing.T) {
+		got := extractCleanText(htmlInput, true)
+		expected := "Hello standard user.\nPlease view this site (https://example.com) .\n[image: smile]\n\nAnd here is more text."
+		if got != expected {
+			t.Errorf("expected:\n%q\ngot:\n%q", expected, got)
+		}
+	})
+
+	t.Run("with quoting", func(t *testing.T) {
+		got := extractCleanText(htmlInput, false)
+		expected := "Hello standard user.\nPlease view this site (https://example.com) .\n[image: smile]\n\nAnd here is more text.\n-----Original Message-----\nFrom: someone@example.com\nSent: yesterday\nTo: user\nQuoted content: https://google.com\n> inside a blockquote"
+		if got != expected {
+			t.Errorf("expected:\n%q\ngot:\n%q", expected, got)
+		}
+	})
+}
+
+func TestYankMenuTransitions(t *testing.T) {
+	// Initialize a mainModel with loaded detailMessage
+	msg := &Message{
+		ID:      "123",
+		Subject: "Test Subject",
+		Body: ItemBody{
+			Content: "Hello world!",
+		},
+	}
+	m := mainModel{
+		state:         stateMain,
+		detailMessage: msg,
+		messages:      []Message{*msg},
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{ConversationID: "abc", Members: []Message{*msg}},
+		},
+	}
+
+	// 1. Pressing 'y' should transition to stateYankSelect
+	m1Interface, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m1 := m1Interface.(mainModel)
+	if m1.state != stateYankSelect {
+		t.Errorf("expected state to transition to stateYankSelect, got %v", m1.state)
+	}
+
+	// 2. Pressing 'esc' in stateYankSelect should go back to stateMain
+	m2Interface, _ := m1.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m2 := m2Interface.(mainModel)
+	if m2.state != stateMain {
+		t.Errorf("expected state to return to stateMain, got %v", m2.state)
+	}
+
+	// 3. Pressing 'j' / 'down' should change selectedYankIdx
+	m3Interface, _ := m1.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m3 := m3Interface.(mainModel)
+	if m3.selectedYankIdx != 1 {
+		t.Errorf("expected selectedYankIdx to be 1, got %d", m3.selectedYankIdx)
+	}
+
+	// 4. Pressing 'k' / 'up' should wrap around to 3
+	m4Interface, _ := m1.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	m4 := m4Interface.(mainModel)
+	if m4.selectedYankIdx != 3 {
+		t.Errorf("expected selectedYankIdx to wrap to 3, got %d", m4.selectedYankIdx)
+	}
+
+	// 5. Pressing 's' in stateYankSelect should copy subject and return to stateMain
+	m5Interface, _ := m1.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m5 := m5Interface.(mainModel)
+	if m5.state != stateMain {
+		t.Errorf("expected state to return to stateMain after yank, got %v", m5.state)
+	}
+}
+
+func TestOverlayLines_StyleLeak(t *testing.T) {
+	base := "hello world"
+	overlay := "POP"
+
+	result := overlayLines(base, overlay, 6, 0)
+	expectedSuffix := "POP\x1b[0mld"
+	if !strings.Contains(result, expectedSuffix) {
+		t.Errorf("expected result to contain %q, but got %q", expectedSuffix, result)
+	}
+}
+
 
 
 

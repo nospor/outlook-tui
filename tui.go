@@ -50,6 +50,7 @@ const (
 	stateFileBrowse
 	stateComposeCancelConfirm
 	stateDeleteThreadConfirm
+	stateYankSelect
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -170,6 +171,7 @@ type mainModel struct {
 	// URL select state
 	extractedURLs   []string
 	selectedURLIdx  int
+	selectedYankIdx int
 
 	// Thread deletion confirm state
 	deleteThreadMsgIDs  []string
@@ -2003,35 +2005,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = "Select reply option (s/a/c)"
 				}
 			}
-		case "u":
-			// Extract URLs from the selected message's main body (not quoted text)
+		case "y":
+			// Show Yank option selection dropdown
 			am := m.activeMessage()
 			if am == nil {
 				m.statusMsg = "No message selected"
 				break
 			}
-			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+			if m.detailMessage == nil || m.detailMessage.ID != am.ID {
 				m.statusMsg = "Message details loading, please try again..."
 				break
 			}
-			urls := extractURLsFromMainMessage(m.detailMessage.Body.Content)
-			if len(urls) == 0 {
-				m.statusMsg = "No URLs found in the main message"
-				break
-			}
-			if len(urls) == 1 {
-				// Copy directly to clipboard
-				if err := clipboard.WriteAll(urls[0]); err != nil {
-					m.statusMsg = fmt.Sprintf("Failed to copy URL: %v", err)
-				} else {
-					m.statusMsg = "Copied URL to clipboard!"
-				}
-				break
-			}
-			// Multiple URLs: show popup/modal
-			m.extractedURLs = urls
-			m.selectedURLIdx = 0
-			m.state = stateURLSelect
+			m.state = stateYankSelect
+			m.selectedYankIdx = 0
+			m.statusMsg = "Yank: [m] Msg (no quotes), [a] All (with quotes), [u] URLs, [s] Subject"
+			m = m.updateViewportSize()
 		case "o":
 			// Check if yt-tui is installed
 			if _, err := exec.LookPath("yt-tui"); err != nil {
@@ -2296,6 +2284,42 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Copied URL to clipboard!"
 			}
 			m.state = stateMain
+		}
+
+	case stateYankSelect:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q":
+			m.state = stateMain
+			m.statusMsg = "Yank cancelled"
+			m = m.updateViewportSize()
+		case "up", "k":
+			if m.selectedYankIdx > 0 {
+				m.selectedYankIdx--
+			} else {
+				m.selectedYankIdx = len(yankOptions) - 1
+			}
+		case "down", "j":
+			if m.selectedYankIdx < len(yankOptions)-1 {
+				m.selectedYankIdx++
+			} else {
+				m.selectedYankIdx = 0
+			}
+		case "enter":
+			if m.selectedYankIdx >= 0 && m.selectedYankIdx < len(yankOptions) {
+				m = m.executeYank(yankOptions[m.selectedYankIdx].key)
+			}
+		case "m":
+			m = m.executeYank("m")
+		case "a":
+			m = m.executeYank("a")
+		case "u":
+			m = m.executeYank("u")
+		case "s":
+			m = m.executeYank("s")
 		}
 
 	case stateYouTrackURLSelect:
@@ -2857,7 +2881,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain:
+	case stateMain, stateYankSelect:
 		if m.config.Layout == 2 {
 			s.WriteString(m.renderLayout2())
 		} else {
@@ -3010,20 +3034,24 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain {
+	if m.state == stateMain || m.state == stateYankSelect {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
 		
 		var keysText string
-		if m.width >= 160 {
-			keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [u] URL | [o] YouTrack | [?] Help | [q] Quit"
-		} else if m.width >= 130 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [o] YouTrack | [?] Help | [q] Quit"
-		} else if m.width >= 95 {
-			keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
+		if m.state == stateYankSelect {
+			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
 		} else {
-			keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
+			if m.width >= 160 {
+				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
+			} else if m.width >= 130 {
+				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
+			} else if m.width >= 95 {
+				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
+			} else {
+				keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
+			}
 		}
 		s.WriteString(dimStyle.Render(keysText))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
@@ -3032,10 +3060,27 @@ func (m mainModel) View() string {
 		}
 	}
 
+	baseView := s.String()
+	if m.state == stateYankSelect {
+		modalWidth := 46
+		modalHeight := 7
+		dropdownView := m.renderYankDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	}
+
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse) {
-		lines := strings.Split(s.String(), "\n")
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect) {
+		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
 			lines = append(lines, "")
@@ -3045,7 +3090,7 @@ func (m mainModel) View() string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	return s.String()
+	return baseView
 }
 
 func (m mainModel) renderContactsPopup() string {
@@ -3292,7 +3337,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [D]                 Move entire thread to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
 		"  [a]                 Open attachments pane (if any)",
-		"  [u]                 Extract URLs from email body",
+		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [o]                 Open YouTrack issue in yt-tui",
 	}
 
@@ -3741,6 +3786,333 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 	return s.String()
 }
 
+type cell struct {
+	char  rune
+	style string
+}
+
+func parseANSILine(line string) []cell {
+	var cells []cell
+	var currentStyle strings.Builder
+	runes := []rune(line)
+	inEscape := false
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '\x1b' {
+			inEscape = true
+			currentStyle.WriteRune(r)
+			continue
+		}
+		if inEscape {
+			currentStyle.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		cells = append(cells, cell{
+			char:  r,
+			style: currentStyle.String(),
+		})
+	}
+	return cells
+}
+
+func cellsToString(cells []cell) string {
+	var sb strings.Builder
+	var lastStyle string
+	for _, c := range cells {
+		if c.style != lastStyle {
+			if lastStyle != "" {
+				sb.WriteString("\x1b[0m")
+			}
+			sb.WriteString(c.style)
+			lastStyle = c.style
+		}
+		sb.WriteRune(c.char)
+	}
+	sb.WriteString("\x1b[0m")
+	return sb.String()
+}
+
+func overlayLines(base, overlay string, x, y int) string {
+	baseLines := strings.Split(base, "\n")
+	overlayLines := strings.Split(overlay, "\n")
+
+	for i, oLine := range overlayLines {
+		targetY := y + i
+		if targetY < 0 || targetY >= len(baseLines) {
+			continue
+		}
+
+		bLine := baseLines[targetY]
+		bCells := parseANSILine(bLine)
+		oCells := parseANSILine(oLine)
+
+		if len(bCells) < x {
+			padding := make([]cell, x-len(bCells))
+			for p := range padding {
+				padding[p] = cell{char: ' '}
+			}
+			bCells = append(bCells, padding...)
+		}
+
+		for j, oCell := range oCells {
+			pos := x + j
+			bgSeq := "\x1b[48;2;49;50;68m" // truecolor escape for ColorSurface (#313244)
+			if oCell.style == "" {
+				oCell.style = bgSeq
+			} else {
+				oCell.style = strings.ReplaceAll(oCell.style, "\x1b[0m", "\x1b[0m"+bgSeq)
+				oCell.style = bgSeq + oCell.style
+			}
+
+			if pos >= len(bCells) {
+				bCells = append(bCells, oCell)
+			} else {
+				bCells[pos] = oCell
+			}
+		}
+
+		baseLines[targetY] = cellsToString(bCells)
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
+
+type yankOption struct {
+	key         string
+	name        string
+	description string
+}
+
+var yankOptions = []yankOption{
+	{key: "m", name: "Copy original message", description: "no quoting"},
+	{key: "a", name: "Copy all message", description: "with quoting"},
+	{key: "u", name: "Yank URL(s)", description: "extract & copy URLs"},
+	{key: "s", name: "Copy subject", description: "copy subject text"},
+}
+
+func (m mainModel) renderYankDropdown(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT YANK ACTION: "))
+
+	for i, opt := range yankOptions {
+		indicator := "  "
+		if i == m.selectedYankIdx {
+			indicator = "> "
+		}
+
+		line := fmt.Sprintf("%s y%s: %s (%s)", indicator, opt.key, opt.name, opt.description)
+
+		// Pad/crop line
+		if len(line) < dropdownWidth-2 {
+			line = line + strings.Repeat(" ", dropdownWidth-2-len(line))
+		} else if len(line) > dropdownWidth-2 {
+			line = line[:dropdownWidth-5] + "..."
+		}
+
+		if i == m.selectedYankIdx {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorViolet)).
+				Bold(true).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) executeYank(key string) mainModel {
+	am := m.activeMessage()
+	if am == nil {
+		m.statusMsg = "No message selected"
+		m.state = stateMain
+		return m.updateViewportSize()
+	}
+	if m.detailMessage == nil || m.detailMessage.ID != am.ID {
+		m.statusMsg = "Message details loading, please try again..."
+		m.state = stateMain
+		return m.updateViewportSize()
+	}
+
+	switch key {
+	case "m":
+		text := extractCleanText(m.detailMessage.Body.Content, true)
+		if text == "" {
+			m.statusMsg = "Original message body is empty"
+		} else if err := clipboard.WriteAll(text); err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to copy message: %v", err)
+		} else {
+			m.statusMsg = "Copied original message (no quoting) to clipboard!"
+		}
+		m.state = stateMain
+
+	case "a":
+		text := extractCleanText(m.detailMessage.Body.Content, false)
+		if text == "" {
+			m.statusMsg = "Message body is empty"
+		} else if err := clipboard.WriteAll(text); err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to copy message: %v", err)
+		} else {
+			m.statusMsg = "Copied all message (with quoting) to clipboard!"
+		}
+		m.state = stateMain
+
+	case "u":
+		urls := extractURLsFromMainMessage(m.detailMessage.Body.Content)
+		if len(urls) == 0 {
+			m.statusMsg = "No URLs found in the main message"
+			m.state = stateMain
+		} else if len(urls) == 1 {
+			if err := clipboard.WriteAll(urls[0]); err != nil {
+				m.statusMsg = fmt.Sprintf("Failed to copy URL: %v", err)
+			} else {
+				m.statusMsg = "Copied URL to clipboard!"
+			}
+			m.state = stateMain
+		} else {
+			m.extractedURLs = urls
+			m.selectedURLIdx = 0
+			m.state = stateURLSelect
+			m.statusMsg = "Select URL to copy"
+		}
+
+	case "s":
+		subject := m.detailMessage.Subject
+		if subject == "" {
+			m.statusMsg = "Subject is empty"
+		} else if err := clipboard.WriteAll(subject); err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to copy subject: %v", err)
+		} else {
+			m.statusMsg = "Copied subject to clipboard!"
+		}
+		m.state = stateMain
+	}
+
+	return m.updateViewportSize()
+}
+
+func extractCleanText(htmlContent string, excludeQuoting bool) string {
+	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
+	res := replaceAnchorTags(htmlContent, false)
+
+	// Replace <img> tags with a simple "[image]" placeholder or "[image: alt/cid]"
+	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
+		altReg := regexp.MustCompile(`(?i)alt\s*=\s*['"]([^'"]+)['"]`)
+		altMatches := altReg.FindStringSubmatch(match)
+		if len(altMatches) > 1 {
+			return fmt.Sprintf("[image: %s]", altMatches[1])
+		}
+
+		srcReg := regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:([^'"\s>]+)['"]?`)
+		srcMatches := srcReg.FindStringSubmatch(match)
+		if len(srcMatches) > 1 {
+			cid := srcMatches[1]
+			if idx := strings.Index(cid, "@"); idx >= 0 {
+				cid = cid[:idx]
+			}
+			return fmt.Sprintf("[image: %s]", cid)
+		}
+		return "[image]"
+	})
+
+	// Simple tags stripping
+	res = regexp.MustCompile(`(?i)<br(?:\s*\/)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<p(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
+	res = strings.ReplaceAll(res, "</p>", "\n\n")
+	res = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = strings.ReplaceAll(res, "</div>", "\n")
+	res = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n• ")
+	res = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
+
+	// Strip all other HTML tags
+	var builder strings.Builder
+	inTag := false
+	runes := []rune(res)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '<' {
+			isTag := false
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || next == '!' || next == '?' {
+					isTag = true
+				} else if next == '/' && i+2 < len(runes) {
+					next2 := runes[i+2]
+					if (next2 >= 'a' && next2 <= 'z') || (next2 >= 'A' && next2 <= 'Z') {
+						isTag = true
+					}
+				}
+			}
+			if isTag {
+				inTag = true
+				continue
+			}
+		}
+		if r == '>' {
+			if inTag {
+				inTag = false
+				continue
+			}
+		}
+		if !inTag {
+			builder.WriteRune(r)
+		}
+	}
+
+	unescaped := html.UnescapeString(builder.String())
+	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
+
+	lines := strings.Split(unescaped, "\n")
+	var cleaned []string
+	inOriginal := false
+	for _, l := range lines {
+		plainLine := stripANSICodes(l)
+		trimmedPlain := strings.TrimSpace(plainLine)
+
+		if !inOriginal && isOriginalMessageStart(trimmedPlain) {
+			inOriginal = true
+		}
+
+		if excludeQuoting {
+			if inOriginal || strings.HasPrefix(trimmedPlain, ">") {
+				continue
+			}
+		}
+
+		if trimmedPlain != "" || (len(cleaned) > 0 && cleaned[len(cleaned)-1] != "") {
+			cleaned = append(cleaned, plainLine)
+		}
+	}
+
+	result := strings.Join(cleaned, "\n")
+	return strings.TrimSpace(result)
+}
+
 func (m mainModel) renderDetailView() string {
 	var s strings.Builder
 
@@ -3760,6 +4132,7 @@ func (m mainModel) renderDetailView() string {
 	if detailWidth < 20 {
 		detailWidth = 20
 	}
+
 	s.WriteString(m.renderMetaBlock(detailWidth))
 	s.WriteString(m.detailViewport.View())
 

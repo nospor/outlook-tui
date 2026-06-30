@@ -138,7 +138,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `r`                           | Reload/refresh messages in the selected folder                                                                                               |
 | `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
 | `a`                           | View and select attachments on the current email                                                                                            |
-| `u`                           | Copy URL from the currently selected message to clipboard (shows a selection popup if multiple URLs exist, ignoring quoted/original text)   |
+| `y`                           | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
 | `o`                           | Extract YouTrack URLs from the selected message and open in the external `yt-tui` app (shows a popup list if multiple unique YouTrack URLs exist, ignoring quoted/original text) |
 | `?`                           | Toggle help popup describing app functionality and shortcuts                                                                                |
 | `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
