@@ -2268,6 +2268,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q":
 			m.state = stateMain
 			m.statusMsg = "URL copy cancelled"
+			m = m.updateViewportSize()
 		case "up", "k":
 			if m.selectedURLIdx > 0 {
 				m.selectedURLIdx--
@@ -2284,6 +2285,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Copied URL to clipboard!"
 			}
 			m.state = stateMain
+			m = m.updateViewportSize()
 		}
 
 	case stateYankSelect:
@@ -2881,7 +2883,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect:
+	case stateMain, stateYankSelect, stateURLSelect:
 		if m.config.Layout == 2 {
 			s.WriteString(m.renderLayout2())
 		} else {
@@ -2983,22 +2985,6 @@ func (m mainModel) View() string {
 		}
 		s.WriteString("\n   [Up/Down] Select Attachment  |  [Enter] Save to Downloads  |  [Esc] Back\n")
 
-	case stateURLSelect:
-		s.WriteString("   " + headerStyle.Render("SELECT URL TO COPY TO CLIPBOARD") + "\n\n")
-		for i, url := range m.extractedURLs {
-			indicator := "  "
-			if i == m.selectedURLIdx {
-				indicator = "> "
-			}
-			
-			line := fmt.Sprintf("%s %s", indicator, url)
-			if i == m.selectedURLIdx {
-				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
-			} else {
-				s.WriteString("   " + line + "\n")
-			}
-		}
-		s.WriteString("\n   [Up/Down/j/k] Select URL  |  [Enter] Copy URL to Clipboard  |  [Esc/q] Cancel\n")
 
 	case stateYouTrackURLSelect:
 		s.WriteString("   " + headerStyle.Render("SELECT YOUTRACK ISSUE TO OPEN IN YT-TUI") + "\n\n")
@@ -3034,7 +3020,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
@@ -3042,6 +3028,8 @@ func (m mainModel) View() string {
 		var keysText string
 		if m.state == stateYankSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
+		} else if m.state == stateURLSelect {
+			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Copy to Clipboard"
 		} else {
 			if m.width >= 160 {
 				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
@@ -3075,11 +3063,69 @@ func (m mainModel) View() string {
 			y = 0
 		}
 		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateURLSelect {
+		// Calculate modal size
+		longestURL := 0
+		for _, url := range m.extractedURLs {
+			if len(url) > longestURL {
+				longestURL = len(url)
+			}
+		}
+		modalWidth := longestURL + 8
+		if modalWidth < 46 {
+			modalWidth = 46
+		}
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 20 {
+			modalWidth = 20
+		}
+
+		maxVisible := 10
+		totalURLs := len(m.extractedURLs)
+		visibleCount := totalURLs
+		if visibleCount > maxVisible {
+			visibleCount = maxVisible
+		}
+
+		startIdx := 0
+		if totalURLs > maxVisible {
+			startIdx = m.selectedURLIdx - maxVisible/2
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			endIdx := startIdx + maxVisible
+			if endIdx > totalURLs {
+				startIdx = totalURLs - maxVisible
+			}
+		}
+
+		contentLines := 1 + visibleCount
+		if startIdx > 0 {
+			contentLines++
+		}
+		if startIdx+visibleCount < totalURLs {
+			contentLines++
+		}
+		modalHeight := contentLines + 2 // borders
+
+		dropdownView := m.renderURLDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
 	}
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -3931,6 +3977,81 @@ func (m mainModel) renderYankDropdown(width int) string {
 				Render(line)
 		}
 		rows = append(rows, line)
+	}
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderURLDropdown(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT URL TO COPY: "))
+
+	maxVisible := 10
+	totalURLs := len(m.extractedURLs)
+
+	startIdx := 0
+	endIdx := totalURLs
+
+	if totalURLs > maxVisible {
+		startIdx = m.selectedURLIdx - maxVisible/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		endIdx = startIdx + maxVisible
+		if endIdx > totalURLs {
+			endIdx = totalURLs
+			startIdx = endIdx - maxVisible
+		}
+	}
+
+	if startIdx > 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render("  ▲ ... more URLs above ..."))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		url := m.extractedURLs[i]
+		indicator := "  "
+		if i == m.selectedURLIdx {
+			indicator = "> "
+		}
+
+		line := fmt.Sprintf("%s%s", indicator, url)
+
+		// Pad/crop line
+		if len(line) < dropdownWidth-2 {
+			line = line + strings.Repeat(" ", dropdownWidth-2-len(line))
+		} else if len(line) > dropdownWidth-2 {
+			line = line[:dropdownWidth-5] + "..."
+		}
+
+		if i == m.selectedURLIdx {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorViolet)).
+				Bold(true).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	if endIdx < totalURLs {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render("  ▼ ... more URLs below ..."))
 	}
 
 	joined := strings.Join(rows, "\n")
