@@ -4778,8 +4778,15 @@ func (m mainModel) renderMetaBlock(width int) string {
 // formatBodyContent strips/cleans up HTML email bodies to readable plain text
 func formatBodyContent(htmlContent string) string {
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
+
+	// Replace pre and code tags with state markers before any tag stripping
+	res := regexp.MustCompile(`(?i)<pre(?:\s+[^>]*)?>`).ReplaceAllString(htmlContent, "\x01PRE_START\x01")
+	res = regexp.MustCompile(`(?i)</pre>`).ReplaceAllString(res, "\x01PRE_END\x01")
+	res = regexp.MustCompile(`(?i)<code(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x01CODE_START\x01")
+	res = regexp.MustCompile(`(?i)</code>`).ReplaceAllString(res, "\x01CODE_END\x01")
+
 	// First, replace <a> tags so that URLs are preserved before tag stripping
-	res := replaceAnchorTags(htmlContent, true)
+	res = replaceAnchorTags(res, true)
 
 	// Replace <img> tags with a styled "[image]" placeholder
 	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
@@ -4810,6 +4817,10 @@ func formatBodyContent(htmlContent string) string {
 	
 	res = regexp.MustCompile(`(?i)<u(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[4m")
 	res = regexp.MustCompile(`(?i)</u\s*>`).ReplaceAllString(res, "\x1b[24m")
+
+	// Style inline code blocks (Yellow: #F9E2AF)
+	res = strings.ReplaceAll(res, "\x01CODE_START\x01", "\x1b[38;2;249;226;175m")
+	res = strings.ReplaceAll(res, "\x01CODE_END\x01", "\x1b[39m")
 
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
@@ -4891,8 +4902,32 @@ func formatBodyContent(htmlContent string) string {
 	lines := strings.Split(unescaped, "\n")
 	var cleaned []string
 	inOriginal := false
+	inPre := false
+
+	var addRx = regexp.MustCompile(`(?i)^\s*(?:\d+\s+)?(?:\d+\s+)?\+(?:\s|$|[^+])`)
+	var delRx = regexp.MustCompile(`(?i)^\s*(?:\d+\s+)?(?:\d+\s+)?-(?:\s|$|[^-])`)
+	var hunkRx = regexp.MustCompile(`^\s*@@`)
+	var fileRx = regexp.MustCompile(`^\s*(?:---|\+\+\+)\s`)
+	var gitDiffRx = regexp.MustCompile(`^(?:diff --git|index\s[0-9a-fA-F]{7,}\b|similarity index\s|rename from\s|rename to\s)`)
+
 	for _, l := range lines {
+		hasStart := strings.Contains(l, "\x01PRE_START\x01")
+		hasEnd := strings.Contains(l, "\x01PRE_END\x01")
+
+		if hasStart {
+			inPre = true
+			l = strings.ReplaceAll(l, "\x01PRE_START\x01", "")
+		}
+		lineIsInPre := inPre
+		if hasEnd {
+			inPre = false
+			l = strings.ReplaceAll(l, "\x01PRE_END\x01", "")
+		}
+
 		trimmed := strings.TrimSpace(l)
+		if (hasStart || hasEnd) && trimmed == "" {
+			continue
+		}
 		if trimmed != "" || (len(cleaned) > 0 && cleaned[len(cleaned)-1] != "") {
 			plainLine := stripANSICodes(l)
 			if !inOriginal && isOriginalMessageStart(plainLine) {
@@ -4914,7 +4949,26 @@ func formatBodyContent(htmlContent string) string {
 			}
 			lineWithURLs = replaceLinkMarkers(lineWithURLs, startCode, endCode)
 			
-			if isDimmed {
+			// Diff & code highlighting
+			isAdd := addRx.MatchString(plainLine)
+			isDel := delRx.MatchString(plainLine)
+			isHunk := hunkRx.MatchString(plainLine)
+			isFile := fileRx.MatchString(plainLine)
+			isGitDiff := gitDiffRx.MatchString(plainLine)
+			
+			if isAdd {
+				lineWithURLs = "\x1b[38;2;166;227;161m" + plainLine + "\x1b[39m"
+			} else if isDel {
+				lineWithURLs = "\x1b[38;2;243;139;168m" + plainLine + "\x1b[39m"
+			} else if isHunk {
+				lineWithURLs = "\x1b[38;2;137;180;250m" + plainLine + "\x1b[39m"
+			} else if isFile || isGitDiff {
+				lineWithURLs = "\x1b[38;2;249;226;175m" + plainLine + "\x1b[39m"
+			} else if lineIsInPre {
+				lineWithURLs = "\x1b[38;2;203;166;247m" + plainLine + "\x1b[39m"
+			}
+			
+			if isDimmed && !isAdd && !isDel && !isHunk && !isFile && !isGitDiff && !lineIsInPre {
 				cleaned = append(cleaned, dimStyle.Render(lineWithURLs))
 			} else {
 				cleaned = append(cleaned, lineWithURLs)

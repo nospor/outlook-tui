@@ -210,6 +210,30 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    `<a href="https://adwantedintl.sharepoint.com/:p:/s/HR/IQAbvgiWAYTRTaDwie8L0ze9AfbCDwDoidEwS4Na7NrzWRg?e=YoFq52"><img src="cid:4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e">Employment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx</a>`,
 			expected: "\x1b[38;2;137;180;250;4m\x1b[1;38;2;203;166;247m[image: 4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e]\x1b[0m\x1b[38;2;137;180;250;4mEmployment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx\x1b[24;39m ",
 		},
+		{
+			input:    "<code>fmt.Println(\"Hello\")</code>",
+			expected: "\x1b[38;2;249;226;175mfmt.Println(\"Hello\")\x1b[39m",
+		},
+		{
+			input:    "<pre>line 1\nline 2</pre>",
+			expected: "\x1b[38;2;203;166;247mline 1\x1b[39m\n\x1b[38;2;203;166;247mline 2\x1b[39m",
+		},
+		{
+			input:    "+ added line",
+			expected: "\x1b[38;2;166;227;161m+ added line\x1b[39m",
+		},
+		{
+			input:    "- deleted line",
+			expected: "\x1b[38;2;243;139;168m- deleted line\x1b[39m",
+		},
+		{
+			input:    "@@ -1,5 +1,6 @@",
+			expected: "\x1b[38;2;137;180;250m@@ -1,5 +1,6 @@\x1b[39m",
+		},
+		{
+			input:    "102 <pre>code line\n</pre>",
+			expected: "\x1b[38;2;203;166;247m102 code line\x1b[39m",
+		},
 	}
 
 	for _, tt := range tests {
