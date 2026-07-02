@@ -47,8 +47,9 @@ const (
 	stateAttachments
 	stateReplyConfirm
 	stateURLSelect
-	stateYouTrackURLSelect
+	stateExternalURLSelect
 	stateYouTrackInstallPrompt
+	stateGitLabInstallPrompt
 	stateHelp
 	stateFileBrowse
 	stateComposeCancelConfirm
@@ -796,6 +797,18 @@ func openYouTrackTuiCmd(urlStr string) tea.Cmd {
 	c := exec.Command("yt-tui", urlStr)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return youtrackTuiFinishedMsg{Err: err}
+	})
+}
+
+type gitlabTuiFinishedMsg struct {
+	Err error
+}
+
+// openGitLabTuiCmd launches the external gitlab-tui command with the given URL.
+func openGitLabTuiCmd(urlStr string) tea.Cmd {
+	c := exec.Command("gitlab-tui", urlStr)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return gitlabTuiFinishedMsg{Err: err}
 	})
 }
 
@@ -1783,6 +1796,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case gitlabTuiFinishedMsg:
+		m.state = stateMain
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("gitlab-tui finished with error: %v", msg.Err)
+		} else {
+			m.statusMsg = "gitlab-tui closed"
+		}
+		return m, nil
+
 	case tickMsg:
 		// Background tick: fetch folders and current messages silently
 		if m.state == stateMain && m.graphClient != nil {
@@ -2255,12 +2277,6 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Yank: [m] Msg (no quotes), [a] All (with quotes), [u] URLs, [s] Subject"
 			m = m.updateViewportSize()
 		case "o":
-			// Check if yt-tui is installed
-			if _, err := exec.LookPath("yt-tui"); err != nil {
-				m.state = stateYouTrackInstallPrompt
-				break
-			}
-			// Open YouTrack URLs from the selected message using yt-tui
 			am := m.activeMessage()
 			if am == nil {
 				m.statusMsg = "No message selected"
@@ -2271,20 +2287,49 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content)
-			if len(ytURLs) == 0 {
-				m.statusMsg = "No YouTrack URLs found in the message"
+			glURLs := extractGitLabMRURLs(m.detailMessage.Body.Content)
+			totalCount := len(ytURLs) + len(glURLs)
+
+			if totalCount == 0 {
+				m.statusMsg = "No YouTrack or GitLab merge request URLs found in the message"
 				break
 			}
-			if len(ytURLs) == 1 {
-				// Launch yt-tui immediately
-				m.state = stateLoading
-				m.statusMsg = "Launching yt-tui..."
-				return m, openYouTrackTuiCmd(ytURLs[0])
+
+			if totalCount == 1 {
+				var targetURL string
+				var isGitLab bool
+				if len(glURLs) == 1 {
+					targetURL = glURLs[0]
+					isGitLab = true
+				} else {
+					targetURL = ytURLs[0]
+					isGitLab = false
+				}
+
+				if isGitLab {
+					if _, err := exec.LookPath("gitlab-tui"); err != nil {
+						m.state = stateGitLabInstallPrompt
+						break
+					}
+					m.state = stateLoading
+					m.statusMsg = "Launching gitlab-tui..."
+					return m, openGitLabTuiCmd(targetURL)
+				} else {
+					if _, err := exec.LookPath("yt-tui"); err != nil {
+						m.state = stateYouTrackInstallPrompt
+						break
+					}
+					m.state = stateLoading
+					m.statusMsg = "Launching yt-tui..."
+					return m, openYouTrackTuiCmd(targetURL)
+				}
 			}
-			// Multiple YouTrack URLs: show popup/modal
-			m.extractedURLs = ytURLs
+
+			// Multiple URLs: show popup/modal
+			m.extractedURLs = append([]string{}, ytURLs...)
+			m.extractedURLs = append(m.extractedURLs, glURLs...)
 			m.selectedURLIdx = 0
-			m.state = stateYouTrackURLSelect
+			m.state = stateExternalURLSelect
 		case "?":
 			m.state = stateHelp
 			m = m.updateViewportSize()
@@ -2562,7 +2607,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.executeYank("s")
 		}
 
-	case stateYouTrackURLSelect:
+	case stateExternalURLSelect:
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
 			break
@@ -2570,7 +2615,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc", "q":
 			m.state = stateMain
-			m.statusMsg = "YouTrack selection cancelled"
+			m.statusMsg = "Selection cancelled"
 		case "up", "k":
 			if m.selectedURLIdx > 0 {
 				m.selectedURLIdx--
@@ -2582,13 +2627,38 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.selectedURLIdx >= 0 && m.selectedURLIdx < len(m.extractedURLs) {
 				urlStr := m.extractedURLs[m.selectedURLIdx]
-				m.state = stateLoading
-				m.statusMsg = "Launching yt-tui..."
-				return m, openYouTrackTuiCmd(urlStr)
+				if strings.Contains(urlStr, "/merge_requests/") {
+					if _, err := exec.LookPath("gitlab-tui"); err != nil {
+						m.state = stateGitLabInstallPrompt
+						break
+					}
+					m.state = stateLoading
+					m.statusMsg = "Launching gitlab-tui..."
+					return m, openGitLabTuiCmd(urlStr)
+				} else {
+					if _, err := exec.LookPath("yt-tui"); err != nil {
+						m.state = stateYouTrackInstallPrompt
+						break
+					}
+					m.state = stateLoading
+					m.statusMsg = "Launching yt-tui..."
+					return m, openYouTrackTuiCmd(urlStr)
+				}
 			}
 		}
 
 	case stateYouTrackInstallPrompt:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q", "enter":
+			m.state = stateMain
+			m.statusMsg = "Ready"
+		}
+
+	case stateGitLabInstallPrompt:
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
 			break
@@ -3120,7 +3190,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateDeleteThreadConfirm, stateAttachments:
+	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments:
 		if m.config.Layout == 2 {
 			s.WriteString(m.renderLayout2())
 		} else {
@@ -3201,28 +3271,18 @@ func (m mainModel) View() string {
 
 
 
-	case stateYouTrackURLSelect:
-		s.WriteString("   " + headerStyle.Render("SELECT YOUTRACK ISSUE TO OPEN IN YT-TUI") + "\n\n")
-		for i, url := range m.extractedURLs {
-			indicator := "  "
-			if i == m.selectedURLIdx {
-				indicator = "> "
-			}
-			
-			line := fmt.Sprintf("%s %s", indicator, url)
-			if i == m.selectedURLIdx {
-				s.WriteString("   " + selectedItemStyle.Render(line) + "\n")
-			} else {
-				s.WriteString("   " + line + "\n")
-			}
-		}
-		s.WriteString("\n   [Up/Down/j/k] Select YouTrack URL  |  [Enter] Open in yt-tui  |  [Esc/q] Cancel\n")
-
 	case stateYouTrackInstallPrompt:
 		s.WriteString("   " + headerStyle.Render("YOUTRACK TUI NOT INSTALLED") + "\n\n")
 		s.WriteString("   The yt-tui binary could not be found in your system's PATH.\n")
 		s.WriteString("   To use this integration, please install yt-tui first:\n\n")
 		s.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Underline(true).Render("https://github.com/nospor/yt-tui") + "\n\n")
+		s.WriteString("   [Esc/q/Enter] Back to Main View\n")
+
+	case stateGitLabInstallPrompt:
+		s.WriteString("   " + headerStyle.Render("GITLAB TUI NOT INSTALLED") + "\n\n")
+		s.WriteString("   The gitlab-tui binary could not be found in your system's PATH.\n")
+		s.WriteString("   To use this integration, please install gitlab-tui first:\n\n")
+		s.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Underline(true).Render("https://github.com/nospor/gitlab-tui") + "\n\n")
 		s.WriteString("   [Esc/q/Enter] Back to Main View\n")
 
 	case stateHelp:
@@ -3235,7 +3295,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
@@ -3245,15 +3305,17 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
 		} else if m.state == stateURLSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Copy to Clipboard"
+		} else if m.state == stateExternalURLSelect {
+			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Open in TUI"
 		} else if m.state == stateDeleteThreadConfirm {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
 		} else {
 			if m.width >= 160 {
-				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
+				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
 			} else if m.width >= 130 {
-				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] YouTrack | [?] Help | [q] Quit"
+				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
 			} else if m.width >= 95 {
 				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
 			} else {
@@ -3424,11 +3486,74 @@ func (m mainModel) View() string {
 			y = 0
 		}
 		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateExternalURLSelect {
+		// Calculate modal size
+		longestURL := 0
+		for _, urlStr := range m.extractedURLs {
+			prefix := "[YouTrack] "
+			if strings.Contains(urlStr, "/merge_requests/") {
+				prefix = "[GitLab]   "
+			}
+			lineLen := len(prefix) + len(urlStr)
+			if lineLen > longestURL {
+				longestURL = lineLen
+			}
+		}
+		modalWidth := longestURL + 8
+		if modalWidth < 46 {
+			modalWidth = 46
+		}
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 20 {
+			modalWidth = 20
+		}
+
+		maxVisible := 10
+		totalURLs := len(m.extractedURLs)
+		visibleCount := totalURLs
+		if visibleCount > maxVisible {
+			visibleCount = maxVisible
+		}
+
+		startIdx := 0
+		if totalURLs > maxVisible {
+			startIdx = m.selectedURLIdx - maxVisible/2
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			endIdx := startIdx + maxVisible
+			if endIdx > totalURLs {
+				startIdx = totalURLs - maxVisible
+			}
+		}
+
+		contentLines := 1 + visibleCount
+		if startIdx > 0 {
+			contentLines++
+		}
+		if startIdx+visibleCount < totalURLs {
+			contentLines++
+		}
+		modalHeight := contentLines + 2 // borders
+
+		dropdownView := m.renderExternalURLDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
 	}
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -3687,7 +3812,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [U]                 Undelete / Restore to Inbox",
 		"  [a]                 Open attachments pane (if any)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
-		"  [o]                 Open YouTrack issue in yt-tui",
+		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
 	}
 
 	// Compose Shortcuts Section
@@ -5528,4 +5653,109 @@ func extractYouTrackURLs(htmlContent string) []string {
 		}
 	}
 	return ytURLs
+}
+
+func extractGitLabMRURLs(htmlContent string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent)
+	var gitlabURLs []string
+	seen := make(map[string]bool)
+	mrRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?merge_requests/([0-9]+)`)
+	for _, uStr := range allURLs {
+		matches := mrRx.FindStringSubmatch(uStr)
+		if len(matches) < 3 {
+			continue
+		}
+		projectPath := matches[1]
+		mrNum := matches[2]
+		parsed, err := url.Parse(uStr)
+		if err != nil {
+			continue
+		}
+		normalized := fmt.Sprintf("%s://%s/%s/-/merge_requests/%s", parsed.Scheme, parsed.Host, projectPath, mrNum)
+		if !seen[normalized] {
+			seen[normalized] = true
+			gitlabURLs = append(gitlabURLs, normalized)
+		}
+	}
+	return gitlabURLs
+}
+
+func (m mainModel) renderExternalURLDropdown(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT LINK TO OPEN IN TUI: "))
+
+	maxVisible := 10
+	totalURLs := len(m.extractedURLs)
+
+	startIdx := 0
+	endIdx := totalURLs
+
+	if totalURLs > maxVisible {
+		startIdx = m.selectedURLIdx - maxVisible/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		endIdx = startIdx + maxVisible
+		if endIdx > totalURLs {
+			endIdx = totalURLs
+			startIdx = endIdx - maxVisible
+		}
+	}
+
+	if startIdx > 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render("  ▲ ... more URLs above ..."))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		urlStr := m.extractedURLs[i]
+		indicator := "  "
+		if i == m.selectedURLIdx {
+			indicator = "> "
+		}
+
+		prefix := "[YouTrack] "
+		if strings.Contains(urlStr, "/merge_requests/") {
+			prefix = "[GitLab]   "
+		}
+
+		line := fmt.Sprintf("%s%s%s", indicator, prefix, urlStr)
+
+		// Pad/crop line
+		if len(line) < dropdownWidth-2 {
+			line = line + strings.Repeat(" ", dropdownWidth-2-len(line))
+		} else if len(line) > dropdownWidth-2 {
+			line = line[:dropdownWidth-5] + "..."
+		}
+
+		if i == m.selectedURLIdx {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorViolet)).
+				Bold(true).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	if endIdx < totalURLs {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render("  ▼ ... more URLs below ..."))
+	}
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
 }

@@ -628,6 +628,58 @@ func TestExtractYouTrackURLs(t *testing.T) {
 	}
 }
 
+func TestExtractGitLabMRURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "No GitLab MR URLs",
+			input:    "Hello world, check https://google.com and https://github.com",
+			expected: nil,
+		},
+		{
+			name:     "One GitLab MR URL",
+			input:    "Please check this MR: https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25"},
+		},
+		{
+			name:     "One GitLab MR URL without hyphen",
+			input:    "Please check this MR: https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/merge_requests/25. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25"},
+		},
+		{
+			name:     "Multiple GitLab MR URLs with duplicates and query parameters",
+			input: `
+				Check:
+				1. https://gitlab.com/group/subgroup/project/-/merge_requests/123
+				2. https://gitlab.com/group/subgroup/project/-/merge_requests/123?diff=parallel
+				3. https://gitlab.com/group/subgroup/project/-/merge_requests/123#note_456
+				4. https://gitlab.com/other-group/project/-/merge_requests/1
+			`,
+			expected: []string{
+				"https://gitlab.com/group/subgroup/project/-/merge_requests/123",
+				"https://gitlab.com/other-group/project/-/merge_requests/1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := extractGitLabMRURLs(tt.input)
+			if len(actual) != len(tt.expected) {
+				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
+			}
+			for i := range actual {
+				if actual[i] != tt.expected[i] {
+					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], actual[i])
+				}
+			}
+		})
+	}
+}
+
 func TestLayout2Heights(t *testing.T) {
 	m := mainModel{
 		state:      stateMain,
