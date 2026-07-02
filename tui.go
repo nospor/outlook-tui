@@ -209,30 +209,30 @@ func initialModel() mainModel {
 	}
 	fp.Styles = filepicker.DefaultStyles()
 
+	cfg, _ := LoadConfig()
+
 	return mainModel{
 		state:      stateLoading,
 		txtInput:   ti,
 		spinner:    s,
 		configStep: 0,
 		filepicker: fp,
+		config:     cfg,
 	}
 }
 
 func (m mainModel) Init() tea.Cmd {
+	if m.config.ClientID == "" {
+		return tea.Batch(m.spinner.Tick, func() tea.Msg {
+			return statusUpdateMsg("config_needed")
+		})
+	}
 	return tea.Batch(m.spinner.Tick, checkConfigCmd())
 }
 
 // Commands
 func checkConfigCmd() tea.Cmd {
 	return func() tea.Msg {
-		cfg, err := LoadConfig()
-		if err != nil {
-			return errMsg(err)
-		}
-		if cfg.ClientID == "" {
-			return statusUpdateMsg("config_needed")
-		}
-
 		// Try loading token
 		token, err := LoadToken()
 		if err != nil {
