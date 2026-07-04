@@ -99,6 +99,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `scroll_lines`: The number of lines to scroll when scrolling the Message Detail pane (defaults to `1`).
 * `image_viewer`: The command/executable used to open image attachments (e.g. `"sxiv"` or `"feh"`). If empty, not specified, or if the attachment is not an image, it defaults to using `xdg-open`. When set, pressing Enter on an image attachment downloads all image attachments in the current email and loads them all into the viewer, automatically starting at the selected one (with support for `sxiv`/`nsxiv`/`imv`'s `-n` and `feh`'s `--start-at` flags).
 * `attachment_dir`: The directory where attachments are downloaded (defaults to `~/Downloads`, falling back to your user home directory if not found). Paths starting with `~/` are expanded to your home directory, and the folder will be automatically created if it does not exist.
+* `terminal_bell`: Whether to sound the terminal bell (`\a`) when a new message notification is triggered (defaults to `1` — enabled).
+  - **`0`** — Disabled.
+  - **`1` (default)** — Enabled.
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, and sxiv for images:
 ```json
@@ -111,7 +114,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "excluded_folders": ["Junk Email", "RSS Feeds"],
   "scroll_lines": 5,
   "image_viewer": "sxiv",
-  "attachment_dir": "~/Downloads/attachments"
+  "attachment_dir": "~/Downloads/attachments",
+  "terminal_bell": 1
 }
 ```
 

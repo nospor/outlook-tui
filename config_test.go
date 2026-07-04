@@ -33,6 +33,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ScrollLines != 1 {
 		t.Errorf("expected default ScrollLines to be 1, got %d", cfg.ScrollLines)
 	}
+	if cfg.TerminalBell != 1 {
+		t.Errorf("expected default TerminalBell to be 1, got %d", cfg.TerminalBell)
+	}
 	if cfg.ImageViewer != "" {
 		t.Errorf("expected default ImageViewer to be empty, got %q", cfg.ImageViewer)
 	}
@@ -73,6 +76,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ScrollLines != 1 {
 		t.Errorf("expected populated ScrollLines to be 1, got %d", cfg.ScrollLines)
 	}
+	if cfg.TerminalBell != 1 {
+		t.Errorf("expected populated TerminalBell to be 1, got %d", cfg.TerminalBell)
+	}
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected populated AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
 	}
@@ -100,6 +106,10 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have ScrollLines 1, got %d", savedCfg.ScrollLines)
 	}
 
+	if savedCfg.TerminalBell != 1 {
+		t.Errorf("expected saved config to have TerminalBell 1, got %d", savedCfg.TerminalBell)
+	}
+
 	if savedCfg.ImageViewer != "" {
 		t.Errorf("expected saved config to have ImageViewer '', got %q", savedCfg.ImageViewer)
 	}
@@ -115,6 +125,7 @@ func TestConfigDefaults(t *testing.T) {
 	cfg.ScrollLines = 5
 	cfg.ImageViewer = "sxiv"
 	cfg.AttachmentDir = "/custom/download/dir"
+	cfg.TerminalBell = 0
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -142,5 +153,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.AttachmentDir != "/custom/download/dir" {
 		t.Errorf("expected custom AttachmentDir to be '/custom/download/dir', got %q", cfg.AttachmentDir)
+	}
+	if cfg.TerminalBell != 0 {
+		t.Errorf("expected custom TerminalBell to be 0, got %d", cfg.TerminalBell)
 	}
 }

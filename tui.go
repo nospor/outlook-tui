@@ -1528,7 +1528,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, em := range msg.Messages {
 			if !m.inboxKnownIDs[em.ID] {
 				if !em.IsRead {
-					SendSystemNotification(em)
+					SendSystemNotification(em, m.config.TerminalBell != 0)
 				}
 				m.inboxKnownIDs[em.ID] = true
 			}

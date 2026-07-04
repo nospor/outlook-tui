@@ -18,6 +18,7 @@ type Config struct {
 	ScrollLines     int      `json:"scroll_lines"`     // defaults to 1
 	ImageViewer     string   `json:"image_viewer"`
 	AttachmentDir   string   `json:"attachment_dir"`
+	TerminalBell    int      `json:"terminal_bell"`    // 0 = disabled, 1 = enabled (default)
 }
 
 func GetConfigDir() (string, error) {
@@ -53,10 +54,18 @@ func LoadConfig() (Config, error) {
 			UseSQLite:      0,
 			ScrollLines:    1,
 			AttachmentDir:  defaultAttachmentDir,
+			TerminalBell:   1,
 		}, nil
 	}
 	
-	var cfg Config
+	cfg := Config{
+		TenantID:       "common",
+		RefreshTimeMin: 5,
+		Layout:         1,
+		UseSQLite:      0,
+		ScrollLines:    1,
+		TerminalBell:   1,
+	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
@@ -89,7 +98,12 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") {
+	if cfg.TerminalBell != 0 && cfg.TerminalBell != 1 {
+		cfg.TerminalBell = 1
+		_ = SaveConfig(cfg)
+	}
+
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") {
 		_ = SaveConfig(cfg)
 	}
 
