@@ -1325,6 +1325,64 @@ func TestOverlayLines_StyleLeak(t *testing.T) {
 	}
 }
 
+func TestFocusReportingAndReadMarking(t *testing.T) {
+	m := initialModel()
+	if !m.appFocused {
+		t.Error("expected appFocused to be true by default")
+	}
+
+	// 1. Blur event
+	updatedBlur, _ := m.Update(tea.BlurMsg{})
+	mBlur := updatedBlur.(mainModel)
+	if mBlur.appFocused {
+		t.Error("expected appFocused to be false after BlurMsg")
+	}
+
+	// 2. Focus event
+	updatedFocus, _ := mBlur.Update(tea.FocusMsg{})
+	mFocus := updatedFocus.(mainModel)
+	if !mFocus.appFocused {
+		t.Error("expected appFocused to be true after FocusMsg")
+	}
+
+	// Test message read behavior based on focus
+	msg := Message{
+		ID:     "msg-123",
+		IsRead: false,
+		Body:   ItemBody{Content: "some body"},
+	}
+
+	// Case A: App is blurred
+	mBlur.state = stateMain
+	mBlur.virtualList = []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}}
+	mBlur.virtualSelected = 0
+	mBlur.threadGroups = []ThreadGroup{
+		{
+			ConversationID: "conv-123",
+			Members:        []Message{msg},
+		},
+	}
+	_, cmdBlur := mBlur.loadMessageDetail(&msg)
+	if cmdBlur != nil {
+		t.Error("expected no fetch message detail command since body is cached and app is blurred")
+	}
+
+	// Case B: App is focused
+	mFocus.state = stateMain
+	mFocus.virtualList = []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}}
+	mFocus.virtualSelected = 0
+	mFocus.threadGroups = []ThreadGroup{
+		{
+			ConversationID: "conv-123",
+			Members:        []Message{msg},
+		},
+	}
+	_, cmdFocus := mFocus.loadMessageDetail(&msg)
+	if cmdFocus == nil {
+		t.Error("expected fetch message detail command to mark read because app is focused")
+	}
+}
+
 
 
 

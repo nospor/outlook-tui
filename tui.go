@@ -172,6 +172,9 @@ type mainModel struct {
 	// SQLite cache (nil when use_sqlite == 0)
 	db *DB
 
+	// Focus state
+	appFocused bool
+
 	// URL select state
 	extractedURLs   []string
 	selectedURLIdx  int
@@ -219,6 +222,7 @@ func initialModel() mainModel {
 		configStep: 0,
 		filepicker: fp,
 		config:     cfg,
+		appFocused: true,
 	}
 }
 
@@ -315,7 +319,7 @@ func fetchInboxMessagesCmd(gc *GraphClient) tea.Cmd {
 	}
 }
 
-func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
+func fetchMessageDetailCmd(gc *GraphClient, msgID string, shouldMarkAsRead bool) tea.Cmd {
 	return func() tea.Msg {
 		msg, err := gc.GetMessage(msgID)
 		if err != nil {
@@ -342,9 +346,10 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			msg.HasAttachments = true
 		}
 
-		// Also mark message as read if unread
-		if !msg.IsRead {
+		// Also mark message as read if unread and requested
+		if !msg.IsRead && shouldMarkAsRead {
 			_ = gc.MarkAsRead(msgID, true)
+			msg.IsRead = true
 		}
 
 		return messageDetailFetchedMsg{Message: msg, Attachments: atts}
@@ -1036,9 +1041,13 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 			m.statusMsg = "Message details loaded"
 			return m, nil
 		}
-		// If unread, fetch from Graph to mark read
-		m.statusMsg = "Marking read..."
-		return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+		// If unread, fetch from Graph to mark read, but only if app is focused
+		if m.appFocused {
+			m.statusMsg = "Marking read..."
+			return m, fetchMessageDetailCmd(m.graphClient, am.ID, true)
+		}
+		m.statusMsg = "Message details loaded"
+		return m, nil
 	}
 
 	// 2. Check if the body content is cached in SQLite
@@ -1086,9 +1095,13 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 				m.statusMsg = "Message details loaded (cached)"
 				return m, nil
 			}
-			// If unread, fetch from Graph to mark read
-			m.statusMsg = "Marking read..."
-			return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+			// If unread, fetch from Graph to mark read, but only if app is focused
+			if m.appFocused {
+				m.statusMsg = "Marking read..."
+				return m, fetchMessageDetailCmd(m.graphClient, am.ID, true)
+			}
+			m.statusMsg = "Message details loaded (cached)"
+			return m, nil
 		}
 	}
 
@@ -1098,7 +1111,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	m = m.updateViewportSize()
 	m.detailViewport.SetContent("Loading message body...")
 	m.statusMsg = "Loading message details..."
-	return m, fetchMessageDetailCmd(m.graphClient, am.ID)
+	return m, fetchMessageDetailCmd(m.graphClient, am.ID, m.appFocused)
 }
 
 // selectFolder changes the currently selected folder to the given index,
@@ -1181,6 +1194,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+
+	case tea.FocusMsg:
+		m.appFocused = true
+		if m.state == stateMain {
+			if am := m.activeMessage(); am != nil && !am.IsRead {
+				var cmd tea.Cmd
+				m, cmd = m.loadMessageDetail(am)
+				return m, cmd
+			}
+		}
+
+	case tea.BlurMsg:
+		m.appFocused = false
 
 	case statusUpdateMsg:
 		switch msg {
@@ -1430,7 +1456,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i, em := range m.messages {
 				if em.ID == msg.Message.ID {
 					wasRead = m.messages[i].IsRead
-					m.messages[i].IsRead = true
+					m.messages[i].IsRead = msg.Message.IsRead
 					m.messages[i].Body = msg.Message.Body
 					m.messages[i].Attachments = msg.Attachments
 					m.messages[i].HasAttachments = msg.Message.HasAttachments
@@ -1440,7 +1466,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == msg.Message.ID {
 						wasRead = m.threadGroups[ti].Members[mi].IsRead
-						m.threadGroups[ti].Members[mi].IsRead = true
+						m.threadGroups[ti].Members[mi].IsRead = msg.Message.IsRead
 						m.threadGroups[ti].Members[mi].Body = msg.Message.Body
 						m.threadGroups[ti].Members[mi].Attachments = msg.Attachments
 						m.threadGroups[ti].Members[mi].HasAttachments = msg.Message.HasAttachments
@@ -1454,9 +1480,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.config.UseSQLite == 1 {
 					_ = m.db.UpsertMessage(m.folders[m.selectedFolder].ID, *msg.Message)
 				}
-				_ = m.db.UpdateReadStatus(msg.Message.ID, true)
+				_ = m.db.UpdateReadStatus(msg.Message.ID, msg.Message.IsRead)
 			}
-			m.updateFolderUnreadCount(msg.Message.ID, true, wasRead)
+			m.updateFolderUnreadCount(msg.Message.ID, msg.Message.IsRead, wasRead)
 			m.statusMsg = "Message details loaded"
 		}
 

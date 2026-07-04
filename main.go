@@ -30,6 +30,7 @@ func main() {
 	p := tea.NewProgram(
 		initialModel(),
 		tea.WithAltScreen(),
+		tea.WithReportFocus(),
 	)
 
 	if _, err := p.Run(); err != nil {
