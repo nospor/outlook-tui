@@ -1,5 +1,5 @@
 
-## [unreleased]
+## [0.5.0] - 2026-07-06
 
 ### Features
 
@@ -97,3 +97,7 @@
 - *(tui)* Move pane labels to top border bar ([6d391c3](https://github.com/nospor/outlook-tui/commit/6d391c3cfe8b14ca38a76e19d5e63c5665bc2680))
 - Hide HTML URLs in message details and style link text in blue ([d84117c](https://github.com/nospor/outlook-tui/commit/d84117cb318f05dc4b3871d8549911270cb5de88))
 - *(tui)* Widen help popup columns to prevent text wrapping ([ab1fa34](https://github.com/nospor/outlook-tui/commit/ab1fa3454d8485d5ec4432c35ea9bc3b79c4362a))
+
+### Miscellaneous Tasks
+
+- Add git-cliff configuration and GitHub workflow for automated changelog ([933506b](https://github.com/nospor/outlook-tui/commit/933506bf504dfac490003b08e24e8424932dc92d))
