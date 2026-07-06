@@ -58,22 +58,22 @@ To connect to Outlook 365, you need to register a public client application in y
 
 ## How to Run
 
-1. Clone or navigate to the directory:
-   ```bash
-   cd /home/robertn/projects/vag1/html/outlook-tui
-   ```
-2. Build the application:
+1. Build the application:
    ```bash
    go build -o outlook-tui
    ```
-3. Run the application:
+2. Run the application:
    ```bash
    ./outlook-tui
+
+   # you may also want to copy the binary to your PATH (and run it from any place), e.g.:
+   sudo cp outlook-tui /usr/local/bin/
+   
    ```
-4. Enter your Azure **Client ID** and **Tenant ID** (defaults to `common` which works for both corporate and personal accounts).
-5. The TUI will show a link and an 8-character device code.
-6. Open the link (`https://microsoft.com/devicelogin`), enter the code, and log in with your Outlook account.
-7. The TUI will automatically detect the login, load your inbox, and you're ready to go!
+3. Enter your Azure **Client ID** and **Tenant ID** (defaults to `common` which works for both corporate and personal accounts).
+4. The TUI will show a link and an 8-character device code.
+5. Open the link (`https://microsoft.com/devicelogin`), enter the code, and log in with your Outlook account.
+6. The TUI will automatically detect the login, load your inbox, and you're ready to go!
 
 ### Resetting Config
 
@@ -123,34 +123,34 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 
 ## Key Bindings
 
-| Key                           | Action                                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Tab`                         | Switch focus between the Folders, Messages, and Message Detail panes                                                                        |
-| `Shift+Tab`                   | Switch focus in reverse order                                                                                                               |
-| `Up` / `Down` (or `k` / `j`)  | Navigate selection in the focused pane                                                                                                      |
-| `K` / `J`                     | Navigate selection in Messages pane (when in Folders pane), or scroll message in Details pane (when in Messages pane)                       |
-| `Space`                       | Toggle expand/collapse for the selected conversation thread (works when focused on either the Messages or Folders pane)                     |
-| `PageUp` / `PageDown`         | Scroll message body up/down                                                                                                                 |
-| `n`                           | Compose a new email                                                                                                                         |
-| `A`                           | Reply to the selected message. Automatically replies to the sender if they are the only other participant, or prompts to choose Reply vs Reply All if there are multiple participants. |
-| `Ctrl+s` (or `Ctrl+x`)        | Send the message (when in Compose view)                                                                                                     |
-| `Ctrl+v` (or `Ctrl+V`/`Shift`)| Paste image from clipboard (when focused on Body in Compose view)                                                                           |
-| `Ctrl+f`                      | Open file picker popup to attach local files (when in Compose view)                                                                         |
-| `Ctrl+g`                      | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view. |
-| `d` (or `Delete`)             | Move the selected message to Deleted Items (Trash)                                                                                          |
-| `D`                           | Delete all messages in the selected thread (requires confirmation)                                                                           |
-| `U`                           | Recover/undelete the selected message (moves it back to the Inbox)                                                                          |
-| `R`                           | Toggle the selected message's Read/Unread status                                                                                            |
-| `f`                           | Toggle Favorite status (adds/removes the selected message to/from the local Favorites folder)                                                |
-| `r`                           | Reload/refresh messages in the selected folder                                                                                               |
-| `M`                           | Load the next portion/page of 50 messages in the selected folder                                                                            |
-| `a`                           | View and select attachments on the current email                                                                                            |
-| `y`                           | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
-| `o`                           | Extract YouTrack/GitLab MR URLs from the selected message and open in the external `yt-tui` / `gitlab-tui` app (shows a popup list if multiple unique URLs exist, ignoring quoted/original text) |
-| `?`                           | Toggle help popup describing app functionality and shortcuts                                                                                |
-| `Enter` (in Attachments list) | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                |
-| `Esc`                         | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)          |
-| `q` (or `Ctrl+C`)             | Quit the application                                                                                                                        |
+| Key                            | Action                                                                                                                                                                                                                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tab`                          | Switch focus between the Folders, Messages, and Message Detail panes                                                                                                                                                                                                   |
+| `Shift+Tab`                    | Switch focus in reverse order                                                                                                                                                                                                                                          |
+| `Up` / `Down` (or `k` / `j`)   | Navigate selection in the focused pane                                                                                                                                                                                                                                 |
+| `K` / `J`                      | Navigate selection in Messages pane (when in Folders pane), or scroll message in Details pane (when in Messages pane)                                                                                                                                                  |
+| `Space`                        | Toggle expand/collapse for the selected conversation thread (works when focused on either the Messages or Folders pane)                                                                                                                                                |
+| `PageUp` / `PageDown`          | Scroll message body up/down                                                                                                                                                                                                                                            |
+| `n`                            | Compose a new email                                                                                                                                                                                                                                                    |
+| `A`                            | Reply to the selected message. Automatically replies to the sender if they are the only other participant, or prompts to choose Reply vs Reply All if there are multiple participants.                                                                                 |
+| `Ctrl+s` (or `Ctrl+x`)         | Send the message (when in Compose view)                                                                                                                                                                                                                                |
+| `Ctrl+v` (or `Ctrl+V`/`Shift`) | Paste image from clipboard (when focused on Body in Compose view)                                                                                                                                                                                                      |
+| `Ctrl+f`                       | Open file picker popup to attach local files (when in Compose view)                                                                                                                                                                                                    |
+| `Ctrl+g`                       | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view.                                                                                 |
+| `d` (or `Delete`)              | Move the selected message to Deleted Items (Trash)                                                                                                                                                                                                                     |
+| `D`                            | Delete all messages in the selected thread (requires confirmation)                                                                                                                                                                                                     |
+| `U`                            | Recover/undelete the selected message (moves it back to the Inbox)                                                                                                                                                                                                     |
+| `R`                            | Toggle the selected message's Read/Unread status                                                                                                                                                                                                                       |
+| `f`                            | Toggle Favorite status (adds/removes the selected message to/from the local Favorites folder)                                                                                                                                                                          |
+| `r`                            | Reload/refresh messages in the selected folder                                                                                                                                                                                                                         |
+| `M`                            | Load the next portion/page of 50 messages in the selected folder                                                                                                                                                                                                       |
+| `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
+| `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
+| `o`                            | Extract YouTrack/GitLab MR URLs from the selected message and open in the external `yt-tui` / `gitlab-tui` app (shows a popup list if multiple unique URLs exist, ignoring quoted/original text)                                                                       |
+| `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
+| `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
+| `Esc`                          | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)                                                                                                                                     |
+| `q` (or `Ctrl+C`)              | Quit the application                                                                                                                                                                                                                                                   |
 
 ---
 
@@ -187,3 +187,19 @@ Outlook TUI integrates with external TUI apps to let you open issues and merge r
   - **yt-tui**: [https://github.com/nospor/yt-tui](https://github.com/nospor/yt-tui)
   - **gitlab-tui**: [https://github.com/nospor/gitlab-tui](https://github.com/nospor/gitlab-tui)
 - If a binary is not found, the app will show a popup with download and installation information.
+
+---
+
+## Automated Changelog Generation
+
+This project uses `git-cliff` to automatically generate and maintain its `CHANGELOG.md`.
+
+When a git tag starting with `v` (e.g., `v1.0.0`) is pushed to GitHub, a GitHub Actions workflow (`.github/workflows/changelog.yml`) runs to:
+1. Generate the updated `CHANGELOG.md` using the rules configured in `cliff.toml`.
+2. Commit and push the updated changelog back to the `main` branch.
+
+You can also run `git-cliff` locally to generate or preview the changelog:
+```bash
+git-cliff -o CHANGELOG.md
+```
+

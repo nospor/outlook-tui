@@ -51,3 +51,7 @@ To ensure the codebase remains clean, well-documented, and easy to maintain, all
    - Ensure you do not break the Device Code Flow authentication or OAuth2 background refresh mechanism.
    - Maintain the look and feel of the multi-pane TUI layout.
 
+4. **Conventional Commits for Changelog**:
+   - Write commit messages adhering to the Conventional Commits specification (e.g., `feat:`, `fix:`, `refactor:`, `style:`, `chore:`) to ensure `git-cliff` parses and categorizes them correctly in the changelog.
+
+
