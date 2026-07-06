@@ -1,4 +1,14 @@
 
+## [0.5.1] - 2026-07-06
+
+### Documentation
+
+- Add repository links and descriptions for yt-tui and gitlab-tui ([92e2797](https://github.com/nospor/outlook-tui/commit/92e2797bb8a09b0cf70c0416d07f39211f39922d))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.0 [skip ci] ([e43f056](https://github.com/nospor/outlook-tui/commit/e43f056cc44ce2a45ee36b383ff29b99e14b358e))
+
 ## [0.5.0] - 2026-07-06
 
 ### Features
