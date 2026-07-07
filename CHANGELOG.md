@@ -1,4 +1,15 @@
 
+## [0.5.3] - 2026-07-07
+
+### Features
+
+- Add configurable color themes supporting Catppuccin and Teams ([e0bd7a2](https://github.com/nospor/outlook-tui/commit/e0bd7a2d2f9d3d326ce1bd72c9e4360af0de3a34))
+- Extract URLs from entire body in forwarded emails ([37f2ece](https://github.com/nospor/outlook-tui/commit/37f2ece170ccd94f0177007a77eda284bb8079bb))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.2 [skip ci] ([d89dc87](https://github.com/nospor/outlook-tui/commit/d89dc873382edf51d6cb96d045f889f2f3c0529d))
+
 ## [0.5.2] - 2026-07-07
 
 ### Features
