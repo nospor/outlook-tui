@@ -102,8 +102,11 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `terminal_bell`: Whether to sound the terminal bell (`\a`) when a new message notification is triggered (defaults to `1` — enabled).
   - **`0`** — Disabled.
   - **`1` (default)** — Enabled.
+* `theme`: The UI color theme (defaults to `"catppuccin"`).
+  - **`"catppuccin"` (default)** — A gorgeous theme based on Catppuccin Mocha colors.
+  - **`"teams"`** — A theme mimicking teams-tui-go palette
 
-Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, and sxiv for images:
+Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
 {
   "client_id": "your-azure-client-id",
@@ -115,7 +118,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "scroll_lines": 5,
   "image_viewer": "sxiv",
   "attachment_dir": "~/Downloads/attachments",
-  "terminal_bell": 1
+  "terminal_bell": 1,
+  "theme": "teams"
 }
 ```
 

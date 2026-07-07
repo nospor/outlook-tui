@@ -69,16 +69,16 @@ type ThreadGroup struct {
 // MessageListItem is one entry in the virtual message list used for keyboard
 // navigation. It is either a thread-group header or an individual reply.
 type MessageListItem struct {
-	ThreadIdx  int  // index into m.threadGroups
-	MemberIdx  int  // -1 = header row; >=0 = member inside the thread
-	IsHeader   bool
+	ThreadIdx int // index into m.threadGroups
+	MemberIdx int // -1 = header row; >=0 = member inside the thread
+	IsHeader  bool
 }
 
 // Messages
 type (
-	errMsg                error
-	foldersFetchedMsg     []MailFolder
-	messagesFetchedMsg    struct {
+	errMsg             error
+	foldersFetchedMsg  []MailFolder
+	messagesFetchedMsg struct {
 		FolderID string
 		Messages []Message
 	}
@@ -97,11 +97,11 @@ type (
 		MessageID   string
 		Attachments []Attachment
 	}
-	tokenFetchedMsg     TokenCache
-	deviceCodeMsg       *DeviceCodeResponse
-	statusUpdateMsg     string
-	mailSentMsg         struct{}
-	mailDeletedMsg      struct{ MessageID string }
+	tokenFetchedMsg         TokenCache
+	deviceCodeMsg           *DeviceCodeResponse
+	statusUpdateMsg         string
+	mailSentMsg             struct{}
+	mailDeletedMsg          struct{ MessageID string }
 	multipleMailsDeletedMsg struct {
 		MessageIDs []string
 		Errors     []error
@@ -113,15 +113,15 @@ type (
 )
 
 type mainModel struct {
-	state       appState
-	activePane  pane
+	state         appState
+	activePane    pane
 	width, height int
 
 	// Config state
-	config       Config
-	configStep   int // 0 = Client ID, 1 = Tenant ID
-	txtInput     textinput.Model
-	statusMsg    string
+	config     Config
+	configStep int // 0 = Client ID, 1 = Tenant ID
+	txtInput   textinput.Model
+	statusMsg  string
 
 	// Auth state
 	deviceCode *DeviceCodeResponse
@@ -140,10 +140,10 @@ type mainModel struct {
 	selectedAttach  int
 
 	// Thread grouping
-	threadGroups    []ThreadGroup
-	collapsedThreads map[string]bool // keyed by ConversationID; true = collapsed
-	virtualList     []MessageListItem // flat navigable list
-	virtualSelected int               // index into virtualList
+	threadGroups     []ThreadGroup
+	collapsedThreads map[string]bool   // keyed by ConversationID; true = collapsed
+	virtualList      []MessageListItem // flat navigable list
+	virtualSelected  int               // index into virtualList
 
 	// Sub-components
 	detailViewport viewport.Model
@@ -151,19 +151,19 @@ type mainModel struct {
 	spinner        spinner.Model
 
 	// Compose state
-	composeTo          textinput.Model
-	composeCc          textinput.Model
-	composeSubject     textinput.Model
-	composeBody        textarea.Model
-	composeStep        int // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
-	composeReplyToID   string // non-empty when composing a reply; holds the original message ID
-	composeIsReplyAll  bool   // true when replying to all
-	contacts           []Contact
-	filteredContacts   []Contact
-	contactsSelected   int
-	composedImages     []PastedImage
-	composedFiles      []PendingFile
-	filepicker         filepicker.Model
+	composeTo         textinput.Model
+	composeCc         textinput.Model
+	composeSubject    textinput.Model
+	composeBody       textarea.Model
+	composeStep       int    // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
+	composeReplyToID  string // non-empty when composing a reply; holds the original message ID
+	composeIsReplyAll bool   // true when replying to all
+	contacts          []Contact
+	filteredContacts  []Contact
+	contactsSelected  int
+	composedImages    []PastedImage
+	composedFiles     []PendingFile
+	filepicker        filepicker.Model
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -186,6 +186,9 @@ type mainModel struct {
 }
 
 func initialModel() mainModel {
+	cfg, _ := LoadConfig()
+	applyTheme(cfg.Theme)
+
 	ti := textinput.New()
 	ti.Placeholder = "Enter Microsoft Client ID..."
 	ti.Focus()
@@ -212,8 +215,6 @@ func initialModel() mainModel {
 		fp.SortOrder = filepicker.SortAscending
 	}
 	fp.Styles = filepicker.DefaultStyles()
-
-	cfg, _ := LoadConfig()
 
 	return mainModel{
 		state:      stateLoading,
@@ -325,7 +326,7 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string, shouldMarkAsRead bool)
 		if err != nil {
 			return errMsg(err)
 		}
-		
+
 		// Check if message has attachments or inline images/remote images in its body
 		hasInline := msg.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(msg.Body.Content)
 		hasRemote := msg.Body.ContentType == "html" && regexp.MustCompile(`(?i)<img\b[^>]*src\s*=\s*['"]?https?://`).MatchString(msg.Body.Content)
@@ -819,6 +820,7 @@ func openGitLabTuiCmd(urlStr string) tea.Cmd {
 
 // Tick command for background refresh
 type tickMsg time.Time
+
 func (m mainModel) tickCmd() tea.Cmd {
 	interval := 5 * time.Minute
 	if m.config.RefreshTimeMin > 0 {
@@ -1240,7 +1242,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tokenFetchedMsg:
 		m.state = stateLoading
 		m.statusMsg = "Fetching Outlook folders..."
-		
+
 		// If we entered config parameters manually, save them
 		if m.config.ClientID != "" {
 			_ = SaveConfig(m.config)
@@ -1249,7 +1251,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cfg, _ := LoadConfig()
 			m.config = cfg
 		}
-		
+		applyTheme(m.config.Theme)
+
 		// Cache token
 		_ = SaveToken(TokenCache(msg))
 
@@ -1261,10 +1264,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("SQLite warning: %v", err)
 			}
 		}
-		
+
 		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg))
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
-		
+
 		return m, tea.Batch(
 			fetchFoldersCmd(m.graphClient),
 			fetchUserEmailCmd(m.graphClient),
@@ -1443,11 +1446,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailMessage = msg.Message
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
-			
+
 			m = m.updateViewportSize()
 			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
-			
+
 			// Mark as read and cache body in local UI — update in messages slice and thread groups
 			wasRead := true
 			if am != nil {
@@ -1495,7 +1498,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
 			m = m.updateViewportSize()
-			
+
 			// Update in-memory collections so they have the loaded attachments too
 			for i, em := range m.messages {
 				if em.ID == msg.MessageID {
@@ -1788,7 +1791,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
 				fetchFoldersCmd(m.graphClient),
 			)
-		}
+e	}
 
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
@@ -1843,7 +1846,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return nil // Ignore background errors to prevent disruptive popups
 			})
-			
+
 			// Fetch current folder messages
 			if len(m.folders) > 0 {
 				folderID := m.folders[m.selectedFolder].ID
@@ -1860,7 +1863,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Fetch inbox messages for notification tracking
 			bgCmds = append(bgCmds, fetchInboxMessagesCmd(m.graphClient))
-			
+
 			return m, tea.Batch(
 				tea.Batch(bgCmds...),
 				m.tickCmd(), // Schedule next tick
@@ -2091,17 +2094,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Compose new email
 			m.state = stateCompose
 			m.composeStep = 0
-			m.composeReplyToID = ""  // not a reply
+			m.composeReplyToID = "" // not a reply
 			m.composeIsReplyAll = false
 			m.composedImages = nil
 			m.composedFiles = nil
 			m.loadContacts()
-			
+
 			m.composeTo = textinput.New()
 			m.composeTo.Placeholder = "recipient@domain.com"
 			m.composeTo.Focus()
 			m.composeTo.Width = m.width - 20
-			
+
 			m.composeCc = textinput.New()
 			m.composeCc.Placeholder = "cc@domain.com (optional)"
 			m.composeCc.Width = m.width - 20
@@ -2109,7 +2112,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeSubject = textinput.New()
 			m.composeSubject.Placeholder = "Email subject..."
 			m.composeSubject.Width = m.width - 20
-			
+
 			m.composeBody = textarea.New()
 			m.composeBody.ShowLineNumbers = false
 			m.composeBody.Placeholder = "Type email body here..."
@@ -2791,12 +2794,12 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		return
 	}
 	origMsg := *origMsgPtr
-	
+
 	var bodyText string
 	senderName := origMsg.From.EmailAddress.Name
 	senderAddr := origMsg.From.EmailAddress.Address
 	receivedTime := origMsg.ReceivedDateTime
-	
+
 	if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
 		bodyText = m.detailMessage.Body.Content
 		if m.detailMessage.From.EmailAddress.Address != "" {
@@ -2809,17 +2812,17 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 
 	m.state = stateCompose
-	m.composeStep = 3 // Focus body field
-	m.composeReplyToID = origMsg.ID   // remember original message so we use the reply endpoint
+	m.composeStep = 3               // Focus body field
+	m.composeReplyToID = origMsg.ID // remember original message so we use the reply endpoint
 	m.composeIsReplyAll = replyAll
 	m.composedImages = nil
 	m.composedFiles = nil
 	m.loadContacts()
-	
+
 	m.composeTo = textinput.New()
 	m.composeTo.Placeholder = "recipient@domain.com"
 	m.composeTo.Width = m.width - 20
-	
+
 	var recipients []string
 	if senderAddr != "" {
 		if senderName != "" {
@@ -2892,12 +2895,12 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 
 	m.composeTo.SetValue(strings.Join(recipients, ", "))
-	
+
 	m.composeCc = textinput.New()
 	m.composeCc.Placeholder = "cc@domain.com (optional)"
 	m.composeCc.Width = m.width - 20
 	m.composeCc.SetValue(strings.Join(ccRecipients, ", "))
-	
+
 	subject := origMsg.Subject
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
 		subject = "Re: " + subject
@@ -2906,7 +2909,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeSubject.Placeholder = "Email subject..."
 	m.composeSubject.SetValue(subject)
 	m.composeSubject.Width = m.width - 20
-	
+
 	m.composeBody = textarea.New()
 	m.composeBody.ShowLineNumbers = false
 	m.composeBody.Placeholder = "Type email body here..."
@@ -2916,7 +2919,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		h = 3
 	}
 	m.composeBody.SetHeight(h)
-	
+
 	var quotedBody strings.Builder
 	quotedBody.WriteString("\n\n")
 	formattedTime := receivedTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
@@ -2925,13 +2928,13 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	} else {
 		quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
 	}
-	
+
 	plainBody := stripANSICodes(formatBodyContent(bodyText))
 	lines := strings.Split(plainBody, "\n")
 	for _, line := range lines {
 		quotedBody.WriteString("> " + line + "\n")
 	}
-	
+
 	m.composeBody.SetValue(quotedBody.String())
 	for m.composeBody.Line() > 0 || m.composeBody.LineInfo().RowOffset > 0 {
 		m.composeBody.CursorUp()
@@ -3017,7 +3020,6 @@ func (m *mainModel) updateFilteredContacts() {
 		m.contactsSelected = 0
 	}
 }
-
 
 func (m mainModel) updateViewportSize() mainModel {
 	m.helpViewport.Width = m.width - 6
@@ -3107,7 +3109,7 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 
 // Rendering Views
 // Colors (Catppuccin Mocha palette adapted from yt-tui)
-const (
+var (
 	ColorBg      = "#1E1E2E"
 	ColorText    = "#CDD6F4"
 	ColorSubtext = "#A6ADC8"
@@ -3119,6 +3121,78 @@ const (
 	ColorSurface = "#313244" // Panel background
 	ColorOverlay = "#45475A" // Highlight border
 )
+
+func applyTheme(themeName string) {
+	switch strings.ToLower(themeName) {
+	case "teams":
+		ColorBg = "#1E1E1E"
+		ColorText = "#FFFFFF"
+		ColorSubtext = "#888888"
+		ColorViolet = "#00D75F"
+		ColorCyan = "#00D7D7"
+		ColorGreen = "#00D75F"
+		ColorYellow = "#FFD700"
+		ColorRed = "#FF4444"
+		ColorSurface = "#202020"
+		ColorOverlay = "#303030"
+	default:
+		// Catppuccin Mocha (default)
+		ColorBg = "#1E1E2E"
+		ColorText = "#CDD6F4"
+		ColorSubtext = "#A6ADC8"
+		ColorViolet = "#CBA6F7"
+		ColorCyan = "#89B4FA"
+		ColorGreen = "#A6E3A1"
+		ColorYellow = "#F9E2AF"
+		ColorRed = "#F38BA8"
+		ColorSurface = "#313244"
+		ColorOverlay = "#45475A"
+	}
+
+	// Re-initialize global style variables
+	titleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorBg)).
+		Background(lipgloss.Color(ColorViolet)).
+		Padding(0, 2).
+		Height(1)
+
+	headerStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorViolet)).
+		PaddingLeft(1)
+
+	paneNormalStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorOverlay)).
+		Padding(0, 1)
+
+	paneActiveStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	selectedItemStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorBg)).
+		Background(lipgloss.Color(ColorCyan))
+
+	unreadStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorViolet))
+
+	dimStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorSubtext))
+
+	imagePlaceholderStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(ColorViolet))
+
+	statusStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorText)).
+		Background(lipgloss.Color(ColorSurface)).
+		Padding(0, 1)
+}
 
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -3156,8 +3230,8 @@ var (
 			Foreground(lipgloss.Color(ColorSubtext))
 
 	imagePlaceholderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color(ColorViolet))
+				Bold(true).
+				Foreground(lipgloss.Color(ColorViolet))
 
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(ColorText)).
@@ -3191,8 +3265,6 @@ func (m mainModel) View() string {
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back\n")
 
-
-
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
 		s.WriteString("   To build this app, we register a client in Microsoft Azure Entra.\n")
@@ -3225,7 +3297,7 @@ func (m mainModel) View() string {
 
 	case stateCompose:
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
-		
+
 		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 		ccBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
 		subjBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
@@ -3294,9 +3366,6 @@ func (m mainModel) View() string {
 
 		s.WriteString("   [Tab] Switch Fields  |  [Ctrl+v] Paste Image  |  [Ctrl+f] Add Attachment  |  [Ctrl+g] Edit Body in $EDITOR  |  [Ctrl+s/x] Send  |  [Esc] Cancel\n")
 
-
-
-
 	case stateYouTrackInstallPrompt:
 		s.WriteString("   " + headerStyle.Render("YOUTRACK TUI NOT INSTALLED") + "\n\n")
 		s.WriteString("   The yt-tui binary could not be found in your system's PATH.\n")
@@ -3313,11 +3382,11 @@ func (m mainModel) View() string {
 
 	case stateHelp:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK TUI HELP & KEYBINDINGS") + "\n\n")
-		s.WriteString(paneActiveStyle.Width(m.width - 4).Height(m.helpViewport.Height).Render(m.helpViewport.View()) + "\n\n")
+		s.WriteString(paneActiveStyle.Width(m.width-4).Height(m.helpViewport.Height).Render(m.helpViewport.View()) + "\n\n")
 		s.WriteString("   " + dimStyle.Render("[Esc/q/?] Close Help  |  [Up/Down/j/k] Scroll  |  [Ctrl+C] Quit") + "\n")
 
 	case stateFileBrowse:
-		s.WriteString(m.renderFilePickerPopup(m.width - 4, m.height - 10))
+		s.WriteString(m.renderFilePickerPopup(m.width-4, m.height-10))
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -3325,7 +3394,7 @@ func (m mainModel) View() string {
 		s.WriteString("\n")
 		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
 		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
-		
+
 		var keysText string
 		if m.state == stateYankSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
@@ -3599,7 +3668,7 @@ func (m mainModel) renderContactsPopup() string {
 	}
 
 	var rows []string
-	
+
 	// Display up to 5 matching contacts
 	maxContacts := 5
 	if len(m.filteredContacts) < maxContacts {
@@ -3608,7 +3677,7 @@ func (m mainModel) renderContactsPopup() string {
 
 	for i := 0; i < maxContacts; i++ {
 		contact := m.filteredContacts[i]
-		
+
 		var line string
 		if contact.Name != "" {
 			line = fmt.Sprintf(" %s <%s>", contact.Name, contact.Address)
@@ -3653,7 +3722,7 @@ func (m mainModel) renderContactsPopup() string {
 	}
 
 	joined := strings.Join(rows, "\n")
-	
+
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ColorCyan)).
@@ -3687,7 +3756,8 @@ func (m mainModel) renderFilePickerPopup(w, h int) string {
 }
 
 // renderLayout1 renders the default side-by-side three-pane layout:
-//   [Folders | Messages | Detail]
+//
+//	[Folders | Messages | Detail]
 func (m mainModel) renderLayout1() string {
 	paneHeight := m.height - 9
 	if paneHeight < 5 {
@@ -3732,8 +3802,9 @@ func (m mainModel) renderLayout1() string {
 }
 
 // renderLayout2 renders the alternative stacked layout:
-//   Left column: [Folders (~30%)] stacked above [Messages (~70%)]
-//   Right column: [Detail] (full height)
+//
+//	Left column: [Folders (~30%)] stacked above [Messages (~70%)]
+//	Right column: [Detail] (full height)
 //
 // Left column inner width = 46 → outer = 50 (2 padding + 2 border on each side).
 // Right column inner width = m.width - 54.
@@ -3950,7 +4021,7 @@ func (m mainModel) renderFoldersViewWide(availHeight, availWidth int) string {
 		}
 		line := fmt.Sprintf(" %s%s", displayName, countStr)
 		if i == m.selectedFolder {
-			s.WriteString(selectedItemStyle.Copy().Width(availWidth - 2).Render(line) + "\n")
+			s.WriteString(selectedItemStyle.Copy().Width(availWidth-2).Render(line) + "\n")
 		} else if f.UnreadItemCount > 0 {
 			s.WriteString(unreadStyle.Render(line) + "\n")
 		} else {
@@ -4120,10 +4191,9 @@ func (m mainModel) renderFoldersView(availHeight int) string {
 		return s.String()
 	}
 
-
 	start := 0
 	end := len(m.folders)
-	
+
 	maxItems := availHeight
 	if maxItems < 1 {
 		maxItems = 1
@@ -4150,14 +4220,14 @@ func (m mainModel) renderFoldersView(availHeight int) string {
 		if len(displayName) > 17 {
 			displayName = displayName[:15] + ".."
 		}
-		
+
 		var countStr string
 		if f.UnreadItemCount > 0 {
 			countStr = fmt.Sprintf(" (%d)", f.UnreadItemCount)
 		}
-		
+
 		line := fmt.Sprintf(" %s%s", displayName, countStr)
-		
+
 		if i == m.selectedFolder {
 			s.WriteString(selectedItemStyle.Copy().Width(21).Render(line) + "\n")
 		} else if f.UnreadItemCount > 0 {
@@ -4380,7 +4450,6 @@ func overlayLines(base, overlay string, x, y int) string {
 
 	return strings.Join(baseLines, "\n")
 }
-
 
 type yankOption struct {
 	key         string
@@ -4900,19 +4969,19 @@ func (m mainModel) renderMetaBlock(width int) string {
 	dateStr := m.detailMessage.ReceivedDateTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
 
 	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Subject: "+m.detailMessage.Subject), width) + "\n")
-	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("From:    ") + fromVal, width) + "\n")
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("From:    ")+fromVal, width) + "\n")
 
 	toVal := formatRecipients(m.detailMessage.ToRecipients)
 	if toVal != "" {
-		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("To:      ") + toVal, width) + "\n")
+		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("To:      ")+toVal, width) + "\n")
 	}
 
 	ccVal := formatRecipients(m.detailMessage.CcRecipients)
 	if ccVal != "" {
-		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Cc:      ") + ccVal, width) + "\n")
+		s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Cc:      ")+ccVal, width) + "\n")
 	}
 
-	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Date:    ") + dateStr, width) + "\n")
+	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Date:    ")+dateStr, width) + "\n")
 
 	if len(m.attachments) > 0 {
 		attStr := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))) +
@@ -4920,7 +4989,7 @@ func (m mainModel) renderMetaBlock(width int) string {
 		s.WriteString(wrapText(attStr, width) + "\n")
 	}
 
-	sep := strings.Repeat("-", width - 2)
+	sep := strings.Repeat("-", width-2)
 	s.WriteString(dimStyle.Render(sep) + "\n")
 
 	return s.String()
@@ -4946,7 +5015,7 @@ func formatBodyContent(htmlContent string) string {
 		if len(altMatches) > 1 {
 			return imagePlaceholderStyle.Render(fmt.Sprintf("[image: %s]", altMatches[1]))
 		}
-		
+
 		srcReg := regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:([^'"\s>]+)['"]?`)
 		srcMatches := srcReg.FindStringSubmatch(match)
 		if len(srcMatches) > 1 {
@@ -4962,10 +5031,10 @@ func formatBodyContent(htmlContent string) string {
 	// Convert formatting tags to ANSI escape sequences before stripping HTML tags
 	res = regexp.MustCompile(`(?i)<(b|strong)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[1m")
 	res = regexp.MustCompile(`(?i)</(b|strong)\s*>`).ReplaceAllString(res, "\x1b[22m")
-	
+
 	res = regexp.MustCompile(`(?i)<(i|em)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[3m")
 	res = regexp.MustCompile(`(?i)</(i|em)\s*>`).ReplaceAllString(res, "\x1b[23m")
-	
+
 	res = regexp.MustCompile(`(?i)<u(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[4m")
 	res = regexp.MustCompile(`(?i)</u\s*>`).ReplaceAllString(res, "\x1b[24m")
 
@@ -4986,7 +5055,7 @@ func formatBodyContent(htmlContent string) string {
 	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
 	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
 	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
-	
+
 	// Strip all other HTML tags
 	var builder strings.Builder
 	inTag := false
@@ -5027,7 +5096,7 @@ func formatBodyContent(htmlContent string) string {
 			builder.WriteRune(r)
 		}
 	}
-	
+
 	unescaped := html.UnescapeString(builder.String())
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
@@ -5048,7 +5117,7 @@ func formatBodyContent(htmlContent string) string {
 	} {
 		unescaped = strings.ReplaceAll(unescaped, formatChar, "")
 	}
-	
+
 	// Clean up whitespace and apply dimming/URL styling to lines
 	lines := strings.Split(unescaped, "\n")
 	var cleaned []string
@@ -5084,12 +5153,12 @@ func formatBodyContent(htmlContent string) string {
 			if !inOriginal && isOriginalMessageStart(plainLine) {
 				inOriginal = true
 			}
-			
+
 			isDimmed := l != "" && (inOriginal || strings.HasPrefix(strings.TrimSpace(plainLine), ">"))
-			
+
 			// Apply URL styling
 			lineWithURLs := styleURLs(l, isDimmed)
-			
+
 			// Replace link markers with ANSI escape codes
 			startCode := "\x1b[38;2;137;180;250;4m"
 			var endCode string
@@ -5099,14 +5168,14 @@ func formatBodyContent(htmlContent string) string {
 				endCode = "\x1b[24;39m"
 			}
 			lineWithURLs = replaceLinkMarkers(lineWithURLs, startCode, endCode)
-			
+
 			// Diff & code highlighting
 			isAdd := addRx.MatchString(plainLine)
 			isDel := delRx.MatchString(plainLine)
 			isHunk := hunkRx.MatchString(plainLine)
 			isFile := fileRx.MatchString(plainLine)
 			isGitDiff := gitDiffRx.MatchString(plainLine)
-			
+
 			if isAdd {
 				lineWithURLs = "\x1b[38;2;166;227;161m" + plainLine + "\x1b[39m"
 			} else if isDel {
@@ -5118,7 +5187,7 @@ func formatBodyContent(htmlContent string) string {
 			} else if lineIsInPre {
 				lineWithURLs = "\x1b[38;2;203;166;247m" + plainLine + "\x1b[39m"
 			}
-			
+
 			if isDimmed && !isAdd && !isDel && !isHunk && !isFile && !isGitDiff && !lineIsInPre {
 				cleaned = append(cleaned, dimStyle.Render(lineWithURLs))
 			} else {
@@ -5136,10 +5205,10 @@ func extractRemoteImages(htmlContent string) []Attachment {
 	imgReg := regexp.MustCompile(`(?i)<img\b([^>]*)>`)
 	srcReg := regexp.MustCompile(`(?i)src\s*=\s*['"]([^'"]+)['"]`)
 	altReg := regexp.MustCompile(`(?i)alt\s*=\s*['"]([^'"]+)['"]`)
-	
+
 	matches := imgReg.FindAllStringSubmatch(htmlContent, -1)
 	seenUrls := make(map[string]bool)
-	
+
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue
@@ -5150,25 +5219,25 @@ func extractRemoteImages(htmlContent string) []Attachment {
 			continue
 		}
 		src := srcMatch[1]
-		
+
 		// Only handle http/https URLs
 		if !strings.HasPrefix(strings.ToLower(src), "http://") && !strings.HasPrefix(strings.ToLower(src), "https://") {
 			continue
 		}
-		
+
 		// Avoid duplicates
 		if seenUrls[src] {
 			continue
 		}
 		seenUrls[src] = true
-		
+
 		// Get a name for the attachment
 		name := ""
 		altMatch := altReg.FindStringSubmatch(attrs)
 		if len(altMatch) > 1 {
 			name = altMatch[1]
 		}
-		
+
 		// If alt is not present or clean, derive name from URL path
 		if name == "" {
 			parsedURL, err := url.Parse(src)
@@ -5179,12 +5248,12 @@ func extractRemoteImages(htmlContent string) []Attachment {
 				}
 			}
 		}
-		
+
 		// If still empty, give a generic name
 		if name == "" || name == "." {
 			name = "remote_image"
 		}
-		
+
 		// Clean up name and ensure it has an extension (default to .png/jpg if missing)
 		name = cleanFilename(name)
 		ext := filepath.Ext(name)
@@ -5192,7 +5261,7 @@ func extractRemoteImages(htmlContent string) []Attachment {
 		if extLower != ".png" && extLower != ".jpg" && extLower != ".jpeg" && extLower != ".gif" && extLower != ".bmp" && extLower != ".webp" {
 			name = name + ".png" // default extension for rendering/viewing
 		}
-		
+
 		atts = append(atts, Attachment{
 			OdataType:   "#outlook-tui.remoteImage",
 			Name:        name,
@@ -5218,6 +5287,7 @@ func cleanFilename(s string) string {
 // If forDisplay is true:
 //   - If the text and URL are the same, returns the URL wrapped in blue/cyan link styling.
 //   - If they are different, returns the text wrapped in blue/cyan link styling, hiding the URL.
+//
 // If forDisplay is false:
 //   - Returns "text (url)" if text and url are substantially different.
 //   - Returns "url" if they are the same or if text is empty.
@@ -5325,10 +5395,10 @@ func replaceLinkMarkers(line string, startCode, endCode string) string {
 // It restores the correct style at the end of each URL depending on whether the line is dimmed.
 func styleURLs(line string, isDimmed bool) string {
 	urlRx := regexp.MustCompile(`https?://[^\s<>"\x1b\x01\x02]+`)
-	
+
 	// Start code: Cyan foreground (#89B4FA) and Underline (4)
 	startCode := "\x1b[38;2;137;180;250;4m"
-	
+
 	// End code: Turn off underline (24), and restore correct color
 	var endCode string
 	if isDimmed {
@@ -5369,30 +5439,30 @@ func styleURLs(line string, isDimmed bool) string {
 func isOriginalMessageStart(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	lower := strings.ToLower(trimmed)
-	
+
 	// Check for common headers with colons
 	if strings.HasPrefix(lower, "from:") ||
 		strings.HasPrefix(lower, "von:") ||
 		strings.HasPrefix(lower, "de:") {
 		return true
 	}
-	
+
 	// Check for common email thread split markers
 	if strings.Contains(lower, "original message") ||
 		strings.Contains(lower, "forwarded message") {
 		return true
 	}
-	
+
 	// Check for line divider (typically used by Outlook web/desktop)
 	if strings.HasPrefix(trimmed, "________________________________") {
 		return true
 	}
-	
+
 	// Check for "On ... wrote:" pattern
 	if strings.HasPrefix(lower, "on ") && strings.HasSuffix(lower, "wrote:") {
 		return true
 	}
-	
+
 	return false
 }
 

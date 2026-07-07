@@ -381,4 +381,3 @@ func TestDBFavorites(t *testing.T) {
 		t.Errorf("expected isFav to be false after removal")
 	}
 }
-

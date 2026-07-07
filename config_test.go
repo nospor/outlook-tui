@@ -39,6 +39,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ImageViewer != "" {
 		t.Errorf("expected default ImageViewer to be empty, got %q", cfg.ImageViewer)
 	}
+	if cfg.Theme != "catppuccin" {
+		t.Errorf("expected default Theme to be 'catppuccin', got %q", cfg.Theme)
+	}
 	expectedDefaultDir := filepath.Join(tempDir, "Downloads")
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected default AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
@@ -79,6 +82,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.TerminalBell != 1 {
 		t.Errorf("expected populated TerminalBell to be 1, got %d", cfg.TerminalBell)
 	}
+	if cfg.Theme != "catppuccin" {
+		t.Errorf("expected populated Theme to be 'catppuccin', got %q", cfg.Theme)
+	}
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected populated AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
 	}
@@ -118,6 +124,10 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have AttachmentDir %q, got %q", expectedDefaultDir, savedCfg.AttachmentDir)
 	}
 
+	if savedCfg.Theme != "catppuccin" {
+		t.Errorf("expected saved config to have Theme 'catppuccin', got %q", savedCfg.Theme)
+	}
+
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
@@ -126,6 +136,7 @@ func TestConfigDefaults(t *testing.T) {
 	cfg.ImageViewer = "sxiv"
 	cfg.AttachmentDir = "/custom/download/dir"
 	cfg.TerminalBell = 0
+	cfg.Theme = "teams"
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -156,5 +167,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.TerminalBell != 0 {
 		t.Errorf("expected custom TerminalBell to be 0, got %d", cfg.TerminalBell)
+	}
+	if cfg.Theme != "teams" {
+		t.Errorf("expected custom Theme to be 'teams', got %q", cfg.Theme)
 	}
 }

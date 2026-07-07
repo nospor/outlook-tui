@@ -15,10 +15,11 @@ type Config struct {
 	Layout          int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
 	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
 	ExcludedFolders []string `json:"excluded_folders"`
-	ScrollLines     int      `json:"scroll_lines"`     // defaults to 1
+	ScrollLines     int      `json:"scroll_lines"` // defaults to 1
 	ImageViewer     string   `json:"image_viewer"`
 	AttachmentDir   string   `json:"attachment_dir"`
-	TerminalBell    int      `json:"terminal_bell"`    // 0 = disabled, 1 = enabled (default)
+	TerminalBell    int      `json:"terminal_bell"` // 0 = disabled, 1 = enabled (default)
+	Theme           string   `json:"theme"`         // "catppuccin" (default) or "teams"
 }
 
 func GetConfigDir() (string, error) {
@@ -36,7 +37,7 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	
+
 	path := filepath.Join(dir, "config.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -55,9 +56,10 @@ func LoadConfig() (Config, error) {
 			ScrollLines:    1,
 			AttachmentDir:  defaultAttachmentDir,
 			TerminalBell:   1,
+			Theme:          "catppuccin",
 		}, nil
 	}
-	
+
 	cfg := Config{
 		TenantID:       "common",
 		RefreshTimeMin: 5,
@@ -65,15 +67,16 @@ func LoadConfig() (Config, error) {
 		UseSQLite:      0,
 		ScrollLines:    1,
 		TerminalBell:   1,
+		Theme:          "catppuccin",
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
-	
+
 	if cfg.TenantID == "" {
 		cfg.TenantID = "common"
 	}
-	
+
 	if cfg.RefreshTimeMin <= 0 {
 		cfg.RefreshTimeMin = 5
 		_ = SaveConfig(cfg)
@@ -103,7 +106,16 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") {
+	if cfg.Theme == "" {
+		cfg.Theme = "catppuccin"
+	} else {
+		cfg.Theme = strings.ToLower(cfg.Theme)
+		if cfg.Theme != "catppuccin" && cfg.Theme != "teams" {
+			cfg.Theme = "catppuccin"
+		}
+	}
+
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") {
 		_ = SaveConfig(cfg)
 	}
 
@@ -121,7 +133,7 @@ func SaveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	
+
 	path := filepath.Join(dir, "config.json")
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

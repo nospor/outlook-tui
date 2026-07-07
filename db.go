@@ -576,4 +576,3 @@ func (d *DB) GetFavoritesCounts() (unread int, total int, err error) {
 	err = d.db.QueryRow(`SELECT COUNT(CASE WHEN is_read = 0 THEN 1 END), COUNT(*) FROM favorite_messages`).Scan(&unread, &total)
 	return unread, total, err
 }
-

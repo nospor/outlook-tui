@@ -445,7 +445,7 @@ func TestComposeContactSuggestions(t *testing.T) {
 		config: Config{UseSQLite: 1},
 	}
 	m.composeTo = textinput.New()
-	
+
 	// Simulate typing "b"
 	m.composeTo.SetValue("b")
 	m.updateFilteredContacts()
@@ -487,7 +487,7 @@ func TestComposeCcContactSuggestions(t *testing.T) {
 		config: Config{UseSQLite: 1},
 	}
 	m.composeCc = textinput.New()
-	
+
 	// Simulate typing "a"
 	m.composeCc.SetValue("a")
 	m.updateFilteredContacts()
@@ -597,7 +597,7 @@ func TestExtractYouTrackURLs(t *testing.T) {
 			expected: []string{"https://youtrack.adwanted.com/issue/MTEL-21797"},
 		},
 		{
-			name:     "Multiple YouTrack URLs with duplicates, params, and non-issues",
+			name: "Multiple YouTrack URLs with duplicates, params, and non-issues",
 			input: `
 				Check:
 				1. https://srds.youtrack.cloud/issue/SR-15
@@ -670,7 +670,7 @@ func TestExtractGitLabURLs(t *testing.T) {
 			expected: []string{"https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933"},
 		},
 		{
-			name:     "Multiple GitLab MR, pipeline, and job URLs with duplicates and query parameters",
+			name: "Multiple GitLab MR, pipeline, and job URLs with duplicates and query parameters",
 			input: `
 				Check:
 				1. https://gitlab.com/group/subgroup/project/-/merge_requests/123
@@ -740,15 +740,15 @@ func TestLayout2Heights(t *testing.T) {
 
 	runLayoutCheck := func(desc string, detailMsg *Message, listSize int) (int, int, int) {
 		m.detailMessage = detailMsg
-		
+
 		// Setup virtual list of specified size
 		m.virtualList = nil
 		for i := 0; i < listSize; i++ {
 			m.virtualList = append(m.virtualList, MessageListItem{ThreadIdx: 0, MemberIdx: 0, IsHeader: true})
 		}
-		
+
 		m = m.updateViewportSize()
-		
+
 		// Replicate layout calculations from renderLayout2
 		totalHeight := m.height - 6
 		if totalHeight < 10 {
@@ -779,9 +779,9 @@ func TestLayout2Heights(t *testing.T) {
 		fH := lipgloss.Height(fView)
 		mH := lipgloss.Height(mView)
 		dH := lipgloss.Height(dView)
-		
+
 		nlCount := strings.Count(dView, "\n")
-		
+
 		t.Logf("%s (list size %d): fView=%d, mView=%d, dView=%d, dView newlines=%d",
 			desc, listSize, fH, mH, dH, nlCount)
 		return fH, mH, dH
@@ -936,8 +936,8 @@ func TestUndeleteKey(t *testing.T) {
 
 func TestReplyKeyBypassConfirm(t *testing.T) {
 	m := mainModel{
-		state:     stateMain,
-		userEmail: "me@example.com",
+		state:           stateMain,
+		userEmail:       "me@example.com",
 		virtualSelected: 0,
 		virtualList: []MessageListItem{
 			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
@@ -992,8 +992,8 @@ func TestReplyKeyBypassConfirm(t *testing.T) {
 
 func TestReplyKeyShowConfirm(t *testing.T) {
 	m := mainModel{
-		state:     stateMain,
-		userEmail: "me@example.com",
+		state:           stateMain,
+		userEmail:       "me@example.com",
 		virtualSelected: 0,
 		virtualList: []MessageListItem{
 			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
@@ -1407,8 +1407,3 @@ func TestFocusReportingAndReadMarking(t *testing.T) {
 		t.Error("expected fetch message detail command to mark read because app is focused")
 	}
 }
-
-
-
-
-

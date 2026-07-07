@@ -27,17 +27,17 @@ type MailFolder struct {
 }
 
 type Message struct {
-	ID               string      `json:"id"`
-	ConversationID   string      `json:"conversationId"`
-	Subject          string      `json:"subject"`
-	BodyPreview      string      `json:"bodyPreview"`
-	ReceivedDateTime time.Time   `json:"receivedDateTime"`
-	IsRead           bool        `json:"isRead"`
-	HasAttachments   bool        `json:"hasAttachments"`
-	From             Recipient   `json:"from"`
-	ToRecipients     []Recipient `json:"toRecipients"`
-	CcRecipients     []Recipient `json:"ccRecipients"`
-	Body             ItemBody    `json:"body"`
+	ID               string       `json:"id"`
+	ConversationID   string       `json:"conversationId"`
+	Subject          string       `json:"subject"`
+	BodyPreview      string       `json:"bodyPreview"`
+	ReceivedDateTime time.Time    `json:"receivedDateTime"`
+	IsRead           bool         `json:"isRead"`
+	HasAttachments   bool         `json:"hasAttachments"`
+	From             Recipient    `json:"from"`
+	ToRecipients     []Recipient  `json:"toRecipients"`
+	CcRecipients     []Recipient  `json:"ccRecipients"`
+	Body             ItemBody     `json:"body"`
 	Attachments      []Attachment `json:"attachments,omitempty"`
 }
 
@@ -258,7 +258,7 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 		contentType = "HTML"
 		escaped := html.EscapeString(bodyText)
 		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
-		
+
 		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
 		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
 			sub := reImg.FindStringSubmatch(match)

@@ -15,7 +15,7 @@ Welcome! This workspace contains **Outlook TUI**, a gorgeous, responsive, and fu
 ## Codebase Architecture
 
 - [main.go](main.go) - Application launcher & Bubble Tea program entrypoint.
-- [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`), including Client ID, Tenant ID, refresh interval, layout selection, and attachment download directory.
+- [config.go](config.go) - Manages application settings (`~/.config/outlook-tui/config.json`), including Client ID, Tenant ID, refresh interval, layout selection, theme selection, and attachment download directory.
 - [auth.go](auth.go) - Manages Device Flow authentication & OAuth2 roundtrippers (background token refresh).
 - [clipboard.go](clipboard.go) - Platform-independent clipboard utilities for Wayland/X11 (Linux), macOS, and Windows to retrieve image bytes and content types from the system clipboard.
 - [graph.go](graph.go) - Custom Microsoft Graph API client for fetching mail, sending, deleting, and downloading. Also handles formatting HTML bodies with inline images (`makeImageAttachments`) and sending them with `contentId` and `isInline` fields.
