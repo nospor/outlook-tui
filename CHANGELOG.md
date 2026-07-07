@@ -1,4 +1,14 @@
 
+## [0.5.2] - 2026-07-07
+
+### Features
+
+- Support extracting and opening gitlab pipelines via gitlab-tui ([01dc40b](https://github.com/nospor/outlook-tui/commit/01dc40b74b487169b801e7f09c952f25c386ca56))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.1 [skip ci] ([5a951c1](https://github.com/nospor/outlook-tui/commit/5a951c18ef63a834725a09c1153397d27e156289))
+
 ## [0.5.1] - 2026-07-06
 
 ### Documentation
