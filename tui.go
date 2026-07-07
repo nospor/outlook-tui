@@ -2313,11 +2313,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content)
-			glURLs := extractGitLabMRURLs(m.detailMessage.Body.Content)
+			glURLs := extractGitLabURLs(m.detailMessage.Body.Content)
 			totalCount := len(ytURLs) + len(glURLs)
 
 			if totalCount == 0 {
-				m.statusMsg = "No YouTrack or GitLab merge request URLs found in the message"
+				m.statusMsg = "No YouTrack or GitLab URLs found in the message"
 				break
 			}
 
@@ -2653,7 +2653,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.selectedURLIdx >= 0 && m.selectedURLIdx < len(m.extractedURLs) {
 				urlStr := m.extractedURLs[m.selectedURLIdx]
-				if strings.Contains(urlStr, "/merge_requests/") {
+				if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
 					if _, err := exec.LookPath("gitlab-tui"); err != nil {
 						m.state = stateGitLabInstallPrompt
 						break
@@ -3517,7 +3517,7 @@ func (m mainModel) View() string {
 		longestURL := 0
 		for _, urlStr := range m.extractedURLs {
 			prefix := "[YouTrack] "
-			if strings.Contains(urlStr, "/merge_requests/") {
+			if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
 				prefix = "[GitLab]   "
 			}
 			lineLen := len(prefix) + len(urlStr)
@@ -5681,26 +5681,42 @@ func extractYouTrackURLs(htmlContent string) []string {
 	return ytURLs
 }
 
-func extractGitLabMRURLs(htmlContent string) []string {
+func extractGitLabURLs(htmlContent string) []string {
 	allURLs := extractURLsFromMainMessage(htmlContent)
 	var gitlabURLs []string
 	seen := make(map[string]bool)
 	mrRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?merge_requests/([0-9]+)`)
+	pipeRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?pipelines/([0-9]+)`)
+	jobRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?jobs/([0-9]+)`)
 	for _, uStr := range allURLs {
-		matches := mrRx.FindStringSubmatch(uStr)
-		if len(matches) < 3 {
-			continue
-		}
-		projectPath := matches[1]
-		mrNum := matches[2]
 		parsed, err := url.Parse(uStr)
 		if err != nil {
 			continue
 		}
-		normalized := fmt.Sprintf("%s://%s/%s/-/merge_requests/%s", parsed.Scheme, parsed.Host, projectPath, mrNum)
-		if !seen[normalized] {
-			seen[normalized] = true
-			gitlabURLs = append(gitlabURLs, normalized)
+		if matches := mrRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+			projectPath := matches[1]
+			mrNum := matches[2]
+			normalized := fmt.Sprintf("%s://%s/%s/-/merge_requests/%s", parsed.Scheme, parsed.Host, projectPath, mrNum)
+			if !seen[normalized] {
+				seen[normalized] = true
+				gitlabURLs = append(gitlabURLs, normalized)
+			}
+		} else if matches := pipeRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+			projectPath := matches[1]
+			pipeNum := matches[2]
+			normalized := fmt.Sprintf("%s://%s/%s/-/pipelines/%s", parsed.Scheme, parsed.Host, projectPath, pipeNum)
+			if !seen[normalized] {
+				seen[normalized] = true
+				gitlabURLs = append(gitlabURLs, normalized)
+			}
+		} else if matches := jobRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+			projectPath := matches[1]
+			jobNum := matches[2]
+			normalized := fmt.Sprintf("%s://%s/%s/-/jobs/%s", parsed.Scheme, parsed.Host, projectPath, jobNum)
+			if !seen[normalized] {
+				seen[normalized] = true
+				gitlabURLs = append(gitlabURLs, normalized)
+			}
 		}
 	}
 	return gitlabURLs
@@ -5745,7 +5761,7 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		}
 
 		prefix := "[YouTrack] "
-		if strings.Contains(urlStr, "/merge_requests/") {
+		if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
 			prefix = "[GitLab]   "
 		}
 

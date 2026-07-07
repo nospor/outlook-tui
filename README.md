@@ -146,7 +146,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `M`                            | Load the next portion/page of 50 messages in the selected folder                                                                                                                                                                                                       |
 | `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
-| `o`                            | Extract YouTrack/GitLab MR URLs from the selected message and open in the external [yt-tui](https://github.com/nospor/yt-tui) / [gitlab-tui](https://github.com/nospor/gitlab-tui) app (shows a popup list if multiple unique URLs exist, ignoring quoted/original text) |
+| `o`                            | Extract YouTrack issues or GitLab MR/pipeline/job URLs from the selected message and open in the external [yt-tui](https://github.com/nospor/yt-tui) / [gitlab-tui](https://github.com/nospor/gitlab-tui) app (shows a popup list if multiple unique URLs exist, ignoring quoted/original text) |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
 | `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
 | `Esc`                          | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)                                                                                                                                     |
@@ -180,7 +180,7 @@ Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to m
 ## TUI Integrations (`yt-tui` & `gitlab-tui`)
 
 Outlook TUI integrates with external TUI apps to let you open issues and merge requests directly in the terminal:
-- Press **`o`** on a message containing YouTrack or GitLab merge request URLs.
+- Press **`o`** on a message containing YouTrack issues or GitLab merge request/pipeline/job URLs.
 - If there is a single URL, it opens directly in the corresponding TUI app (`yt-tui` or `gitlab-tui`).
 - If there are multiple unique URLs, a popup dialog will display a list for you to select from.
 - To use these integrations, you must have the respective binary installed and available in your shell's `PATH`:

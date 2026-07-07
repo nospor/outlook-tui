@@ -628,14 +628,14 @@ func TestExtractYouTrackURLs(t *testing.T) {
 	}
 }
 
-func TestExtractGitLabMRURLs(t *testing.T) {
+func TestExtractGitLabURLs(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
 		expected []string
 	}{
 		{
-			name:     "No GitLab MR URLs",
+			name:     "No GitLab URLs",
 			input:    "Hello world, check https://google.com and https://github.com",
 			expected: nil,
 		},
@@ -650,16 +650,41 @@ func TestExtractGitLabMRURLs(t *testing.T) {
 			expected: []string{"https://gitlab.mediatel.co.uk/audio/audiotrack-admin-hub/-/merge_requests/25"},
 		},
 		{
-			name:     "Multiple GitLab MR URLs with duplicates and query parameters",
+			name:     "One GitLab pipeline URL",
+			input:    "Please check this pipeline: https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780"},
+		},
+		{
+			name:     "One GitLab pipeline URL without hyphen",
+			input:    "Please check this pipeline: https://gitlab.mediatel.co.uk/adwanted/srds/pipelines/33780. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780"},
+		},
+		{
+			name:     "One GitLab job URL",
+			input:    "Please check this job: https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933"},
+		},
+		{
+			name:     "One GitLab job URL without hyphen",
+			input:    "Please check this job: https://gitlab.mediatel.co.uk/adwanted/srds/jobs/155933. Thanks!",
+			expected: []string{"https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933"},
+		},
+		{
+			name:     "Multiple GitLab MR, pipeline, and job URLs with duplicates and query parameters",
 			input: `
 				Check:
 				1. https://gitlab.com/group/subgroup/project/-/merge_requests/123
 				2. https://gitlab.com/group/subgroup/project/-/merge_requests/123?diff=parallel
-				3. https://gitlab.com/group/subgroup/project/-/merge_requests/123#note_456
-				4. https://gitlab.com/other-group/project/-/merge_requests/1
+				3. https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780
+				4. https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780?some_param=value
+				5. https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933
+				6. https://gitlab.mediatel.co.uk/adwanted/srds/jobs/155933?test=true
+				7. https://gitlab.com/other-group/project/-/merge_requests/1
 			`,
 			expected: []string{
 				"https://gitlab.com/group/subgroup/project/-/merge_requests/123",
+				"https://gitlab.mediatel.co.uk/adwanted/srds/-/pipelines/33780",
+				"https://gitlab.mediatel.co.uk/adwanted/srds/-/jobs/155933",
 				"https://gitlab.com/other-group/project/-/merge_requests/1",
 			},
 		},
@@ -667,7 +692,7 @@ func TestExtractGitLabMRURLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := extractGitLabMRURLs(tt.input)
+			actual := extractGitLabURLs(tt.input)
 			if len(actual) != len(tt.expected) {
 				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
 			}
