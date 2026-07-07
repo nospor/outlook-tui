@@ -520,6 +520,7 @@ func TestComposeCcContactSuggestions(t *testing.T) {
 func TestExtractURLsFromMainMessage(t *testing.T) {
 	tests := []struct {
 		name     string
+		subject  string
 		input    string
 		expected []string
 	}{
@@ -563,11 +564,35 @@ func TestExtractURLsFromMainMessage(t *testing.T) {
 			input:    "Main link: https://new.com<div>-----Original Message-----</div><div>From: test@example.com</div><div>Sent: 2026</div><div>To: user</div><div>Quoted: https://old.com</div>",
 			expected: []string{"https://new.com"},
 		},
+		{
+			name:     "Forwarded message via Subject Fwd:",
+			subject:  "Fwd: Check this out",
+			input:    "Main message: https://new.com\n\n-----Original Message-----\nFrom: test@example.com\n\nQuoted: https://old.com",
+			expected: []string{"https://new.com", "https://old.com"},
+		},
+		{
+			name:     "Forwarded message via Subject Fw:",
+			subject:  "  Fw: Hello",
+			input:    "Main message: https://new.com\n\n> Quoted: https://old.com",
+			expected: []string{"https://new.com", "https://old.com"},
+		},
+		{
+			name:     "Forwarded message via Body Fallback",
+			subject:  "No prefix subject",
+			input:    "Please read this: https://new.com\n\n---------- Forwarded message ---------\nFrom: test@example.com\n\nQuoted: https://old.com",
+			expected: []string{"https://new.com", "https://old.com"},
+		},
+		{
+			name:     "Reply to forward should NOT extract from quoted blocks",
+			subject:  "Re: Fwd: Check this out",
+			input:    "Main message: https://new.com\n\n-----Original Message-----\nFrom: test@example.com\n\nQuoted: https://old.com",
+			expected: []string{"https://new.com"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := extractURLsFromMainMessage(tt.input)
+			actual := extractURLsFromMainMessage(tt.input, tt.subject)
 			if len(actual) != len(tt.expected) {
 				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
 			}
@@ -615,7 +640,7 @@ func TestExtractYouTrackURLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := extractYouTrackURLs(tt.input)
+			actual := extractYouTrackURLs(tt.input, "")
 			if len(actual) != len(tt.expected) {
 				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
 			}
@@ -692,7 +717,7 @@ func TestExtractGitLabURLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := extractGitLabURLs(tt.input)
+			actual := extractGitLabURLs(tt.input, "")
 			if len(actual) != len(tt.expected) {
 				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
 			}

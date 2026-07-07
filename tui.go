@@ -1791,7 +1791,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
 				fetchFoldersCmd(m.graphClient),
 			)
-e	}
+	}
 
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
@@ -2315,8 +2315,8 @@ e	}
 				m.statusMsg = "Message details loading, please try again..."
 				break
 			}
-			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content)
-			glURLs := extractGitLabURLs(m.detailMessage.Body.Content)
+			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content, m.detailMessage.Subject)
+			glURLs := extractGitLabURLs(m.detailMessage.Body.Content, m.detailMessage.Subject)
 			totalCount := len(ytURLs) + len(glURLs)
 
 			if totalCount == 0 {
@@ -4783,7 +4783,7 @@ func (m mainModel) executeYank(key string) mainModel {
 		m.state = stateMain
 
 	case "u":
-		urls := extractURLsFromMainMessage(m.detailMessage.Body.Content)
+		urls := extractURLsFromMainMessage(m.detailMessage.Body.Content, m.detailMessage.Subject)
 		if len(urls) == 0 {
 			m.statusMsg = "No URLs found in the main message"
 			m.state = stateMain
@@ -5615,9 +5615,41 @@ func renderTopBorderWithTitle(width int, title string, active bool) string {
 	return leftPart + middleText + rightPart
 }
 
-// extractURLsFromMainMessage returns a list of unique URLs found in the body content,
-// excluding any URLs in quoted lines or block dividers/original message blocks.
-func extractURLsFromMainMessage(htmlContent string) []string {
+// isForwarded returns true if the email is a forwarded message.
+func isForwarded(subject string, htmlContent string) bool {
+	s := strings.TrimSpace(subject)
+	lowerSubj := strings.ToLower(s)
+
+	// If subject starts with reply prefix, it's a reply, not a forward.
+	// E.g., "Re: Fwd: ..." is a reply.
+	if strings.HasPrefix(lowerSubj, "re:") || strings.HasPrefix(lowerSubj, "aw:") || strings.HasPrefix(lowerSubj, "antw:") {
+		return false
+	}
+
+	// Common forward prefixes in various languages (case-insensitive)
+	forwardPrefixes := []string{"fwd:", "fw:", "wg:", "tr:", "rv:", "pd:", "fv:", "vs:"}
+	for _, pref := range forwardPrefixes {
+		if strings.HasPrefix(lowerSubj, pref) {
+			return true
+		}
+	}
+
+	// Fallback to body content check: if subject doesn't explicitly start with a reply prefix
+	// and the body contains forwarded message headers or markers, we consider it forwarded.
+	lowerBody := strings.ToLower(htmlContent)
+	if strings.Contains(lowerBody, "forwarded message") ||
+		strings.Contains(lowerBody, "---------- forwarded") ||
+		strings.Contains(lowerBody, "__________ forwarded") {
+		return true
+	}
+
+	return false
+}
+
+// extractURLs returns a list of unique URLs found in the body content.
+// If allBody is true, it extracts from the entire body; otherwise it ignores
+// original message blocks/quoted blocks.
+func extractURLs(htmlContent string, allBody bool) []string {
 	// 1. Replace anchor tags to make href values visible.
 	res := replaceAnchorTags(htmlContent, false)
 
@@ -5671,12 +5703,14 @@ func extractURLsFromMainMessage(htmlContent string) []string {
 		plainLine := stripANSICodes(l)
 		trimmedPlain := strings.TrimSpace(plainLine)
 
-		if !inOriginal && isOriginalMessageStart(trimmedPlain) {
-			inOriginal = true
-		}
+		if !allBody {
+			if !inOriginal && isOriginalMessageStart(trimmedPlain) {
+				inOriginal = true
+			}
 
-		if inOriginal || strings.HasPrefix(trimmedPlain, ">") {
-			continue
+			if inOriginal || strings.HasPrefix(trimmedPlain, ">") {
+				continue
+			}
 		}
 
 		// Find URLs in the plain line
@@ -5710,6 +5744,14 @@ func extractURLsFromMainMessage(htmlContent string) []string {
 	return urls
 }
 
+// extractURLsFromMainMessage returns a list of unique URLs found in the body content,
+// excluding any URLs in quoted lines or block dividers/original message blocks,
+// unless it is detected as a forwarded message.
+func extractURLsFromMainMessage(htmlContent string, subject string) []string {
+	allBody := isForwarded(subject, htmlContent)
+	return extractURLs(htmlContent, allBody)
+}
+
 func cropLines(s string, maxLines int) string {
 	if maxLines <= 0 {
 		return ""
@@ -5723,8 +5765,8 @@ func cropLines(s string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-func extractYouTrackURLs(htmlContent string) []string {
-	allURLs := extractURLsFromMainMessage(htmlContent)
+func extractYouTrackURLs(htmlContent string, subject string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent, subject)
 	var ytURLs []string
 	seen := make(map[string]bool)
 	issueRx := regexp.MustCompile(`(?i)/issue/([a-zA-Z0-9]+-[0-9]+)`)
@@ -5751,8 +5793,8 @@ func extractYouTrackURLs(htmlContent string) []string {
 	return ytURLs
 }
 
-func extractGitLabURLs(htmlContent string) []string {
-	allURLs := extractURLsFromMainMessage(htmlContent)
+func extractGitLabURLs(htmlContent string, subject string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent, subject)
 	var gitlabURLs []string
 	seen := make(map[string]bool)
 	mrRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?merge_requests/([0-9]+)`)
