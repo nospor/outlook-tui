@@ -1,4 +1,16 @@
 
+## [0.5.6] - 2026-07-08
+
+### Features
+
+- Support HTML inline style and color rendering in message detail pane ([f812311](https://github.com/nospor/outlook-tui/commit/f8123112fb3f34f37839a7c06a1300d0a3303fff))
+- Support viewing selected message in external editor via Ctrl+g ([1ba905d](https://github.com/nospor/outlook-tui/commit/1ba905d553dac7ce44ebf772328f8051714832bd))
+- *(tui)* Display compose cancel confirmation as an overlay modal popup ([25236eb](https://github.com/nospor/outlook-tui/commit/25236eb0ff349c624d3ab9f6e3f3790ab6028615))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.5 [skip ci] ([b4b53ac](https://github.com/nospor/outlook-tui/commit/b4b53ac96cb9e21d016dd49b25176c32800f5997))
+
 ## [0.5.5] - 2026-07-08
 
 ### Features
