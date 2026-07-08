@@ -3588,8 +3588,6 @@ func (m mainModel) View() string {
 	// Bottom Status/Keybinds Bar
 	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments {
 		s.WriteString("\n")
-		statusText := fmt.Sprintf("Status: %s", m.statusMsg)
-		s.WriteString(statusStyle.Width(m.width).Render(statusText) + "\n")
 
 		var keysText string
 		if m.state == stateYankSelect {
@@ -3613,10 +3611,11 @@ func (m mainModel) View() string {
 				keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
 			}
 		}
-		s.WriteString(dimStyle.Render(keysText))
+		s.WriteString(dimStyle.Render(keysText) + "\n")
+		s.WriteString(m.renderStatusBar(m.statusMsg, true))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
 		if m.statusMsg != "" {
-			s.WriteString("\n" + statusStyle.Width(m.width).Render(m.statusMsg))
+			s.WriteString("\n" + m.renderStatusBar(m.statusMsg, false))
 		}
 	}
 
@@ -6636,4 +6635,58 @@ func convertInlineStylesToANSI(htmlContent string) string {
 	}
 
 	return result.String()
+}
+
+func (m mainModel) renderStatusBar(text string, includePrefix bool) string {
+	if text == "" {
+		return ""
+	}
+
+	bgCol := lipgloss.Color(ColorSurface)
+
+	// Default style for label ("Status:") - bold primary accent (ColorViolet)
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(ColorViolet)).
+		Background(bgCol).
+		Bold(true)
+
+	// Determine message style based on content/theme
+	var msgStyle lipgloss.Style
+	lowerText := strings.ToLower(text)
+
+	if strings.Contains(lowerText, "error") || strings.Contains(lowerText, "failed") {
+		msgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorRed)).
+			Background(bgCol).
+			Bold(true)
+	} else if strings.Contains(lowerText, "warning") {
+		msgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorYellow)).
+			Background(bgCol).
+			Bold(true)
+	} else if strings.Contains(lowerText, "success") || strings.Contains(lowerText, "successfully") || strings.Contains(lowerText, "ready") {
+		msgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorGreen)).
+			Background(bgCol)
+	} else if strings.Contains(lowerText, "loading") || strings.Contains(lowerText, "fetching") || strings.Contains(lowerText, "marking") || strings.Contains(lowerText, "refreshing") || strings.Contains(lowerText, "requesting") || strings.Contains(lowerText, "waiting") {
+		msgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorSubtext)).
+			Background(bgCol).
+			Italic(true)
+	} else {
+		// Normal message: use theme's secondary accent (ColorCyan)
+		msgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(ColorCyan)).
+			Background(bgCol)
+	}
+
+	var content string
+	if includePrefix {
+		content = labelStyle.Render("Status: ") + msgStyle.Render(text)
+	} else {
+		content = msgStyle.Render(text)
+	}
+
+	// Pad to full terminal width using statusStyle (which has ColorSurface background and 0,1 padding)
+	return statusStyle.Width(m.width).Render(content)
 }
