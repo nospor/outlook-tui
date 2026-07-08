@@ -1,4 +1,19 @@
 
+## [0.5.5] - 2026-07-08
+
+### Features
+
+- Support YouTrack projects/issue URL format ([70790c7](https://github.com/nospor/outlook-tui/commit/70790c7168817795f719a0eae12cc6eea6c80380))
+- Prioritize gitlab-tui and yt-tui URLs in selection popup ([fcdbadf](https://github.com/nospor/outlook-tui/commit/fcdbadf13844ff263e04e1029cc4af7672c91720))
+
+### Bug Fixes
+
+- *(tui)* Prevent screen scroll on compose autocomplete and make suggestion dropdown scrollable ([6fee6cf](https://github.com/nospor/outlook-tui/commit/6fee6cfcd3589225123603acee220cf0d9887361))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.4 [skip ci] ([1105a3f](https://github.com/nospor/outlook-tui/commit/1105a3f61e086a62c76e5da1848bc32e402de562))
+
 ## [0.5.4] - 2026-07-08
 
 ### Features
