@@ -234,6 +234,18 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "102 <pre>code line\n</pre>",
 			expected: "\x1b[38;2;203;166;247m102 code line\x1b[39m",
 		},
+		{
+			input:    `<span>In Test</span> <span style="margin-left:5px">→ </span><span style="background-color:#ffffc4; text-decoration:none!important; font-family:sans-serif; font-size:13px">Awaiting LIVE deploy</span>`,
+			expected: "In Test → \x1b[38;2;255;255;196mAwaiting LIVE deploy\x1b[39m",
+		},
+		{
+			input:    `<font color="red">Attention</font>`,
+			expected: "\x1b[38;2;255;0;0mAttention\x1b[39m",
+		},
+		{
+			input:    `<td bgcolor="yellow">Alert</td>`,
+			expected: "\x1b[38;2;255;255;0m Alert\x1b[39m",
+		},
 	}
 
 	for _, tt := range tests {

@@ -5128,6 +5128,9 @@ func formatBodyContent(htmlContent string) string {
 		return imagePlaceholderStyle.Render("[image]")
 	})
 
+	// Convert HTML inline styles (colors, background-colors) to ANSI escape sequences
+	res = convertInlineStylesToANSI(res)
+
 	// Convert formatting tags to ANSI escape sequences before stripping HTML tags
 	res = regexp.MustCompile(`(?i)<(b|strong)(?:\s+[^>]*)?>`).ReplaceAllString(res, "\x1b[1m")
 	res = regexp.MustCompile(`(?i)</(b|strong)\s*>`).ReplaceAllString(res, "\x1b[22m")
@@ -5223,6 +5226,7 @@ func formatBodyContent(htmlContent string) string {
 	var cleaned []string
 	inOriginal := false
 	inPre := false
+	var pendingANSI string
 
 	var addRx = regexp.MustCompile(`(?i)^\s*(?:\d+\s+)?(?:\d+\s+)?\+(?:\s|$|[^+])`)
 	var delRx = regexp.MustCompile(`(?i)^\s*(?:\d+\s+)?(?:\d+\s+)?-(?:\s|$|[^-])`)
@@ -5248,7 +5252,19 @@ func formatBodyContent(htmlContent string) string {
 		if (hasStart || hasEnd) && trimmed == "" {
 			continue
 		}
+
+		// If a line contains only ANSI escape codes, accumulate them and don't output a blank line
+		if trimmed != "" && stripANSICodes(trimmed) == "" {
+			pendingANSI += l
+			continue
+		}
+
 		if trimmed != "" || (len(cleaned) > 0 && cleaned[len(cleaned)-1] != "") {
+			if pendingANSI != "" {
+				l = pendingANSI + l
+				pendingANSI = ""
+			}
+
 			plainLine := stripANSICodes(l)
 			if !inOriginal && isOriginalMessageStart(plainLine) {
 				inOriginal = true
@@ -5294,6 +5310,9 @@ func formatBodyContent(htmlContent string) string {
 				cleaned = append(cleaned, lineWithURLs)
 			}
 		}
+	}
+	if pendingANSI != "" && len(cleaned) > 0 {
+		cleaned[len(cleaned)-1] += pendingANSI
 	}
 	return strings.Join(cleaned, "\n")
 }
@@ -6080,4 +6099,352 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
+}
+
+var cssColors = map[string][3]int{
+	"black":                {0, 0, 0},
+	"silver":               {192, 192, 192},
+	"gray":                 {128, 128, 128},
+	"grey":                 {128, 128, 128},
+	"white":                {255, 255, 255},
+	"maroon":               {128, 0, 0},
+	"red":                  {255, 0, 0},
+	"purple":               {128, 0, 128},
+	"fuchsia":              {255, 0, 255},
+	"green":                {0, 128, 0},
+	"lime":                 {0, 255, 0},
+	"olive":                {128, 128, 0},
+	"yellow":               {255, 255, 0},
+	"navy":                 {0, 0, 128},
+	"blue":                 {0, 0, 255},
+	"teal":                 {0, 128, 128},
+	"aqua":                 {0, 255, 255},
+	"orange":               {255, 165, 0},
+	"aliceblue":            {240, 248, 255},
+	"antiquewhite":         {250, 235, 215},
+	"aquamarine":           {127, 255, 212},
+	"azure":                {240, 255, 255},
+	"beige":                {245, 245, 220},
+	"bisque":               {255, 228, 196},
+	"blanchedalmond":       {255, 235, 205},
+	"blueviolet":           {138, 43, 226},
+	"brown":                {165, 42, 42},
+	"burlywood":            {222, 184, 135},
+	"cadetblue":            {95, 158, 160},
+	"chartreuse":           {127, 255, 0},
+	"chocolate":            {210, 105, 30},
+	"coral":                {255, 127, 80},
+	"cornflowerblue":       {100, 149, 237},
+	"cornsilk":             {255, 248, 220},
+	"crimson":              {220, 20, 60},
+	"cyan":                 {0, 255, 255},
+	"darkblue":             {0, 0, 139},
+	"darkcyan":             {0, 139, 139},
+	"darkgoldenrod":        {184, 134, 11},
+	"darkgray":             {169, 169, 169},
+	"darkgreen":            {0, 100, 0},
+	"darkgrey":             {169, 169, 169},
+	"darkkhaki":            {189, 183, 107},
+	"darkmagenta":          {139, 0, 139},
+	"darkolivegreen":       {85, 107, 47},
+	"darkorange":           {255, 140, 0},
+	"darkorchid":           {153, 50, 204},
+	"darkred":              {139, 0, 0},
+	"darksalmon":           {233, 150, 122},
+	"darkseagreen":         {143, 188, 143},
+	"darkslateanchor":      {72, 61, 139},
+	"darkslateblue":        {72, 61, 139},
+	"darkslategray":        {47, 79, 79},
+	"darkslategrey":        {47, 79, 79},
+	"darkturquoise":        {0, 206, 209},
+	"darkviolet":           {94, 0, 211},
+	"deeppink":             {255, 20, 147},
+	"deepskyblue":          {0, 191, 255},
+	"dimgray":              {105, 105, 105},
+	"dimgrey":              {105, 105, 105},
+	"dodgerblue":           {30, 144, 255},
+	"firebrick":            {178, 34, 34},
+	"floralwhite":          {255, 250, 240},
+	"forestgreen":          {34, 139, 34},
+	"gainsboro":            {220, 220, 220},
+	"ghostwhite":           {248, 248, 255},
+	"gold":                 {255, 215, 0},
+	"goldenrod":            {218, 165, 32},
+	"greenyellow":          {173, 255, 47},
+	"honeydew":             {240, 255, 240},
+	"hotpink":              {255, 105, 180},
+	"indianred":            {205, 92, 92},
+	"indigo":               {75, 0, 130},
+	"ivory":                {255, 255, 240},
+	"khaki":                {240, 230, 140},
+	"lavender":             {230, 230, 250},
+	"lavenderblush":        {255, 240, 245},
+	"lawngreen":            {124, 252, 0},
+	"lemonchiffon":         {255, 250, 205},
+	"lightblue":            {173, 216, 230},
+	"lightcoral":           {240, 128, 128},
+	"lightcyan":            {224, 255, 255},
+	"lightgoldenrodyellow": {250, 250, 210},
+	"lightgray":            {211, 211, 211},
+	"lightgreen":           {144, 238, 144},
+	"lightgrey":            {211, 211, 211},
+	"lightpink":            {255, 182, 193},
+	"lightsalmon":          {255, 160, 122},
+	"lightseagreen":        {32, 178, 170},
+	"lightskyblue":         {135, 206, 250},
+	"lightslategray":       {119, 136, 153},
+	"lightslategrey":       {119, 136, 153},
+	"lightsteelblue":       {176, 196, 222},
+	"lightyellow":          {255, 255, 224},
+	"limegreen":            {50, 205, 50},
+	"linen":                {250, 240, 230},
+	"magenta":              {255, 0, 255},
+	"mediumaquamarine":     {102, 205, 170},
+	"mediumblue":           {0, 0, 205},
+	"mediumorchid":         {186, 85, 211},
+	"mediumpurple":         {147, 112, 219},
+	"mediumseagreen":       {60, 179, 113},
+	"mediumslateanchor":    {123, 104, 238},
+	"mediumslateblue":      {123, 104, 238},
+	"mediumspringgreen":    {0, 250, 154},
+	"mediumturquoise":      {72, 209, 204},
+	"mediumvioletred":      {199, 21, 133},
+	"midnightblue":         {25, 25, 112},
+	"mintcream":            {245, 255, 250},
+	"mistyrose":            {255, 228, 225},
+	"moccasin":             {255, 228, 181},
+	"navajowhite":          {255, 222, 173},
+	"oldlace":              {253, 245, 230},
+	"olivedrab":            {107, 142, 35},
+	"orangered":            {255, 69, 0},
+	"orchid":               {218, 112, 214},
+	"palegoldenrod":        {238, 232, 170},
+	"palegreen":            {152, 251, 152},
+	"paleturquoise":        {175, 238, 238},
+	"palevioletred":        {219, 112, 147},
+	"papayawhip":           {255, 239, 213},
+	"peachpuff":            {255, 218, 185},
+	"peru":                 {205, 133, 63},
+	"pink":                 {255, 192, 203},
+	"plum":                 {221, 160, 221},
+	"powderblue":           {176, 224, 230},
+	"rosybrown":            {188, 143, 143},
+	"royalblue":            {65, 105, 225},
+	"saddlebrown":          {139, 69, 19},
+	"salmon":               {250, 128, 114},
+	"sandybrown":           {244, 164, 96},
+	"seagreen":             {46, 139, 87},
+	"seashell":             {255, 245, 238},
+	"sienna":               {160, 82, 45},
+	"skyblue":              {135, 206, 235},
+	"slateanchor":          {106, 90, 205},
+	"slateblue":            {106, 90, 205},
+	"slategray":            {112, 128, 144},
+	"slategrey":            {112, 128, 144},
+	"snow":                 {255, 250, 250},
+	"springgreen":          {0, 255, 127},
+	"steelblue":            {70, 130, 180},
+	"tan":                  {210, 180, 140},
+	"thistle":              {216, 191, 216},
+	"tomato":               {255, 99, 71},
+	"turquoise":            {64, 224, 208},
+	"violet":               {238, 130, 238},
+	"wheat":                {245, 222, 179},
+	"whitesmoke":           {245, 245, 245},
+	"yellowgreen":          {154, 205, 50},
+}
+
+func parseHexColor(s string) (r, g, b int, ok bool) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "#") {
+		return 0, 0, 0, false
+	}
+	s = s[1:]
+	if len(s) == 3 {
+		rVal, err1 := strconv.ParseInt(string([]byte{s[0], s[0]}), 16, 32)
+		gVal, err2 := strconv.ParseInt(string([]byte{s[1], s[1]}), 16, 32)
+		bVal, err3 := strconv.ParseInt(string([]byte{s[2], s[2]}), 16, 32)
+		if err1 == nil && err2 == nil && err3 == nil {
+			return int(rVal), int(gVal), int(bVal), true
+		}
+	} else if len(s) == 6 {
+		rVal, err1 := strconv.ParseInt(s[0:2], 16, 32)
+		gVal, err2 := strconv.ParseInt(s[2:4], 16, 32)
+		bVal, err3 := strconv.ParseInt(s[4:6], 16, 32)
+		if err1 == nil && err2 == nil && err3 == nil {
+			return int(rVal), int(gVal), int(bVal), true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+func cssColorToRGB(val string) (int, int, int, bool) {
+	val = strings.TrimSpace(strings.ToLower(val))
+	if val == "" {
+		return 0, 0, 0, false
+	}
+	if strings.HasPrefix(val, "#") {
+		return parseHexColor(val)
+	}
+	rgbRx := regexp.MustCompile(`^rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))`)
+	matches := rgbRx.FindStringSubmatch(val)
+	if len(matches) >= 4 {
+		r, _ := strconv.Atoi(matches[1])
+		g, _ := strconv.Atoi(matches[2])
+		b, _ := strconv.Atoi(matches[3])
+		return r, g, b, true
+	}
+	if rgb, ok := cssColors[val]; ok {
+		return rgb[0], rgb[1], rgb[2], true
+	}
+	return 0, 0, 0, false
+}
+
+func parseStyleAttr(styleStr string) (fg, bg string) {
+	parts := strings.Split(styleStr, ";")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(kv[0]))
+		val := strings.ToLower(strings.TrimSpace(kv[1]))
+		val = strings.TrimSuffix(val, "!important")
+		val = strings.TrimSpace(val)
+
+		if key == "color" {
+			fg = val
+		} else if key == "background-color" || key == "background" {
+			bg = val
+		}
+	}
+	return fg, bg
+}
+
+func isThemeDark() bool {
+	if r, g, b, ok := parseHexColor(ColorBg); ok {
+		lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+		return lum < 128
+	}
+	return true // default to dark
+}
+
+func convertInlineStylesToANSI(htmlContent string) string {
+	var result strings.Builder
+	pos := 0
+
+	type styledTag struct {
+		name string
+	}
+	var styledStack []styledTag
+
+	tagRx := regexp.MustCompile(`(?i)</?([a-zA-Z0-9]+)\b([^>]*)>`)
+	matches := tagRx.FindAllStringSubmatchIndex(htmlContent, -1)
+
+	darkTheme := isThemeDark()
+
+	for _, m := range matches {
+		startIdx := m[0]
+		endIdx := m[1]
+
+		result.WriteString(htmlContent[pos:startIdx])
+		pos = endIdx
+
+		tagText := htmlContent[startIdx:endIdx]
+		isClosing := strings.HasPrefix(tagText, "</")
+		tagName := strings.ToLower(htmlContent[m[2]:m[3]])
+
+		if isClosing {
+			isStyledClose := false
+			if len(styledStack) > 0 && styledStack[len(styledStack)-1].name == tagName {
+				isStyledClose = true
+				styledStack = styledStack[:len(styledStack)-1]
+			} else {
+				for i := len(styledStack) - 1; i >= 0; i-- {
+					if styledStack[i].name == tagName {
+						isStyledClose = true
+						styledStack = styledStack[:i]
+						break
+					}
+				}
+			}
+
+			if isStyledClose {
+				result.WriteString("\x1b[39m" + tagText)
+			} else {
+				result.WriteString(tagText)
+			}
+		} else {
+			attrs := htmlContent[m[4]:m[5]]
+			var fgColor, bgColor string
+
+			styleRx := regexp.MustCompile(`(?i)\bstyle\s*=\s*['"]([^'"]+)['"]`)
+			styleMatches := styleRx.FindStringSubmatch(attrs)
+			if len(styleMatches) > 1 {
+				fgColor, bgColor = parseStyleAttr(styleMatches[1])
+			}
+
+			if fgColor == "" {
+				colorRx := regexp.MustCompile(`(?i)\bcolor\s*=\s*['"]([^'"]+)['"]`)
+				colorMatches := colorRx.FindStringSubmatch(attrs)
+				if len(colorMatches) > 1 {
+					fgColor = colorMatches[1]
+				}
+			}
+
+			if bgColor == "" {
+				bgcolorRx := regexp.MustCompile(`(?i)\bbgcolor\s*=\s*['"]([^'"]+)['"]`)
+				bgcolorMatches := bgcolorRx.FindStringSubmatch(attrs)
+				if len(bgcolorMatches) > 1 {
+					bgColor = bgcolorMatches[1]
+				}
+			}
+
+			// If background color is specified but foreground is not, map background to foreground highlight
+			if fgColor == "" && bgColor != "" {
+				fgColor = bgColor
+			}
+
+			hasStyle := false
+			var ansiCodes strings.Builder
+			if fgColor != "" {
+				if r, g, b, ok := cssColorToRGB(fgColor); ok {
+					keepColor := true
+					if darkTheme {
+						// On dark themes, ignore colors that are too dark (dark gray, black, etc.)
+						if r < 110 && g < 110 && b < 110 {
+							keepColor = false
+						}
+					} else {
+						// On light themes, ignore colors that are too light (white, very light yellow, etc.)
+						if r > 150 && g > 150 && b > 150 {
+							keepColor = false
+						}
+					}
+
+					if keepColor {
+						ansiCodes.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b))
+						hasStyle = true
+					}
+				}
+			}
+
+			if hasStyle {
+				styledStack = append(styledStack, styledTag{name: tagName})
+				result.WriteString(ansiCodes.String() + tagText)
+			} else {
+				result.WriteString(tagText)
+			}
+		}
+	}
+
+	if pos < len(htmlContent) {
+		result.WriteString(htmlContent[pos:])
+	}
+
+	return result.String()
 }
