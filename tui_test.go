@@ -1395,7 +1395,12 @@ func TestComposeEscapeConfirmation(t *testing.T) {
 	m := mainModel{
 		state:       stateCompose,
 		composeStep: 3,
+		width:       80,
+		height:      24,
 	}
+	m.composeTo = textinput.New()
+	m.composeCc = textinput.New()
+	m.composeSubject = textinput.New()
 	m.composeBody = textarea.New()
 
 	// 1. If body is empty, pressing esc should go directly to stateMain
@@ -1418,6 +1423,13 @@ func TestComposeEscapeConfirmation(t *testing.T) {
 	}
 	if updated2.state != stateComposeCancelConfirm {
 		t.Errorf("expected state to be stateComposeCancelConfirm when body is filled, got %v", updated2.state)
+	}
+	viewStr := updated2.View()
+	if !strings.Contains(viewStr, "COMPOSE NEW EMAIL") {
+		t.Errorf("expected view to contain compose layout, got:\n%s", viewStr)
+	}
+	if !strings.Contains(viewStr, "DISCARD EMAIL?") {
+		t.Errorf("expected view to contain discard warning modal, got:\n%s", viewStr)
 	}
 
 	// 3. From stateComposeCancelConfirm, pressing 'n' should go back to stateCompose

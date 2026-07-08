@@ -1290,7 +1290,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateHelp {
 			m.helpViewport.SetContent(m.renderHelpContent())
 		}
-		if m.state == stateCompose {
+		if m.state == stateCompose || m.state == stateComposeCancelConfirm {
 			h := m.height - 18
 			if h < 3 {
 				h = 3
@@ -2924,7 +2924,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state == stateCompose {
+	if m.state == stateCompose || m.state == stateComposeCancelConfirm {
 		m.updateComposeBodyHeight()
 	}
 
@@ -3461,12 +3461,6 @@ func (m mainModel) View() string {
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render("[a]") + " Reply All\n\n")
 		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorOverlay)).Render("[c]") + " Cancel / Go Back\n")
 
-	case stateComposeCancelConfirm:
-		s.WriteString("   " + headerStyle.Render("DISCARD EMAIL?") + "\n\n")
-		s.WriteString("   You have draft content in the body. Do you really want to quit composing?\n\n")
-		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes\n")
-		s.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back\n")
-
 	case stateConfig:
 		s.WriteString("   " + headerStyle.Render("OUTLOOK CONFIGURATION") + "\n\n")
 		s.WriteString("   To build this app, we register a client in Microsoft Azure Entra.\n")
@@ -3497,7 +3491,7 @@ func (m mainModel) View() string {
 			s.WriteString(m.renderLayout1())
 		}
 
-	case stateCompose:
+	case stateCompose, stateComposeCancelConfirm:
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
 
 		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
@@ -3836,6 +3830,26 @@ func (m mainModel) View() string {
 		modalHeight := contentLines + 2 // borders
 
 		dropdownView := m.renderExternalURLDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateComposeCancelConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 9
+		dropdownView := m.renderComposeCancelConfirmPopup(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -4769,6 +4783,63 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 		paddingNo = 0
 	}
 	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep thread / Go Back" + strings.Repeat(" ", paddingNo)
+	rows = append(rows, btnNoRendered)
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorRed)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderComposeCancelConfirmPopup(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	headerText := " DISCARD EMAIL? "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line1 := "You have draft content in the body."
+	if len(line1) < dropdownWidth-2 {
+		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
+	} else if len(line1) > dropdownWidth-2 {
+		line1 = line1[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line1)
+
+	line2 := "Do you really want to quit composing?"
+	if len(line2) < dropdownWidth-2 {
+		line2 = line2 + strings.Repeat(" ", dropdownWidth-2-len(line2))
+	} else if len(line2) > dropdownWidth-2 {
+		line2 = line2[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line2)
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	btnYesRaw := "  [y] Yes, discard changes"
+	paddingYes := dropdownWidth - 2 - len(btnYesRaw)
+	if paddingYes < 0 {
+		paddingYes = 0
+	}
+	btnYesRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, discard changes" + strings.Repeat(" ", paddingYes)
+	rows = append(rows, btnYesRendered)
+
+	btnNoRaw := "  [n] No, keep editing / Go Back"
+	paddingNo := dropdownWidth - 2 - len(btnNoRaw)
+	if paddingNo < 0 {
+		paddingNo = 0
+	}
+	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep editing / Go Back" + strings.Repeat(" ", paddingNo)
 	rows = append(rows, btnNoRendered)
 
 	joined := strings.Join(rows, "\n")
