@@ -517,6 +517,105 @@ func TestComposeCcContactSuggestions(t *testing.T) {
 	}
 }
 
+func TestComposeContactSuggestionsScrolling(t *testing.T) {
+	m := mainModel{
+		state:       stateCompose,
+		composeStep: 0,
+		contacts: []Contact{
+			{Name: "C1", Address: "c1@ex.com"},
+			{Name: "C2", Address: "c2@ex.com"},
+			{Name: "C3", Address: "c3@ex.com"},
+			{Name: "C4", Address: "c4@ex.com"},
+			{Name: "C5", Address: "c5@ex.com"},
+			{Name: "C6", Address: "c6@ex.com"},
+			{Name: "C7", Address: "c7@ex.com"},
+			{Name: "C8", Address: "c8@ex.com"},
+		},
+		config: Config{UseSQLite: 1},
+	}
+	m.composeTo = textinput.New()
+
+	// Simulate typing "c" (matches all 8)
+	m.composeTo.SetValue("c")
+	m.updateFilteredContacts()
+
+	if len(m.filteredContacts) != 8 {
+		t.Fatalf("expected 8 filtered contacts, got %d", len(m.filteredContacts))
+	}
+
+	// Initially start index should be 0
+	if m.contactsStartIdx != 0 {
+		t.Errorf("expected contactsStartIdx to be 0 initially, got %d", m.contactsStartIdx)
+	}
+
+	// Move down 4 times (contactsSelected = 4)
+	curr := m
+	for i := 0; i < 4; i++ {
+		updatedInterface, _ := curr.Update(tea.KeyMsg{Type: tea.KeyDown})
+		curr = updatedInterface.(mainModel)
+	}
+	if curr.contactsSelected != 4 {
+		t.Errorf("expected contactsSelected to be 4, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 0 {
+		t.Errorf("expected contactsStartIdx to remain 0, got %d", curr.contactsStartIdx)
+	}
+
+	// Move down 1 more time (contactsSelected = 5) -> should scroll startIdx to 1
+	updatedInterface, _ := curr.Update(tea.KeyMsg{Type: tea.KeyDown})
+	curr = updatedInterface.(mainModel)
+	if curr.contactsSelected != 5 {
+		t.Errorf("expected contactsSelected to be 5, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 1 {
+		t.Errorf("expected contactsStartIdx to scroll to 1, got %d", curr.contactsStartIdx)
+	}
+
+	// Move down 2 more times (contactsSelected = 7) -> should scroll startIdx to 3
+	for i := 0; i < 2; i++ {
+		updatedInterface, _ = curr.Update(tea.KeyMsg{Type: tea.KeyDown})
+		curr = updatedInterface.(mainModel)
+	}
+	if curr.contactsSelected != 7 {
+		t.Errorf("expected contactsSelected to be 7, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 3 {
+		t.Errorf("expected contactsStartIdx to scroll to 3, got %d", curr.contactsStartIdx)
+	}
+
+	// Move down once more -> wrap around to 0, startIdx resets to 0
+	updatedInterface, _ = curr.Update(tea.KeyMsg{Type: tea.KeyDown})
+	curr = updatedInterface.(mainModel)
+	if curr.contactsSelected != 0 {
+		t.Errorf("expected contactsSelected to wrap to 0, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 0 {
+		t.Errorf("expected contactsStartIdx to reset to 0, got %d", curr.contactsStartIdx)
+	}
+
+	// Move UP -> wrap to 7, startIdx should scroll to 3 (8 - 5 = 3)
+	updatedInterface, _ = curr.Update(tea.KeyMsg{Type: tea.KeyUp})
+	curr = updatedInterface.(mainModel)
+	if curr.contactsSelected != 7 {
+		t.Errorf("expected contactsSelected to wrap to 7, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 3 {
+		t.Errorf("expected contactsStartIdx to scroll to 3, got %d", curr.contactsStartIdx)
+	}
+
+	// Move UP 5 times (contactsSelected = 2) -> should scroll startIdx to 2
+	for i := 0; i < 5; i++ {
+		updatedInterface, _ = curr.Update(tea.KeyMsg{Type: tea.KeyUp})
+		curr = updatedInterface.(mainModel)
+	}
+	if curr.contactsSelected != 2 {
+		t.Errorf("expected contactsSelected to be 2, got %d", curr.contactsSelected)
+	}
+	if curr.contactsStartIdx != 2 {
+		t.Errorf("expected contactsStartIdx to scroll to 2, got %d", curr.contactsStartIdx)
+	}
+}
+
 func TestExtractURLsFromMainMessage(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -161,6 +161,7 @@ type mainModel struct {
 	contacts          []Contact
 	filteredContacts  []Contact
 	contactsSelected  int
+	contactsStartIdx  int
 	composedImages    []PastedImage
 	composedFiles     []PendingFile
 	filepicker        filepicker.Model
@@ -839,7 +840,6 @@ func (m mainModel) openBrowserCmd(urlStr string) tea.Cmd {
 		return browserFinishedMsg{Err: err}
 	}
 }
-
 
 // Tick command for background refresh
 type tickMsg time.Time
@@ -2398,9 +2398,22 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch key.String() {
 			case "down":
 				m.contactsSelected = (m.contactsSelected + 1) % len(m.filteredContacts)
+				if m.contactsSelected == 0 {
+					m.contactsStartIdx = 0
+				} else if m.contactsSelected >= m.contactsStartIdx+5 {
+					m.contactsStartIdx = m.contactsSelected - 5 + 1
+				}
 				return m, nil
 			case "up":
 				m.contactsSelected = (m.contactsSelected - 1 + len(m.filteredContacts)) % len(m.filteredContacts)
+				if m.contactsSelected == len(m.filteredContacts)-1 {
+					m.contactsStartIdx = len(m.filteredContacts) - 5
+					if m.contactsStartIdx < 0 {
+						m.contactsStartIdx = 0
+					}
+				} else if m.contactsSelected < m.contactsStartIdx {
+					m.contactsStartIdx = m.contactsSelected
+				}
 				return m, nil
 			case "enter":
 				selected := m.filteredContacts[m.contactsSelected]
@@ -2425,10 +2438,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.filteredContacts = nil
 				m.contactsSelected = 0
+				m.contactsStartIdx = 0
 				return m, nil
 			case "esc":
 				m.filteredContacts = nil
 				m.contactsSelected = 0
+				m.contactsStartIdx = 0
 				return m, nil
 			}
 		}
@@ -2807,6 +2822,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.state == stateCompose {
+		m.updateComposeBodyHeight()
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -2983,10 +3002,51 @@ func (m *mainModel) updateComposeFocus() {
 	}
 }
 
+func (m *mainModel) updateComposeBodyHeight() {
+	// Base height deduction:
+	// Title/Header (5) + To/Cc/Subject fields (9) + Body label/ending (3) + Footer (1) = 18 lines
+	deduction := 18
+
+	// Add deduction for To dropdown if open
+	if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
+		popupLines := len(m.filteredContacts)
+		if popupLines > 5 {
+			popupLines = 5 + 1 // 5 contacts + 1 "more" line
+		}
+		deduction += popupLines + 2
+	}
+
+	// Add deduction for Cc dropdown if open
+	if m.config.UseSQLite != 0 && m.composeStep == 1 && len(m.filteredContacts) > 0 {
+		popupLines := len(m.filteredContacts)
+		if popupLines > 5 {
+			popupLines = 5 + 1 // 5 contacts + 1 "more" line
+		}
+		deduction += popupLines + 2
+	}
+
+	// Pasted images adds 2 lines
+	if len(m.composedImages) > 0 {
+		deduction += 2
+	}
+
+	// Composed files adds len(files) + 2 lines
+	if len(m.composedFiles) > 0 {
+		deduction += len(m.composedFiles) + 2
+	}
+
+	h := m.height - deduction
+	if h < 3 {
+		h = 3
+	}
+	m.composeBody.SetHeight(h)
+}
+
 func (m *mainModel) loadContacts() {
 	m.contacts = nil
 	m.filteredContacts = nil
 	m.contactsSelected = 0
+	m.contactsStartIdx = 0
 	if m.config.UseSQLite != 0 && m.db != nil {
 		if contacts, err := m.db.GetContacts(); err == nil {
 			m.contacts = contacts
@@ -2998,6 +3058,7 @@ func (m *mainModel) updateFilteredContacts() {
 	if m.config.UseSQLite == 0 || len(m.contacts) == 0 {
 		m.filteredContacts = nil
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 		return
 	}
 
@@ -3009,6 +3070,7 @@ func (m *mainModel) updateFilteredContacts() {
 	} else {
 		m.filteredContacts = nil
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 		return
 	}
 
@@ -3016,6 +3078,7 @@ func (m *mainModel) updateFilteredContacts() {
 	if len(parts) == 0 {
 		m.filteredContacts = nil
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 		return
 	}
 	query := strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
@@ -3024,6 +3087,7 @@ func (m *mainModel) updateFilteredContacts() {
 	if query == "" {
 		m.filteredContacts = nil
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 		return
 	}
 
@@ -3033,14 +3097,19 @@ func (m *mainModel) updateFilteredContacts() {
 			filtered = append(filtered, c)
 		}
 	}
+	if len(m.filteredContacts) != len(filtered) {
+		m.contactsStartIdx = 0
+	}
 	m.filteredContacts = filtered
 
 	// Clamp selected index
 	if m.contactsSelected >= len(m.filteredContacts) {
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 	}
 	if m.contactsSelected < 0 {
 		m.contactsSelected = 0
+		m.contactsStartIdx = 0
 	}
 }
 

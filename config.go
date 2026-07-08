@@ -18,8 +18,8 @@ type Config struct {
 	ScrollLines     int      `json:"scroll_lines"` // defaults to 1
 	ImageViewer     string   `json:"image_viewer"`
 	AttachmentDir   string   `json:"attachment_dir"`
-	TerminalBell    int      `json:"terminal_bell"` // 0 = disabled, 1 = enabled (default)
-	Theme           string   `json:"theme"`         // "catppuccin" (default) or "teams"
+	TerminalBell    int      `json:"terminal_bell"`   // 0 = disabled, 1 = enabled (default)
+	Theme           string   `json:"theme"`           // "catppuccin" (default) or "teams"
 	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
 }
 
