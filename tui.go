@@ -795,6 +795,96 @@ func openEditorCmd(currentBody string) tea.Cmd {
 	})
 }
 
+// viewMessageInEditorCmd formats the current detailed message with headers,
+// attachments, and stripped plain body, writes it to a temp file, and opens it
+// in the user's preferred $EDITOR (falling back to $VISUAL, then vi).
+// BubbleTea suspends the TUI while the editor is running and restores it on exit.
+func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
+	// Determine editor binary
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vi"
+	}
+
+	// Format the message content
+	if m.detailMessage == nil {
+		return nil
+	}
+
+	var sb strings.Builder
+	// Build headers
+	formatRecipients := func(recipients []Recipient) string {
+		var parts []string
+		for _, r := range recipients {
+			name := r.EmailAddress.Name
+			addr := r.EmailAddress.Address
+			if name == "" {
+				parts = append(parts, addr)
+			} else if addr == "" {
+				parts = append(parts, name)
+			} else {
+				parts = append(parts, fmt.Sprintf("%s <%s>", name, addr))
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
+
+	fromVal := fmt.Sprintf("%s <%s>", m.detailMessage.From.EmailAddress.Name, m.detailMessage.From.EmailAddress.Address)
+	dateStr := m.detailMessage.ReceivedDateTime.Local().Format("Mon, Jan 2, 2006 at 15:04")
+
+	sb.WriteString("Subject: " + m.detailMessage.Subject + "\n")
+	sb.WriteString("From:    " + fromVal + "\n")
+	toVal := formatRecipients(m.detailMessage.ToRecipients)
+	if toVal != "" {
+		sb.WriteString("To:      " + toVal + "\n")
+	}
+	ccVal := formatRecipients(m.detailMessage.CcRecipients)
+	if ccVal != "" {
+		sb.WriteString("Cc:      " + ccVal + "\n")
+	}
+	sb.WriteString("Date:    " + dateStr + "\n")
+
+	if len(m.attachments) > 0 {
+		sb.WriteString(fmt.Sprintf("Attachments (📎 %d):\n", len(m.attachments)))
+		for _, att := range m.attachments {
+			sb.WriteString(fmt.Sprintf("  - %s (%s, %d bytes)\n", att.Name, att.ContentType, att.Size))
+		}
+	}
+
+	sb.WriteString("\n" + strings.Repeat("-", 80) + "\n\n")
+
+	// Message body content formatted (with HTML stripped, ANSI stripped)
+	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content))
+	sb.WriteString(plainBody)
+	sb.WriteString("\n")
+
+	// Write content to a temp file
+	tmpFile, err := os.CreateTemp("", "outlook-tui-view-*.txt")
+	if err != nil {
+		return func() tea.Msg { return nil }
+	}
+	if _, err := tmpFile.WriteString(sb.String()); err != nil {
+		_ = tmpFile.Close()
+		return func() tea.Msg { return nil }
+	}
+	_ = tmpFile.Close()
+	tmpPath := tmpFile.Name()
+
+	// Build the editor command. The editor value may contain arguments
+	// (e.g. "nvim -u NONE"), so split on whitespace.
+	parts := strings.Fields(editor)
+	args := append(parts[1:], tmpPath)
+	c := exec.Command(parts[0], args...) //nolint:gosec
+
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		defer os.Remove(tmpPath)
+		return nil
+	})
+}
+
 type youtrackTuiFinishedMsg struct {
 	Err error
 }
@@ -2381,6 +2471,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.extractedURLs = allURLs
 			m.selectedURLIdx = 0
 			m.state = stateExternalURLSelect
+		case "ctrl+g":
+			am := m.activeMessage()
+			if am == nil {
+				m.statusMsg = "No message selected"
+				break
+			}
+			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+				m.statusMsg = "Message details loading, please try again..."
+				break
+			}
+			m.statusMsg = "Opening external editor…"
+			return m, m.viewMessageInEditorCmd()
 		case "?":
 			m.state = stateHelp
 			m = m.updateViewportSize()
@@ -4010,6 +4112,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [a]                 Open attachments pane (if any)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
+		"  [Ctrl+g]            View message in external editor",
 	}
 
 	// Compose Shortcuts Section

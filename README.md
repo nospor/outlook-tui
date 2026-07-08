@@ -142,7 +142,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `Ctrl+s` (or `Ctrl+x`)         | Send the message (when in Compose view)                                                                                                                                                                                                                                |
 | `Ctrl+v` (or `Ctrl+V`/`Shift`) | Paste image from clipboard (when focused on Body in Compose view)                                                                                                                                                                                                      |
 | `Ctrl+f`                       | Open file picker popup to attach local files (when in Compose view)                                                                                                                                                                                                    |
-| `Ctrl+g`                       | Open the compose **body** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running; on exit the body is loaded back into the compose view.                                                                                 |
+| `Ctrl+g`                       | Open the compose **body** or the selected **message** in your external editor (`$EDITOR` / `$VISUAL` / `vi`). The TUI suspends while the editor is running. When viewing a message, after leaving the editor, nothing happens.                                   |
 | `d` (or `Delete`)              | Move the selected message to Deleted Items (Trash)                                                                                                                                                                                                                     |
 | `D`                            | Delete all messages in the selected thread (requires confirmation)                                                                                                                                                                                                     |
 | `U`                            | Recover/undelete the selected message (moves it back to the Inbox)                                                                                                                                                                                                     |
@@ -160,9 +160,13 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 
 ---
 
-## External Editor for Compose Body
+## External Editor for Compose and Viewing
 
-Press **`Ctrl+g`** while in the Compose view to open the email body in your preferred text editor. The TUI is cleanly suspended while the editor is active and restored after you quit the editor. This is ideal for writing long messages in your full-featured editor.
+Press **`Ctrl+g`** in either the main view (when a message is selected) or the Compose view to open the content in your preferred text editor:
+- **Main view**: Opens the selected email (including headers, attachments, and formatted body text) in read-only/view mode. After leaving the editor, nothing happens.
+- **Compose view**: Opens the email body in edit mode. On exit, the updated text is loaded back into the compose field.
+
+The TUI is cleanly suspended while the editor is active and restored after you quit.
 
 The editor is resolved in priority order:
 1. `$EDITOR` environment variable
