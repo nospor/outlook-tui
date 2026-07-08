@@ -188,7 +188,7 @@ Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to m
 Outlook TUI lets you quickly open URLs found in messages:
 - Press **`o`** on a message containing URLs.
 - If there is a single URL, it opens directly.
-- If there are multiple unique URLs, a popup dialog will display a list for you to select from.
+- If there are multiple unique URLs, a popup dialog will display a list for you to select from (recognized GitLab and YouTrack URLs are automatically sorted to the top of the list).
 - **TUI Integrations**:
   - GitLab Merge Request/Pipeline/Job URLs and YouTrack Issue URLs will automatically attempt to open in the external [gitlab-tui](https://github.com/nospor/gitlab-tui) or [yt-tui](https://github.com/nospor/yt-tui) apps, respectively, if they are available in your system `PATH`.
   - If the specialized TUI app is not found in your system `PATH`, these URLs will fall back to opening in your standard web browser.

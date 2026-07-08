@@ -659,9 +659,9 @@ func TestClassifyURL(t *testing.T) {
 
 func TestExtractAllURLsForOpen(t *testing.T) {
 	input := `
+		And some normal link: https://news.ycombinator.com
 		Check this GitLab MR: https://gitlab.example.com/foo/bar/merge_requests/123
 		And YouTrack: https://youtrack.adwanted.com/issue/MTEL-999
-		And some normal link: https://news.ycombinator.com
 	`
 	expected := []string{
 		"https://gitlab.example.com/foo/bar/-/merge_requests/123",

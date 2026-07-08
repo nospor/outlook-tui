@@ -5912,17 +5912,22 @@ func classifyURL(uStr string) (string, string) {
 
 func extractAllURLsForOpen(htmlContent string, subject string) []string {
 	allURLs := extractURLsFromMainMessage(htmlContent, subject)
-	var result []string
+	var recognized []string
+	var others []string
 	seen := make(map[string]bool)
 
 	for _, uStr := range allURLs {
-		_, normalized := classifyURL(uStr)
+		urlType, normalized := classifyURL(uStr)
 		if !seen[normalized] {
 			seen[normalized] = true
-			result = append(result, normalized)
+			if urlType == "gitlab" || urlType == "youtrack" {
+				recognized = append(recognized, normalized)
+			} else {
+				others = append(others, normalized)
+			}
 		}
 	}
-	return result
+	return append(recognized, others...)
 }
 
 func (m mainModel) renderExternalURLDropdown(width int) string {
