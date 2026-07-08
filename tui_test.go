@@ -636,6 +636,12 @@ func TestClassifyURL(t *testing.T) {
 			expectedType: "youtrack",
 			expectedNorm: "https://youtrack.example.com/issue/AB-123",
 		},
+		{
+			name:         "YouTrack Issue URL with Projects path",
+			urlStr:       "https://youtrack.example.com/projects/PROJ/issues/PROJ-123",
+			expectedType: "youtrack",
+			expectedNorm: "https://youtrack.example.com/issue/PROJ-123",
+		},
 	}
 
 	for _, tt := range tests {
@@ -689,6 +695,11 @@ func TestExtractYouTrackURLs(t *testing.T) {
 			name:     "One YouTrack URL",
 			input:    "Please check this issue: https://youtrack.adwanted.com/issue/MTEL-21797. Thanks!",
 			expected: []string{"https://youtrack.adwanted.com/issue/MTEL-21797"},
+		},
+		{
+			name:     "YouTrack URL with Projects format",
+			input:    "Please check this issue: https://youtrack.example.com/projects/PROJ/issues/PROJ-123. Thanks!",
+			expected: []string{"https://youtrack.example.com/issue/PROJ-123"},
 		},
 		{
 			name: "Multiple YouTrack URLs with duplicates, params, and non-issues",

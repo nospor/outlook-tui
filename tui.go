@@ -5800,7 +5800,7 @@ func extractYouTrackURLs(htmlContent string, subject string) []string {
 	allURLs := extractURLsFromMainMessage(htmlContent, subject)
 	var ytURLs []string
 	seen := make(map[string]bool)
-	issueRx := regexp.MustCompile(`(?i)/issue/([a-zA-Z0-9]+-[0-9]+)`)
+	issueRx := regexp.MustCompile(`(?i)/(?:issue|projects/[^/]+/issues)/([a-zA-Z0-9]+-[0-9]+)`)
 	for _, uStr := range allURLs {
 		parsed, err := url.Parse(uStr)
 		if err != nil {
@@ -5898,7 +5898,7 @@ func classifyURL(uStr string) (string, string) {
 	// 2. Check YouTrack
 	host := strings.ToLower(parsed.Host)
 	if strings.Contains(host, "youtrack") {
-		issueRx := regexp.MustCompile(`(?i)/issue/([a-zA-Z0-9]+-[0-9]+)`)
+		issueRx := regexp.MustCompile(`(?i)/(?:issue|projects/[^/]+/issues)/([a-zA-Z0-9]+-[0-9]+)`)
 		matches := issueRx.FindStringSubmatch(parsed.Path)
 		if len(matches) >= 2 {
 			issueID := matches[1]
