@@ -1,4 +1,14 @@
 
+## [0.5.4] - 2026-07-08
+
+### Features
+
+- *(config)* Add browser_command option and browser fallback for URL opening ([1a99b6e](https://github.com/nospor/outlook-tui/commit/1a99b6e3a2c3ceb836f1c5a744c783d0a189936f))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.3 [skip ci] ([1c68771](https://github.com/nospor/outlook-tui/commit/1c6877184873479b1733a6f94e1ef83838309c32))
+
 ## [0.5.3] - 2026-07-07
 
 ### Features
