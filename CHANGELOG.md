@@ -1,4 +1,14 @@
 
+## [0.5.7] - 2026-07-08
+
+### Bug Fixes
+
+- Make contact suggestions dropdown scroll dynamically with cursor ([4f18623](https://github.com/nospor/outlook-tui/commit/4f18623862696b328993c090ea3dbcf94ec52aee))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.6 [skip ci] ([d3425b0](https://github.com/nospor/outlook-tui/commit/d3425b038bb5736c8ece4cc2e567f265d0b8c7f6))
+
 ## [0.5.6] - 2026-07-08
 
 ### Features
