@@ -3891,7 +3891,29 @@ func (m mainModel) renderContactsPopup() string {
 		maxContacts = len(m.filteredContacts)
 	}
 
-	for i := 0; i < maxContacts; i++ {
+	start := m.contactsStartIdx
+	if start < 0 {
+		start = 0
+	}
+	if start > len(m.filteredContacts)-maxContacts {
+		start = len(m.filteredContacts) - maxContacts
+	}
+	end := start + maxContacts
+
+	width := m.width - 26
+	if width < 40 {
+		width = 40
+	}
+
+	if start > 0 {
+		moreText := fmt.Sprintf(" ... and %d more ...", start)
+		if len(moreText) < width {
+			moreText = moreText + strings.Repeat(" ", width-len(moreText))
+		}
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(moreText))
+	}
+
+	for i := start; i < end; i++ {
 		contact := m.filteredContacts[i]
 
 		var line string
@@ -3902,10 +3924,6 @@ func (m mainModel) renderContactsPopup() string {
 		}
 
 		// pad the line to align with popup width
-		width := m.width - 26
-		if width < 40 {
-			width = 40
-		}
 		if len(line) < width {
 			line = line + strings.Repeat(" ", width-len(line))
 		} else if len(line) > width {
@@ -3925,12 +3943,9 @@ func (m mainModel) renderContactsPopup() string {
 		rows = append(rows, line)
 	}
 
-	if len(m.filteredContacts) > maxContacts {
-		moreText := fmt.Sprintf(" ... and %d more ...", len(m.filteredContacts)-maxContacts)
-		width := m.width - 26
-		if width < 40 {
-			width = 40
-		}
+	if end < len(m.filteredContacts) {
+		remainingBelow := len(m.filteredContacts) - end
+		moreText := fmt.Sprintf(" ... and %d more ...", remainingBelow)
 		if len(moreText) < width {
 			moreText = moreText + strings.Repeat(" ", width-len(moreText))
 		}

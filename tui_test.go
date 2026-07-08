@@ -559,6 +559,16 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	if m.contactsStartIdx != 0 {
 		t.Errorf("expected contactsStartIdx to be 0 initially, got %d", m.contactsStartIdx)
 	}
+	popupInit := m.renderContactsPopup()
+	if !strings.Contains(popupInit, "C1") || !strings.Contains(popupInit, "C5") {
+		t.Errorf("expected initially to contain C1 and C5, got: %q", popupInit)
+	}
+	if strings.Contains(popupInit, "C6") {
+		t.Errorf("expected initially NOT to contain C6, got: %q", popupInit)
+	}
+	if !strings.Contains(popupInit, "and 3 more") {
+		t.Errorf("expected initially to show 'and 3 more', got: %q", popupInit)
+	}
 
 	// Move down 4 times (contactsSelected = 4)
 	curr := m
@@ -582,6 +592,22 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	if curr.contactsStartIdx != 1 {
 		t.Errorf("expected contactsStartIdx to scroll to 1, got %d", curr.contactsStartIdx)
 	}
+	popupScroll := curr.renderContactsPopup()
+	if strings.Contains(popupScroll, "C1") {
+		t.Errorf("expected C1 to be scrolled out, got: %q", popupScroll)
+	}
+	if !strings.Contains(popupScroll, "C2") || !strings.Contains(popupScroll, "C6") {
+		t.Errorf("expected to contain C2 through C6, got: %q", popupScroll)
+	}
+	if strings.Contains(popupScroll, "C7") {
+		t.Errorf("expected NOT to contain C7 yet, got: %q", popupScroll)
+	}
+	if !strings.Contains(popupScroll, "and 1 more") {
+		t.Errorf("expected top indicator 'and 1 more', got: %q", popupScroll)
+	}
+	if !strings.Contains(popupScroll, "and 2 more") {
+		t.Errorf("expected bottom indicator 'and 2 more', got: %q", popupScroll)
+	}
 
 	// Move down 2 more times (contactsSelected = 7) -> should scroll startIdx to 3
 	for i := 0; i < 2; i++ {
@@ -593,6 +619,16 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	}
 	if curr.contactsStartIdx != 3 {
 		t.Errorf("expected contactsStartIdx to scroll to 3, got %d", curr.contactsStartIdx)
+	}
+	popupEnd := curr.renderContactsPopup()
+	if strings.Contains(popupEnd, "C3") {
+		t.Errorf("expected C3 to be scrolled out, got: %q", popupEnd)
+	}
+	if !strings.Contains(popupEnd, "C4") || !strings.Contains(popupEnd, "C8") {
+		t.Errorf("expected to contain C4 through C8, got: %q", popupEnd)
+	}
+	if !strings.Contains(popupEnd, "and 3 more") {
+		t.Errorf("expected top indicator 'and 3 more', got: %q", popupEnd)
 	}
 
 	// Move down once more -> wrap around to 0, startIdx resets to 0
