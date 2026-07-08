@@ -1,4 +1,14 @@
 
+## [0.5.8] - 2026-07-08
+
+### Styling
+
+- *(tui)* Move status line below keybinds footer and apply theme colors ([7dff955](https://github.com/nospor/outlook-tui/commit/7dff95521db40e0a215c027bbb53c62fa96e8c59))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.7 [skip ci] ([74e264c](https://github.com/nospor/outlook-tui/commit/74e264cd9be4214b007c4fc4879960c684c18eb2))
+
 ## [0.5.7] - 2026-07-08
 
 ### Bug Fixes
