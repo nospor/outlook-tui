@@ -818,6 +818,29 @@ func openGitLabTuiCmd(urlStr string) tea.Cmd {
 	})
 }
 
+type browserFinishedMsg struct {
+	Err error
+}
+
+// openBrowserCmd launches the external browser command (configured by browser_command) with the given URL.
+func (m mainModel) openBrowserCmd(urlStr string) tea.Cmd {
+	return func() tea.Msg {
+		browserCmd := m.config.BrowserCommand
+		if browserCmd == "" {
+			browserCmd = "xdg-open"
+		}
+		parts := strings.Fields(browserCmd)
+		if len(parts) == 0 {
+			parts = []string{"xdg-open"}
+		}
+		args := append(parts[1:], urlStr)
+		c := exec.Command(parts[0], args...)
+		err := c.Start()
+		return browserFinishedMsg{Err: err}
+	}
+}
+
+
 // Tick command for background refresh
 type tickMsg time.Time
 
@@ -1791,7 +1814,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
 				fetchFoldersCmd(m.graphClient),
 			)
-	}
+		}
 
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
@@ -1831,6 +1854,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("gitlab-tui finished with error: %v", msg.Err)
 		} else {
 			m.statusMsg = "gitlab-tui closed"
+		}
+		return m, nil
+
+	case browserFinishedMsg:
+		m.state = stateMain
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to launch browser: %v", msg.Err)
+		} else {
+			m.statusMsg = "Link opened in browser"
 		}
 		return m, nil
 
@@ -2315,48 +2347,38 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Message details loading, please try again..."
 				break
 			}
-			ytURLs := extractYouTrackURLs(m.detailMessage.Body.Content, m.detailMessage.Subject)
-			glURLs := extractGitLabURLs(m.detailMessage.Body.Content, m.detailMessage.Subject)
-			totalCount := len(ytURLs) + len(glURLs)
+			allURLs := extractAllURLsForOpen(m.detailMessage.Body.Content, m.detailMessage.Subject)
+			totalCount := len(allURLs)
 
 			if totalCount == 0 {
-				m.statusMsg = "No YouTrack or GitLab URLs found in the message"
+				m.statusMsg = "No URLs found in the message"
 				break
 			}
 
 			if totalCount == 1 {
-				var targetURL string
-				var isGitLab bool
-				if len(glURLs) == 1 {
-					targetURL = glURLs[0]
-					isGitLab = true
-				} else {
-					targetURL = ytURLs[0]
-					isGitLab = false
+				targetURL := allURLs[0]
+				urlType, normURL := classifyURL(targetURL)
+				if urlType == "gitlab" {
+					if _, err := exec.LookPath("gitlab-tui"); err == nil {
+						m.state = stateLoading
+						m.statusMsg = "Launching gitlab-tui..."
+						return m, openGitLabTuiCmd(normURL)
+					}
+				} else if urlType == "youtrack" {
+					if _, err := exec.LookPath("yt-tui"); err == nil {
+						m.state = stateLoading
+						m.statusMsg = "Launching yt-tui..."
+						return m, openYouTrackTuiCmd(normURL)
+					}
 				}
 
-				if isGitLab {
-					if _, err := exec.LookPath("gitlab-tui"); err != nil {
-						m.state = stateGitLabInstallPrompt
-						break
-					}
-					m.state = stateLoading
-					m.statusMsg = "Launching gitlab-tui..."
-					return m, openGitLabTuiCmd(targetURL)
-				} else {
-					if _, err := exec.LookPath("yt-tui"); err != nil {
-						m.state = stateYouTrackInstallPrompt
-						break
-					}
-					m.state = stateLoading
-					m.statusMsg = "Launching yt-tui..."
-					return m, openYouTrackTuiCmd(targetURL)
-				}
+				m.state = stateMain
+				m.statusMsg = "Opening link in browser..."
+				return m, m.openBrowserCmd(normURL)
 			}
 
 			// Multiple URLs: show popup/modal
-			m.extractedURLs = append([]string{}, ytURLs...)
-			m.extractedURLs = append(m.extractedURLs, glURLs...)
+			m.extractedURLs = allURLs
 			m.selectedURLIdx = 0
 			m.state = stateExternalURLSelect
 		case "?":
@@ -2656,23 +2678,24 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.selectedURLIdx >= 0 && m.selectedURLIdx < len(m.extractedURLs) {
 				urlStr := m.extractedURLs[m.selectedURLIdx]
-				if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
-					if _, err := exec.LookPath("gitlab-tui"); err != nil {
-						m.state = stateGitLabInstallPrompt
-						break
+				urlType, normURL := classifyURL(urlStr)
+				if urlType == "gitlab" {
+					if _, err := exec.LookPath("gitlab-tui"); err == nil {
+						m.state = stateLoading
+						m.statusMsg = "Launching gitlab-tui..."
+						return m, openGitLabTuiCmd(normURL)
 					}
-					m.state = stateLoading
-					m.statusMsg = "Launching gitlab-tui..."
-					return m, openGitLabTuiCmd(urlStr)
-				} else {
-					if _, err := exec.LookPath("yt-tui"); err != nil {
-						m.state = stateYouTrackInstallPrompt
-						break
+				} else if urlType == "youtrack" {
+					if _, err := exec.LookPath("yt-tui"); err == nil {
+						m.state = stateLoading
+						m.statusMsg = "Launching yt-tui..."
+						return m, openYouTrackTuiCmd(normURL)
 					}
-					m.state = stateLoading
-					m.statusMsg = "Launching yt-tui..."
-					return m, openYouTrackTuiCmd(urlStr)
 				}
+
+				m.state = stateMain
+				m.statusMsg = "Opening link in browser..."
+				return m, m.openBrowserCmd(normURL)
 			}
 		}
 
@@ -3113,13 +3136,14 @@ var (
 	ColorBg      = "#1E1E2E"
 	ColorText    = "#CDD6F4"
 	ColorSubtext = "#A6ADC8"
-	ColorViolet  = "#CBA6F7" // Primary accent
-	ColorCyan    = "#89B4FA" // Secondary accent
-	ColorGreen   = "#A6E3A1" // Success
-	ColorYellow  = "#F9E2AF" // Warning
-	ColorRed     = "#F38BA8" // Error
-	ColorSurface = "#313244" // Panel background
-	ColorOverlay = "#45475A" // Highlight border
+	ColorViolet  = "#CBA6F7"             // Primary accent
+	ColorCyan    = "#89B4FA"             // Secondary accent
+	ColorGreen   = "#A6E3A1"             // Success
+	ColorYellow  = "#F9E2AF"             // Warning
+	ColorRed     = "#F38BA8"             // Error
+	ColorSurface = "#313244"             // Panel background
+	ColorOverlay = "#45475A"             // Highlight border
+	BgSeq        = "\x1b[48;2;49;50;68m" // truecolor escape for ColorSurface background
 )
 
 func applyTheme(themeName string) {
@@ -3192,6 +3216,13 @@ func applyTheme(themeName string) {
 		Foreground(lipgloss.Color(ColorText)).
 		Background(lipgloss.Color(ColorSurface)).
 		Padding(0, 1)
+
+	// Update BgSeq
+	var r, g, b int
+	if len(ColorSurface) == 7 && ColorSurface[0] == '#' {
+		_, _ = fmt.Sscanf(ColorSurface, "#%02x%02x%02x", &r, &g, &b)
+	}
+	BgSeq = fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
 }
 
 var (
@@ -4430,7 +4461,7 @@ func overlayLines(base, overlay string, x, y int) string {
 
 		for j, oCell := range oCells {
 			pos := x + j
-			bgSeq := "\x1b[48;2;49;50;68m" // truecolor escape for ColorSurface (#313244)
+			bgSeq := BgSeq
 			if oCell.style == "" {
 				oCell.style = bgSeq
 			} else {
@@ -5834,6 +5865,66 @@ func extractGitLabURLs(htmlContent string, subject string) []string {
 	return gitlabURLs
 }
 
+func classifyURL(uStr string) (string, string) {
+	parsed, err := url.Parse(uStr)
+	if err != nil {
+		return "normal", uStr
+	}
+
+	// 1. Check GitLab
+	mrRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?merge_requests/([0-9]+)`)
+	pipeRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?pipelines/([0-9]+)`)
+	jobRx := regexp.MustCompile(`(?i)https?://[^/]+/(.+?)/(?:-/)?jobs/([0-9]+)`)
+
+	if matches := mrRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+		projectPath := matches[1]
+		mrNum := matches[2]
+		normalized := fmt.Sprintf("%s://%s/%s/-/merge_requests/%s", parsed.Scheme, parsed.Host, projectPath, mrNum)
+		return "gitlab", normalized
+	}
+	if matches := pipeRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+		projectPath := matches[1]
+		pipeNum := matches[2]
+		normalized := fmt.Sprintf("%s://%s/%s/-/pipelines/%s", parsed.Scheme, parsed.Host, projectPath, pipeNum)
+		return "gitlab", normalized
+	}
+	if matches := jobRx.FindStringSubmatch(uStr); len(matches) >= 3 {
+		projectPath := matches[1]
+		jobNum := matches[2]
+		normalized := fmt.Sprintf("%s://%s/%s/-/jobs/%s", parsed.Scheme, parsed.Host, projectPath, jobNum)
+		return "gitlab", normalized
+	}
+
+	// 2. Check YouTrack
+	host := strings.ToLower(parsed.Host)
+	if strings.Contains(host, "youtrack") {
+		issueRx := regexp.MustCompile(`(?i)/issue/([a-zA-Z0-9]+-[0-9]+)`)
+		matches := issueRx.FindStringSubmatch(parsed.Path)
+		if len(matches) >= 2 {
+			issueID := matches[1]
+			normalized := fmt.Sprintf("%s://%s/issue/%s", parsed.Scheme, parsed.Host, issueID)
+			return "youtrack", normalized
+		}
+	}
+
+	return "normal", uStr
+}
+
+func extractAllURLsForOpen(htmlContent string, subject string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent, subject)
+	var result []string
+	seen := make(map[string]bool)
+
+	for _, uStr := range allURLs {
+		_, normalized := classifyURL(uStr)
+		if !seen[normalized] {
+			seen[normalized] = true
+			result = append(result, normalized)
+		}
+	}
+	return result
+}
+
 func (m mainModel) renderExternalURLDropdown(width int) string {
 	dropdownWidth := width - 4
 	if dropdownWidth < 20 {
@@ -5841,7 +5932,7 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 	}
 
 	var rows []string
-	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT LINK TO OPEN IN TUI: "))
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT LINK TO OPEN: "))
 
 	maxVisible := 10
 	totalURLs := len(m.extractedURLs)
@@ -5872,9 +5963,12 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 			indicator = "> "
 		}
 
-		prefix := "[YouTrack] "
-		if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
+		urlType, _ := classifyURL(urlStr)
+		prefix := "[Link]     "
+		if urlType == "gitlab" {
 			prefix = "[GitLab]   "
+		} else if urlType == "youtrack" {
+			prefix = "[YouTrack] "
 		}
 
 		line := fmt.Sprintf("%s%s%s", indicator, prefix, urlStr)

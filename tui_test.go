@@ -605,6 +605,75 @@ func TestExtractURLsFromMainMessage(t *testing.T) {
 	}
 }
 
+func TestClassifyURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		urlStr       string
+		expectedType string
+		expectedNorm string
+	}{
+		{
+			name:         "Normal URL",
+			urlStr:       "https://google.com/search?q=test",
+			expectedType: "normal",
+			expectedNorm: "https://google.com/search?q=test",
+		},
+		{
+			name:         "GitLab Merge Request URL",
+			urlStr:       "https://gitlab.example.com/group/project/merge_requests/42",
+			expectedType: "gitlab",
+			expectedNorm: "https://gitlab.example.com/group/project/-/merge_requests/42",
+		},
+		{
+			name:         "GitLab Merge Request URL with hyphen",
+			urlStr:       "https://gitlab.example.com/group/project/-/merge_requests/42",
+			expectedType: "gitlab",
+			expectedNorm: "https://gitlab.example.com/group/project/-/merge_requests/42",
+		},
+		{
+			name:         "YouTrack Issue URL",
+			urlStr:       "https://youtrack.example.com/issue/AB-123",
+			expectedType: "youtrack",
+			expectedNorm: "https://youtrack.example.com/issue/AB-123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			urlType, norm := classifyURL(tt.urlStr)
+			if urlType != tt.expectedType {
+				t.Errorf("expected type %q, got %q", tt.expectedType, urlType)
+			}
+			if norm != tt.expectedNorm {
+				t.Errorf("expected normalized %q, got %q", tt.expectedNorm, norm)
+			}
+		})
+	}
+}
+
+func TestExtractAllURLsForOpen(t *testing.T) {
+	input := `
+		Check this GitLab MR: https://gitlab.example.com/foo/bar/merge_requests/123
+		And YouTrack: https://youtrack.adwanted.com/issue/MTEL-999
+		And some normal link: https://news.ycombinator.com
+	`
+	expected := []string{
+		"https://gitlab.example.com/foo/bar/-/merge_requests/123",
+		"https://youtrack.adwanted.com/issue/MTEL-999",
+		"https://news.ycombinator.com",
+	}
+
+	actual := extractAllURLsForOpen(input, "")
+	if len(actual) != len(expected) {
+		t.Fatalf("expected %d URLs, got %d: %v", len(expected), len(actual), actual)
+	}
+	for i := range expected {
+		if actual[i] != expected[i] {
+			t.Errorf("at index %d: expected %q, got %q", i, expected[i], actual[i])
+		}
+	}
+}
+
 func TestExtractYouTrackURLs(t *testing.T) {
 	tests := []struct {
 		name     string

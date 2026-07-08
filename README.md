@@ -105,6 +105,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `theme`: The UI color theme (defaults to `"catppuccin"`).
   - **`"catppuccin"` (default)** — A gorgeous theme based on Catppuccin Mocha colors.
   - **`"teams"`** — A theme mimicking teams-tui-go palette
+* `browser_command`: The command/executable used to open URLs in the browser (defaults to `"xdg-open"`). You can change this to any browser command you prefer (e.g., `"google-chrome"`, `"firefox"`).
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -119,7 +120,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "image_viewer": "sxiv",
   "attachment_dir": "~/Downloads/attachments",
   "terminal_bell": 1,
-  "theme": "teams"
+  "theme": "teams",
+  "browser_command": "xdg-open"
 }
 ```
 
@@ -150,7 +152,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `M`                            | Load the next portion/page of 50 messages in the selected folder                                                                                                                                                                                                       |
 | `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
-| `o`                            | Extract YouTrack issues or GitLab MR/pipeline/job URLs from the selected message and open in the external [yt-tui](https://github.com/nospor/yt-tui) / [gitlab-tui](https://github.com/nospor/gitlab-tui) app (shows a popup list if multiple unique URLs exist, ignoring quoted/original text unless it is a forwarded email) |
+| `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
 | `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
 | `Esc`                          | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)                                                                                                                                     |
@@ -181,16 +183,17 @@ export EDITOR='nvim -u NONE'   # open without user config
 
 Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
 
-## TUI Integrations (`yt-tui` & `gitlab-tui`)
+## URL Opening & TUI Integrations (`yt-tui` & `gitlab-tui`)
 
-Outlook TUI integrates with external TUI apps to let you open issues and merge requests directly in the terminal:
-- Press **`o`** on a message containing YouTrack issues or GitLab merge request/pipeline/job URLs.
-- If there is a single URL, it opens directly in the corresponding TUI app (`yt-tui` or `gitlab-tui`).
+Outlook TUI lets you quickly open URLs found in messages:
+- Press **`o`** on a message containing URLs.
+- If there is a single URL, it opens directly.
 - If there are multiple unique URLs, a popup dialog will display a list for you to select from.
-- To use these integrations, you must have the respective binary installed and available in your shell's `PATH`:
-  - **[yt-tui](https://github.com/nospor/yt-tui)**: A sleek, keyboard-driven terminal dashboard for JetBrains YouTrack.
-  - **[gitlab-tui](https://github.com/nospor/gitlab-tui)**: A terminal UI (TUI) application for managing GitLab projects — Merge Requests, Pipelines, and Issues — from your terminal.
-- If a binary is not found, the app will show a popup with download and installation information.
+- **TUI Integrations**:
+  - GitLab Merge Request/Pipeline/Job URLs and YouTrack Issue URLs will automatically attempt to open in the external [gitlab-tui](https://github.com/nospor/gitlab-tui) or [yt-tui](https://github.com/nospor/yt-tui) apps, respectively, if they are available in your system `PATH`.
+  - If the specialized TUI app is not found in your system `PATH`, these URLs will fall back to opening in your standard web browser.
+- **Browser Fallback / Other Links**:
+  - General links and TUI links (without their TUI apps installed) are opened in the browser using the configured `browser_command` (which defaults to `"xdg-open"` but can be changed in `config.json`).
 
 ---
 

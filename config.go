@@ -20,6 +20,7 @@ type Config struct {
 	AttachmentDir   string   `json:"attachment_dir"`
 	TerminalBell    int      `json:"terminal_bell"` // 0 = disabled, 1 = enabled (default)
 	Theme           string   `json:"theme"`         // "catppuccin" (default) or "teams"
+	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
 }
 
 func GetConfigDir() (string, error) {
@@ -47,7 +48,7 @@ func LoadConfig() (Config, error) {
 		} else {
 			defaultAttachmentDir = "."
 		}
-		return Config{
+		cfg := Config{
 			ClientID:       "",
 			TenantID:       "common",
 			RefreshTimeMin: 5,
@@ -57,7 +58,10 @@ func LoadConfig() (Config, error) {
 			AttachmentDir:  defaultAttachmentDir,
 			TerminalBell:   1,
 			Theme:          "catppuccin",
-		}, nil
+			BrowserCommand: "xdg-open",
+		}
+		_ = SaveConfig(cfg)
+		return cfg, nil
 	}
 
 	cfg := Config{
@@ -68,6 +72,7 @@ func LoadConfig() (Config, error) {
 		ScrollLines:    1,
 		TerminalBell:   1,
 		Theme:          "catppuccin",
+		BrowserCommand: "xdg-open",
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
@@ -75,6 +80,10 @@ func LoadConfig() (Config, error) {
 
 	if cfg.TenantID == "" {
 		cfg.TenantID = "common"
+	}
+
+	if cfg.BrowserCommand == "" {
+		cfg.BrowserCommand = "xdg-open"
 	}
 
 	if cfg.RefreshTimeMin <= 0 {
@@ -115,7 +124,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") {
 		_ = SaveConfig(cfg)
 	}
 
@@ -128,6 +137,9 @@ func SaveConfig(cfg Config) error {
 	}
 	if cfg.ScrollLines <= 0 {
 		cfg.ScrollLines = 1
+	}
+	if cfg.BrowserCommand == "" {
+		cfg.BrowserCommand = "xdg-open"
 	}
 	dir, err := GetConfigDir()
 	if err != nil {

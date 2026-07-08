@@ -42,6 +42,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.Theme != "catppuccin" {
 		t.Errorf("expected default Theme to be 'catppuccin', got %q", cfg.Theme)
 	}
+	if cfg.BrowserCommand != "xdg-open" {
+		t.Errorf("expected default BrowserCommand to be 'xdg-open', got %q", cfg.BrowserCommand)
+	}
 	expectedDefaultDir := filepath.Join(tempDir, "Downloads")
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected default AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
@@ -84,6 +87,9 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.Theme != "catppuccin" {
 		t.Errorf("expected populated Theme to be 'catppuccin', got %q", cfg.Theme)
+	}
+	if cfg.BrowserCommand != "xdg-open" {
+		t.Errorf("expected populated BrowserCommand to be 'xdg-open', got %q", cfg.BrowserCommand)
 	}
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected populated AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
@@ -128,6 +134,10 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have Theme 'catppuccin', got %q", savedCfg.Theme)
 	}
 
+	if savedCfg.BrowserCommand != "xdg-open" {
+		t.Errorf("expected saved config to have BrowserCommand 'xdg-open', got %q", savedCfg.BrowserCommand)
+	}
+
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
@@ -137,6 +147,7 @@ func TestConfigDefaults(t *testing.T) {
 	cfg.AttachmentDir = "/custom/download/dir"
 	cfg.TerminalBell = 0
 	cfg.Theme = "teams"
+	cfg.BrowserCommand = "google-chrome"
 	err = SaveConfig(cfg)
 	if err != nil {
 		t.Fatalf("unexpected error saving config: %v", err)
@@ -170,5 +181,8 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.Theme != "teams" {
 		t.Errorf("expected custom Theme to be 'teams', got %q", cfg.Theme)
+	}
+	if cfg.BrowserCommand != "google-chrome" {
+		t.Errorf("expected custom BrowserCommand to be 'google-chrome', got %q", cfg.BrowserCommand)
 	}
 }
