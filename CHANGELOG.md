@@ -1,4 +1,14 @@
 
+## [0.5.9] - 2026-07-09
+
+### Bug Fixes
+
+- *(tui)* Improve visibility of inactive fields in compose/reply view ([96752df](https://github.com/nospor/outlook-tui/commit/96752df59e228ab80e010a5eba17399e9623b420))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.8 [skip ci] ([d5b1f11](https://github.com/nospor/outlook-tui/commit/d5b1f11a71b6fdf9bf9232b07f7d75c1936a1308))
+
 ## [0.5.8] - 2026-07-08
 
 ### Styling
