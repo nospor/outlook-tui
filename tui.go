@@ -3494,23 +3494,43 @@ func (m mainModel) View() string {
 	case stateCompose, stateComposeCancelConfirm:
 		s.WriteString("   " + headerStyle.Render("COMPOSE NEW EMAIL") + "\n\n")
 
-		toBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
-		ccBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
-		subjBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
-		bodyBorder := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay))
+		var toLabel, ccLabel, subjLabel, bodyLabel string
+		toValStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+		ccValStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+		subjValStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+		bodyValStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
+
+		activeLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Bold(true)
+		inactiveLabelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext))
 
 		switch m.composeStep {
 		case 0:
-			toBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+			toLabel = activeLabelStyle.Render("To:")
+			toValStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText))
+			ccLabel = inactiveLabelStyle.Render("Cc:")
+			subjLabel = inactiveLabelStyle.Render("Subject:")
+			bodyLabel = inactiveLabelStyle.Render("Body:")
 		case 1:
-			ccBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+			toLabel = inactiveLabelStyle.Render("To:")
+			ccLabel = activeLabelStyle.Render("Cc:")
+			ccValStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText))
+			subjLabel = inactiveLabelStyle.Render("Subject:")
+			bodyLabel = inactiveLabelStyle.Render("Body:")
 		case 2:
-			subjBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+			toLabel = inactiveLabelStyle.Render("To:")
+			ccLabel = inactiveLabelStyle.Render("Cc:")
+			subjLabel = activeLabelStyle.Render("Subject:")
+			subjValStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText))
+			bodyLabel = inactiveLabelStyle.Render("Body:")
 		case 3:
-			bodyBorder = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet))
+			toLabel = inactiveLabelStyle.Render("To:")
+			ccLabel = inactiveLabelStyle.Render("Cc:")
+			subjLabel = inactiveLabelStyle.Render("Subject:")
+			bodyLabel = activeLabelStyle.Render("Body:")
+			bodyValStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText))
 		}
 
-		s.WriteString("   To:\n   " + toBorder.Render(m.composeTo.View()) + "\n")
+		s.WriteString("   " + toLabel + "\n   " + toValStyle.Render(m.composeTo.View()) + "\n")
 		if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
 			popupContent := m.renderContactsPopup()
 			lines := strings.Split(popupContent, "\n")
@@ -3524,7 +3544,7 @@ func (m mainModel) View() string {
 			s.WriteString("\n")
 		}
 
-		s.WriteString("   Cc:\n   " + ccBorder.Render(m.composeCc.View()) + "\n")
+		s.WriteString("   " + ccLabel + "\n   " + ccValStyle.Render(m.composeCc.View()) + "\n")
 		if m.config.UseSQLite != 0 && m.composeStep == 1 && len(m.filteredContacts) > 0 {
 			popupContent := m.renderContactsPopup()
 			lines := strings.Split(popupContent, "\n")
@@ -3538,11 +3558,11 @@ func (m mainModel) View() string {
 			s.WriteString("\n")
 		}
 
-		s.WriteString("   Subject:\n   " + subjBorder.Render(m.composeSubject.View()) + "\n\n")
+		s.WriteString("   " + subjLabel + "\n   " + subjValStyle.Render(m.composeSubject.View()) + "\n\n")
 		{
-			renderedBody := bodyBorder.Render(m.composeBody.View())
+			renderedBody := bodyValStyle.Render(m.composeBody.View())
 			bodyLines := strings.Split(renderedBody, "\n")
-			s.WriteString("   Body:\n")
+			s.WriteString("   " + bodyLabel + "\n")
 			for _, bl := range bodyLines {
 				s.WriteString("   " + bl + "\n")
 			}
