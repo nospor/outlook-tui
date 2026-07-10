@@ -1957,7 +1957,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		// Background tick: fetch folders and current messages silently
+		// Background tick: fetch folders and current messages silently.
+		// Always reschedule the next tick regardless of state, so the chain
+		// is never permanently broken (e.g. when a tick fires while composing,
+		// viewing help, or in any other non-main state).
 		if m.state == stateMain && m.graphClient != nil {
 			var bgCmds []tea.Cmd
 			// Fetch folders to update counts
@@ -1991,6 +1994,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tickCmd(), // Schedule next tick
 			)
 		}
+		// Not in stateMain: skip fetching but keep the tick chain alive.
+		cmds = append(cmds, m.tickCmd())
 	}
 
 	// State-specific input handling
