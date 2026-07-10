@@ -1,4 +1,14 @@
 
+## [0.6.0] - 2026-07-10
+
+### Bug Fixes
+
+- Always reschedule tick to prevent auto-refresh chain from breaking ([f721ed6](https://github.com/nospor/outlook-tui/commit/f721ed608390b2ee1cbf3598f957f55f4effa669))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.5.9 [skip ci] ([c3bc95d](https://github.com/nospor/outlook-tui/commit/c3bc95daa4fa70470a57fbe445796d5b2f5e64c8))
+
 ## [0.5.9] - 2026-07-09
 
 ### Bug Fixes
