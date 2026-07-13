@@ -246,6 +246,26 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    `<td bgcolor="yellow">Alert</td>`,
 			expected: "\x1b[38;2;255;255;0m Alert\x1b[39m",
 		},
+		{
+			input:    `Before <div style="display:none">Hidden text</div> After`,
+			expected: "Before  After",
+		},
+		{
+			input:    `<div style="display:none; font-size:0px">Outer <span>nested <b>bold</b></span> text</div>Visible`,
+			expected: "Visible",
+		},
+		{
+			input:    `Line 1<br><span style="max-height:0px; overflow:hidden">Hidden Line<br></span>Line 2`,
+			expected: "Line 1\nLine 2",
+		},
+		{
+			input:    `<span style="font-size:10px">Not hidden</span>`,
+			expected: "Not hidden",
+		},
+		{
+			input:    `Hello <span style="mso-hide: all">hidden</span> world`,
+			expected: "Hello  world",
+		},
 	}
 
 	for _, tt := range tests {
@@ -255,6 +275,72 @@ func TestFormatBodyContent(t *testing.T) {
 		}
 	}
 }
+
+func TestGreetingPersonalization(t *testing.T) {
+	// Test getRecipientFirstName
+	recipients := []Recipient{
+		{EmailAddress: EmailAddress{Name: "Robert Nodzewski", Address: "robert.nodzewski@uk.adwanted.com"}},
+	}
+	firstName := getRecipientFirstName(recipients, "robert.nodzewski@uk.adwanted.com")
+	if firstName != "Robert" {
+		t.Errorf("expected 'Robert', got %q", firstName)
+	}
+
+	// Test fallback to first recipient name when userEmail is empty
+	firstNameEmptyEmail := getRecipientFirstName(recipients, "")
+	if firstNameEmptyEmail != "Robert" {
+		t.Errorf("expected 'Robert' with empty user email, got %q", firstNameEmptyEmail)
+	}
+
+	// Test insertRecipientGreeting
+	tests := []struct {
+		input     string
+		firstName string
+		expected  string
+	}{
+		{
+			input:     "Hi,",
+			firstName: "Robert",
+			expected:  "Hi, Robert",
+		},
+		{
+			input:     "Hi, \n\nSome body text",
+			firstName: "Robert",
+			expected:  "Hi, Robert\n\nSome body text",
+		},
+		{
+			input:     "Hello\n",
+			firstName: "Robert",
+			expected:  "Hello, Robert\n",
+		},
+		{
+			input:     "Dear,",
+			firstName: "Robert",
+			expected:  "Dear, Robert",
+		},
+		{
+			input:     "Hi, how are you?",
+			firstName: "Robert",
+			expected:  "Hi, how are you?",
+		},
+	}
+
+	for _, tt := range tests {
+		actual := insertRecipientGreeting(tt.input, tt.firstName)
+		if actual != tt.expected {
+			t.Errorf("insertRecipientGreeting(%q, %q) = %q; expected %q", tt.input, tt.firstName, actual, tt.expected)
+		}
+	}
+
+	// Test integration with formatBodyContent
+	htmlInput := "Hi, "
+	formatted := formatBodyContent(htmlInput, "Robert")
+	expectedFormatted := "Hi, Robert"
+	if formatted != expectedFormatted {
+		t.Errorf("formatBodyContent(%q, 'Robert') = %q; expected %q", htmlInput, formatted, expectedFormatted)
+	}
+}
+
 
 func TestStripANSICodes(t *testing.T) {
 	tests := []struct {

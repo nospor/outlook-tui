@@ -857,7 +857,7 @@ func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
 	sb.WriteString("\n" + strings.Repeat("-", 80) + "\n\n")
 
 	// Message body content formatted (with HTML stripped, ANSI stripped)
-	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content))
+	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content, m.getRecipientName(m.detailMessage)))
 	sb.WriteString(plainBody)
 	sb.WriteString("\n")
 
@@ -1142,7 +1142,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		m.detailMessage = am
 		m.attachments = am.Attachments
 		m = m.updateViewportSize()
-		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content), m.detailViewport.Width))
+		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content, m.getRecipientName(am)), m.detailViewport.Width))
 		m.detailViewport.GotoTop()
 
 		hasInline := am.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(am.Body.Content)
@@ -1178,7 +1178,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 			m.detailMessage = cached
 			m.attachments = cached.Attachments
 			m = m.updateViewportSize()
-			m.detailViewport.SetContent(wrapText(formatBodyContent(cached.Body.Content), m.detailViewport.Width))
+			m.detailViewport.SetContent(wrapText(formatBodyContent(cached.Body.Content, m.getRecipientName(cached)), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 
 			// Update in-memory collections so they have the loaded body and attachments too
@@ -1285,7 +1285,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m = m.updateViewportSize()
 		if m.detailMessage != nil {
-			m.detailViewport.SetContent(wrapText(formatBodyContent(m.detailMessage.Body.Content), m.detailViewport.Width))
+			m.detailViewport.SetContent(wrapText(formatBodyContent(m.detailMessage.Body.Content, m.getRecipientName(m.detailMessage)), m.detailViewport.Width))
 		}
 		if m.state == stateHelp {
 			m.helpViewport.SetContent(m.renderHelpContent())
@@ -1561,7 +1561,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedAttach = 0
 
 			m = m.updateViewportSize()
-			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content), m.detailViewport.Width))
+			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content, m.getRecipientName(msg.Message)), m.detailViewport.Width))
 			m.detailViewport.GotoTop()
 
 			// Mark as read and cache body in local UI — update in messages slice and thread groups
@@ -3078,7 +3078,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
 	}
 
-	plainBody := stripANSICodes(formatBodyContent(bodyText))
+	plainBody := stripANSICodes(formatBodyContent(bodyText, m.getRecipientName(origMsgPtr)))
 	lines := strings.Split(plainBody, "\n")
 	for _, line := range lines {
 		quotedBody.WriteString("> " + line + "\n")
@@ -5309,7 +5309,12 @@ func (m mainModel) renderMetaBlock(width int) string {
 }
 
 // formatBodyContent strips/cleans up HTML email bodies to readable plain text
-func formatBodyContent(htmlContent string) string {
+func formatBodyContent(htmlContent string, recipientName ...string) string {
+	var rName string
+	if len(recipientName) > 0 {
+		rName = recipientName[0]
+	}
+
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
 
 	// Replace pre and code tags with state markers before any tag stripping
@@ -5432,6 +5437,10 @@ func formatBodyContent(htmlContent string) string {
 		"\u200f", "\ufeff",
 	} {
 		unescaped = strings.ReplaceAll(unescaped, formatChar, "")
+	}
+
+	if rName != "" {
+		unescaped = insertRecipientGreeting(unescaped, rName)
 	}
 
 	// Clean up whitespace and apply dimming/URL styling to lines
@@ -6546,6 +6555,70 @@ func isThemeDark() bool {
 	return true // default to dark
 }
 
+func getRecipientFirstName(recipients []Recipient, userEmail string) string {
+	userEmailLower := strings.ToLower(strings.TrimSpace(userEmail))
+	for _, r := range recipients {
+		addr := strings.ToLower(strings.TrimSpace(r.EmailAddress.Address))
+		if addr != "" && (userEmailLower == "" || addr == userEmailLower) {
+			name := strings.TrimSpace(r.EmailAddress.Name)
+			if name == "" {
+				continue
+			}
+			parts := strings.Split(name, " ")
+			if len(parts) > 0 {
+				return parts[0]
+			}
+		}
+	}
+	if len(recipients) > 0 {
+		name := strings.TrimSpace(recipients[0].EmailAddress.Name)
+		if name != "" {
+			parts := strings.Split(name, " ")
+			if len(parts) > 0 {
+				return parts[0]
+			}
+		}
+	}
+	return ""
+}
+
+func insertRecipientGreeting(text string, firstName string) string {
+	if firstName == "" {
+		return text
+	}
+	rx := regexp.MustCompile(`(?m)^([ \t]*)([hH]i|[hH]ello|[dD]ear)([ \t]*,[ \t]*|[ \t]*)$`)
+	return rx.ReplaceAllStringFunc(text, func(match string) string {
+		sub := rx.FindStringSubmatch(match)
+		leading := sub[1]
+		greeting := sub[2]
+		if len(greeting) > 0 {
+			greeting = strings.ToUpper(greeting[:1]) + strings.ToLower(greeting[1:])
+		}
+		return leading + greeting + ", " + firstName
+	})
+}
+
+func (m mainModel) getRecipientName(msg *Message) string {
+	if msg == nil {
+		return ""
+	}
+	return getRecipientFirstName(msg.ToRecipients, m.userEmail)
+}
+
+var hiddenStyleRx = regexp.MustCompile(`(?i)\b(?:display\s*:\s*none|visibility\s*:\s*hidden|mso-hide\s*:\s*all|font-size\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|max-height\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|line-height\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|opacity\s*:\s*0(?:\.0*)?)\b`)
+
+func isStyleHidden(style string) bool {
+	return hiddenStyleRx.MatchString(style)
+}
+
+func isVoidTag(name string) bool {
+	switch name {
+	case "br", "hr", "img", "meta", "link", "input", "embed", "col", "area", "base", "param", "source", "track", "wbr":
+		return true
+	}
+	return false
+}
+
 func convertInlineStylesToANSI(htmlContent string) string {
 	var result strings.Builder
 	pos := 0
@@ -6554,6 +6627,12 @@ func convertInlineStylesToANSI(htmlContent string) string {
 		name string
 	}
 	var styledStack []styledTag
+
+	type tagInfo struct {
+		name     string
+		isHidden bool
+	}
+	var tagStack []tagInfo
 
 	tagRx := regexp.MustCompile(`(?i)</?([a-zA-Z0-9]+)\b([^>]*)>`)
 	matches := tagRx.FindAllStringSubmatchIndex(htmlContent, -1)
@@ -6564,7 +6643,10 @@ func convertInlineStylesToANSI(htmlContent string) string {
 		startIdx := m[0]
 		endIdx := m[1]
 
-		result.WriteString(htmlContent[pos:startIdx])
+		currentlyHidden := len(tagStack) > 0 && tagStack[len(tagStack)-1].isHidden
+		if !currentlyHidden {
+			result.WriteString(htmlContent[pos:startIdx])
+		}
 		pos = endIdx
 
 		tagText := htmlContent[startIdx:endIdx]
@@ -6572,6 +6654,20 @@ func convertInlineStylesToANSI(htmlContent string) string {
 		tagName := strings.ToLower(htmlContent[m[2]:m[3]])
 
 		if isClosing {
+			wasHidden := currentlyHidden
+
+			// Find matching tag in the stack to pop
+			matchIdx := -1
+			for i := len(tagStack) - 1; i >= 0; i-- {
+				if tagStack[i].name == tagName {
+					matchIdx = i
+					break
+				}
+			}
+			if matchIdx >= 0 {
+				tagStack = tagStack[:matchIdx]
+			}
+
 			isStyledClose := false
 			if len(styledStack) > 0 && styledStack[len(styledStack)-1].name == tagName {
 				isStyledClose = true
@@ -6586,10 +6682,12 @@ func convertInlineStylesToANSI(htmlContent string) string {
 				}
 			}
 
-			if isStyledClose {
-				result.WriteString("\x1b[39m" + tagText)
-			} else {
-				result.WriteString(tagText)
+			if !wasHidden {
+				if isStyledClose {
+					result.WriteString("\x1b[39m" + tagText)
+				} else {
+					result.WriteString(tagText)
+				}
 			}
 		} else {
 			attrs := htmlContent[m[4]:m[5]]
@@ -6597,8 +6695,21 @@ func convertInlineStylesToANSI(htmlContent string) string {
 
 			styleRx := regexp.MustCompile(`(?i)\bstyle\s*=\s*['"]([^'"]+)['"]`)
 			styleMatches := styleRx.FindStringSubmatch(attrs)
+			styleAttr := ""
 			if len(styleMatches) > 1 {
-				fgColor, bgColor = parseStyleAttr(styleMatches[1])
+				styleAttr = styleMatches[1]
+				fgColor, bgColor = parseStyleAttr(styleAttr)
+			}
+
+			tagIsHidden := currentlyHidden || isStyleHidden(styleAttr)
+
+			// Only push to the tag stack if it is not a void (self-closing) tag
+			if !isVoidTag(tagName) {
+				tagStack = append(tagStack, tagInfo{name: tagName, isHidden: tagIsHidden})
+			}
+
+			if tagIsHidden {
+				continue
 			}
 
 			if fgColor == "" {
@@ -6656,7 +6767,10 @@ func convertInlineStylesToANSI(htmlContent string) string {
 	}
 
 	if pos < len(htmlContent) {
-		result.WriteString(htmlContent[pos:])
+		currentlyHidden := len(tagStack) > 0 && tagStack[len(tagStack)-1].isHidden
+		if !currentlyHidden {
+			result.WriteString(htmlContent[pos:])
+		}
 	}
 
 	return result.String()
