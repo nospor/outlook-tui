@@ -488,14 +488,13 @@ func TestThreadToggleSelectionPreservation(t *testing.T) {
 
 	// Check the virtual list contents:
 	// Index 0: Header of Thread 0 (IsHeader: true, ThreadIdx: 0, MemberIdx: -1)
-	// Index 1: Member 0 of Thread 0 (IsHeader: false, ThreadIdx: 0, MemberIdx: 0)
-	// Index 2: Member 1 of Thread 0 (IsHeader: false, ThreadIdx: 0, MemberIdx: 1)
-	if len(m.virtualList) != 3 {
-		t.Fatalf("expected virtualList to have 3 items, got %d", len(m.virtualList))
+	// Index 1: Member 1 of Thread 0 (IsHeader: false, ThreadIdx: 0, MemberIdx: 1)
+	if len(m.virtualList) != 2 {
+		t.Fatalf("expected virtualList to have 2 items, got %d", len(m.virtualList))
 	}
 
-	// Select the second member (index 2)
-	m.virtualSelected = 2
+	// Select the second member (index 1)
+	m.virtualSelected = 1
 
 	// Press Space to toggle (collapse) the thread
 	updatedModelInterface, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})

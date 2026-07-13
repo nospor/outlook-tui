@@ -1016,9 +1016,9 @@ func (m *mainModel) buildVirtualList() {
 			// Show only the header (most recent message)
 			items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: -1, IsHeader: true})
 		} else {
-			// Header row first, then all members
+			// Header row first, then all members except the first (latest) message which is already shown in the header
 			items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: -1, IsHeader: true})
-			for mi := range tg.Members {
+			for mi := 1; mi < len(tg.Members); mi++ {
 				items = append(items, MessageListItem{ThreadIdx: ti, MemberIdx: mi, IsHeader: false})
 			}
 		}
