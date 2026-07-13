@@ -1,4 +1,14 @@
 
+## [0.6.2] - 2026-07-13
+
+### Bug Fixes
+
+- *(tui)* Remove duplicate latest message in expanded thread list ([b1b9f02](https://github.com/nospor/outlook-tui/commit/b1b9f027cb3721ead5f359ed92193c65cea69787))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.1 [skip ci] ([933ff96](https://github.com/nospor/outlook-tui/commit/933ff9627e96b97aa53f6dcda567f46771f3a0b0))
+
 ## [0.6.1] - 2026-07-13
 
 ### Bug Fixes
