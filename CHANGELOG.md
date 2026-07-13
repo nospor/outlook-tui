@@ -1,4 +1,14 @@
 
+## [0.6.3] - 2026-07-13
+
+### Features
+
+- Add direct pane navigation using keys 1, 2, and 3 ([1f5ba80](https://github.com/nospor/outlook-tui/commit/1f5ba80edcc1161ac2e45b8b50180a8243af88a5))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.2 [skip ci] ([c40f6ff](https://github.com/nospor/outlook-tui/commit/c40f6ff10b04066f861e19b988e763c6a3abe19e))
+
 ## [0.6.2] - 2026-07-13
 
 ### Bug Fixes
