@@ -1,4 +1,14 @@
 
+## [0.6.1] - 2026-07-13
+
+### Bug Fixes
+
+- *(tui)* Strip hidden HTML elements and personalize generic greetings ([157809e](https://github.com/nospor/outlook-tui/commit/157809ef00a714af86aa6d3a0e6965dfc4f67baa))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.0 [skip ci] ([53b13e4](https://github.com/nospor/outlook-tui/commit/53b13e4947b6abc63f29a42902300c89882316a5))
+
 ## [0.6.0] - 2026-07-10
 
 ### Bug Fixes
