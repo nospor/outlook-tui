@@ -464,6 +464,34 @@ func TestJKNavigation(t *testing.T) {
 	}
 }
 
+func TestPaneNumberNavigation(t *testing.T) {
+	m := mainModel{
+		state:      stateMain,
+		activePane: paneFolders,
+	}
+
+	// Pressing "2" should switch to paneMessages
+	updatedModelInterface, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	updatedModel := updatedModelInterface.(mainModel)
+	if updatedModel.activePane != paneMessages {
+		t.Errorf("expected activePane to be paneMessages, got %v", updatedModel.activePane)
+	}
+
+	// Pressing "3" should switch to paneDetail
+	updatedModelInterface, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	updatedModel = updatedModelInterface.(mainModel)
+	if updatedModel.activePane != paneDetail {
+		t.Errorf("expected activePane to be paneDetail, got %v", updatedModel.activePane)
+	}
+
+	// Pressing "1" should switch to paneFolders
+	updatedModelInterface, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	updatedModel = updatedModelInterface.(mainModel)
+	if updatedModel.activePane != paneFolders {
+		t.Errorf("expected activePane to be paneFolders, got %v", updatedModel.activePane)
+	}
+}
+
 func TestThreadToggleSelectionPreservation(t *testing.T) {
 	msg1 := Message{ID: "msg1", ConversationID: "conv1ID"}
 	msg2 := Message{ID: "msg2", ConversationID: "conv1ID"}

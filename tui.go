@@ -2047,6 +2047,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "q":
 			return m, tea.Batch(clearKittyImagesCmd(), tea.Quit)
+		case "1":
+			m.activePane = paneFolders
+		case "2":
+			m.activePane = paneMessages
+		case "3":
+			m.activePane = paneDetail
 		case "tab":
 			// Switch pane focus
 			m.activePane = (m.activePane + 1) % 3
@@ -4045,9 +4051,9 @@ func (m mainModel) renderLayout1() string {
 	// Width(23) outer=25, Width(33) outer=35; dView outer = m.width-60 → Width = m.width-62
 	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(cropLines(detailView, paneHeight))
 
-	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
-	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
-	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
+	fView = applyPaneTitle(fView, "[1] FOLDERS", m.activePane == paneFolders)
+	mView = applyPaneTitle(mView, "[2] MESSAGES", m.activePane == paneMessages)
+	dView = applyPaneTitle(dView, "[3] MESSAGE DETAIL", m.activePane == paneDetail)
 
 	fView = cropLines(fView, paneHeight+2)
 	mView = cropLines(mView, paneHeight+2)
@@ -4106,8 +4112,8 @@ func (m mainModel) renderLayout2() string {
 	fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(cropLines(foldersView, foldersHeight))
 	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(cropLines(messagesView, messagesHeight))
 
-	fView = applyPaneTitle(fView, "FOLDERS", m.activePane == paneFolders)
-	mView = applyPaneTitle(mView, "MESSAGES", m.activePane == paneMessages)
+	fView = applyPaneTitle(fView, "[1] FOLDERS", m.activePane == paneFolders)
+	mView = applyPaneTitle(mView, "[2] MESSAGES", m.activePane == paneMessages)
 
 	fView = cropLines(fView, foldersHeight+2)
 	mView = cropLines(mView, messagesHeight+2)
@@ -4120,7 +4126,7 @@ func (m mainModel) renderLayout2() string {
 	// dView outer height must match left column outer height (= totalHeight).
 	// .Height(n) sets inner content; outer = n+2 (borders). So use totalHeight-2.
 	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
-	dView = applyPaneTitle(dView, "MESSAGE DETAIL", m.activePane == paneDetail)
+	dView = applyPaneTitle(dView, "[3] MESSAGE DETAIL", m.activePane == paneDetail)
 	dView = cropLines(dView, totalHeight)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
@@ -4139,6 +4145,7 @@ func (m mainModel) renderHelpContent() string {
 	col1Lines := []string{
 		col1Title,
 		"",
+		"  [1], [2], [3]       Jump to specific pane",
 		"  [Tab] / [Shift+Tab] Switch pane focus",
 		"  [Left] / [Right]    Switch pane focus",
 		"  [Up] / [Down]       Select items / scroll message",
