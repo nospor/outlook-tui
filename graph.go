@@ -635,12 +635,14 @@ func (gc *GraphClient) GetCalendarEventsForRange(start time.Time, end time.Time)
 	return result.Value, nil
 }
 
-// GetCalendarEvents fetches the user's calendar events from 7 days ago to N days in the future.
+// GetCalendarEvents fetches the user's calendar events from the start of today to N days in the future.
 func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
 	if days <= 0 {
 		days = 30
 	}
-	start := time.Now().AddDate(0, 0, -7).UTC()
+	now := time.Now()
+	// Start at midnight local time today so past events are excluded in list view.
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
 	end := time.Now().AddDate(0, 0, days).UTC()
 	return gc.GetCalendarEventsForRange(start, end)
 }

@@ -297,10 +297,11 @@ func fetchDeviceCodeCmd(clientID, tenantID string, calendarEnabled bool) tea.Cmd
 	}
 }
 
-// fetchCalendarEventsCmd fetches the next 30 days of calendar events.
+// fetchCalendarEventsCmd fetches calendar events starting from today to the next 30 days.
 func fetchCalendarEventsCmd(gc *GraphClient) tea.Cmd {
 	return func() tea.Msg {
-		start := time.Now().AddDate(0, 0, -7).UTC()
+		now := time.Now()
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
 		end := time.Now().AddDate(0, 0, 30).UTC()
 		events, err := gc.GetCalendarEvents(30)
 		if err != nil {
@@ -341,7 +342,8 @@ func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 			start = m.calendarWeekStart.UTC()
 			end = m.calendarWeekStart.AddDate(0, 0, 5).UTC()
 		} else {
-			start = time.Now().AddDate(0, 0, -7).UTC()
+			now := time.Now()
+			start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
 			end = time.Now().AddDate(0, 0, 30).UTC()
 		}
 		cached, _ = m.db.GetCalendarEvents(start, end)
@@ -1627,7 +1629,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		startCmds = append(startCmds, fetchUserEmailCmd(m.graphClient))
 		if m.config.CalendarEnabled {
 			if m.config.UseSQLite == 1 && m.db != nil {
-				start := time.Now().AddDate(0, 0, -7).UTC()
+				now := time.Now()
+				start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
 				end := time.Now().AddDate(0, 0, 30).UTC()
 				if cached, err := m.db.GetCalendarEvents(start, end); err == nil && len(cached) > 0 {
 					m.calendarEvents = cached
