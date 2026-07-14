@@ -21,6 +21,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.ClientID != "" {
 		t.Errorf("expected empty ClientID, got %q", cfg.ClientID)
 	}
+	if len(cfg.EventsReminderMin) != 3 || cfg.EventsReminderMin[0] != 30 || cfg.EventsReminderMin[1] != 15 || cfg.EventsReminderMin[2] != 1 {
+		t.Errorf("expected default EventsReminderMin to be [30, 15, 1], got %v", cfg.EventsReminderMin)
+	}
 	if cfg.TenantID != "common" {
 		t.Errorf("expected TenantID 'common', got %q", cfg.TenantID)
 	}
@@ -72,6 +75,9 @@ func TestConfigDefaults(t *testing.T) {
 
 	if cfg.ClientID != "test-client-id" {
 		t.Errorf("expected ClientID 'test-client-id', got %q", cfg.ClientID)
+	}
+	if len(cfg.EventsReminderMin) != 3 || cfg.EventsReminderMin[0] != 30 || cfg.EventsReminderMin[1] != 15 || cfg.EventsReminderMin[2] != 1 {
+		t.Errorf("expected populated EventsReminderMin to be [30, 15, 1], got %v", cfg.EventsReminderMin)
 	}
 	if cfg.TenantID != "test-tenant-id" {
 		t.Errorf("expected TenantID 'test-tenant-id', got %q", cfg.TenantID)
@@ -141,6 +147,7 @@ func TestConfigDefaults(t *testing.T) {
 	// Case 3: Config file exists and has custom non-zero values
 	cfg.RefreshTimeMin = 10
 	cfg.UseSQLite = 1
+	cfg.EventsReminderMin = []int{10, 5, 2}
 	cfg.ExcludedFolders = []string{"Junk Email", "RSS Feeds"}
 	cfg.ScrollLines = 5
 	cfg.ImageViewer = "sxiv"
@@ -160,6 +167,9 @@ func TestConfigDefaults(t *testing.T) {
 
 	if cfg.RefreshTimeMin != 10 {
 		t.Errorf("expected custom RefreshTimeMin to be 10, got %d", cfg.RefreshTimeMin)
+	}
+	if len(cfg.EventsReminderMin) != 3 || cfg.EventsReminderMin[0] != 10 || cfg.EventsReminderMin[1] != 5 || cfg.EventsReminderMin[2] != 2 {
+		t.Errorf("expected custom EventsReminderMin to be [10, 5, 2], got %v", cfg.EventsReminderMin)
 	}
 	if cfg.UseSQLite != 1 {
 		t.Errorf("expected custom UseSQLite to be 1, got %d", cfg.UseSQLite)

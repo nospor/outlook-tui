@@ -504,3 +504,82 @@ func TestDBCalendar(t *testing.T) {
 		t.Errorf("expected only ev2 to remain, got %d items: %+v", len(events3), events3)
 	}
 }
+
+func TestDBReminders(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	eventID := "test-event-1"
+	reminderMin := 30
+
+	// 1. Initially false
+	sent, err := db.HasReminderBeenSent(eventID, reminderMin)
+	if err != nil {
+		t.Fatalf("HasReminderBeenSent failed: %v", err)
+	}
+	if sent {
+		t.Errorf("expected reminder sent to be false")
+	}
+
+	// 2. Mark as sent
+	err = db.MarkReminderAsSent(eventID, reminderMin)
+	if err != nil {
+		t.Fatalf("MarkReminderAsSent failed: %v", err)
+	}
+
+	// 3. Now should be true
+	sent, err = db.HasReminderBeenSent(eventID, reminderMin)
+	if err != nil {
+		t.Fatalf("HasReminderBeenSent failed: %v", err)
+	}
+	if !sent {
+		t.Errorf("expected reminder sent to be true")
+	}
+
+	// 4. Test pruning. Let's insert a reminder that is old (sent_at = 25 hours ago)
+	oldEventID := "old-event"
+	oldReminderMin := 15
+	cutoffTime := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
+	_, err = db.db.Exec(`INSERT INTO sent_reminders (event_id, reminder_min, sent_at) VALUES (?, ?, ?)`,
+		oldEventID, oldReminderMin, cutoffTime)
+	if err != nil {
+		t.Fatalf("failed to insert old reminder: %v", err)
+	}
+
+	// Verify old reminder exists
+	sent, err = db.HasReminderBeenSent(oldEventID, oldReminderMin)
+	if err != nil || !sent {
+		t.Fatalf("expected old reminder to exist before prune")
+	}
+
+	// Prune
+	err = db.PruneSentReminders()
+	if err != nil {
+		t.Fatalf("PruneSentReminders failed: %v", err)
+	}
+
+	// Verify old reminder is gone
+	sent, err = db.HasReminderBeenSent(oldEventID, oldReminderMin)
+	if err != nil {
+		t.Fatalf("HasReminderBeenSent failed after prune: %v", err)
+	}
+	if sent {
+		t.Errorf("expected old reminder to be pruned")
+	}
+
+	// Verify new reminder is still there
+	sent, err = db.HasReminderBeenSent(eventID, reminderMin)
+	if err != nil {
+		t.Fatalf("HasReminderBeenSent failed for new reminder: %v", err)
+	}
+	if !sent {
+		t.Errorf("expected new reminder to remain after prune")
+	}
+}
+

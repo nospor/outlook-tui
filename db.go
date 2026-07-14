@@ -127,6 +127,13 @@ func (d *DB) migrate() error {
 			fetched_at         TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_calendar_events_start_utc ON calendar_events(start_utc ASC);
+
+		CREATE TABLE IF NOT EXISTS sent_reminders (
+			event_id     TEXT,
+			reminder_min INTEGER,
+			sent_at      TEXT,
+			PRIMARY KEY (event_id, reminder_min)
+		);
 	`)
 	if err != nil {
 		return err
@@ -725,7 +732,7 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 		       show_as, response_requested, response_status, body_preview
 		FROM calendar_events
 		WHERE start_utc >= ? AND start_utc <= ?
-		ORDER BY start_utc ASC`, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
+		ORDER BY start_utc ASC`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -767,5 +774,26 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 // UpdateCalendarResponseStatus updates the response status of a cached calendar event.
 func (d *DB) UpdateCalendarResponseStatus(eventID string, status string) error {
 	_, err := d.db.Exec(`UPDATE calendar_events SET response_status = ? WHERE id = ?`, status, eventID)
+	return err
+}
+
+// HasReminderBeenSent checks if a calendar event reminder was already sent for the given reminder offset.
+func (d *DB) HasReminderBeenSent(eventID string, reminderMin int) (bool, error) {
+	var exists bool
+	err := d.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sent_reminders WHERE event_id = ? AND reminder_min = ?)`, eventID, reminderMin).Scan(&exists)
+	return exists, err
+}
+
+// MarkReminderAsSent records that a calendar event reminder was sent.
+func (d *DB) MarkReminderAsSent(eventID string, reminderMin int) error {
+	_, err := d.db.Exec(`INSERT OR REPLACE INTO sent_reminders (event_id, reminder_min, sent_at) VALUES (?, ?, ?)`,
+		eventID, reminderMin, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// PruneSentReminders deletes sent reminders older than 24 hours.
+func (d *DB) PruneSentReminders() error {
+	cutoff := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	_, err := d.db.Exec(`DELETE FROM sent_reminders WHERE sent_at < ?`, cutoff)
 	return err
 }

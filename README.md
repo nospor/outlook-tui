@@ -113,6 +113,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `calendar_view`: The default layout for the calendar (defaults to `"list"`).
   - **`"list"` (default)** — Shows a list of upcoming events for the next 30 days.
   - **`"week"`** — Shows a grid view of the active week's events (Monday to Friday).
+* `events_reminder_min`: An array of integers specifying the minutes before a calendar event to send a desktop notification reminder (defaults to `[30, 15, 1]`). Only triggers desktop notifications if `use_sqlite` is set to `1` (which caches events in the SQLite database).
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -129,7 +130,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "terminal_bell": 1,
   "theme": "teams",
   "browser_command": "xdg-open",
-  "calendar_view": "list"
+  "calendar_view": "list",
+  "events_reminder_min": [30, 15, 1]
 }
 ```
 

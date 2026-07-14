@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -1067,6 +1068,70 @@ func (m mainModel) tickCmd() tea.Cmd {
 	})
 }
 
+// Calendar reminder tick types and commands
+type calendarReminderTickMsg time.Time
+
+func (m mainModel) calendarReminderTickCmd() tea.Cmd {
+	return tea.Tick(1*time.Minute, func(t time.Time) tea.Msg {
+		return calendarReminderTickMsg(t)
+	})
+}
+
+func (m mainModel) checkCalendarRemindersCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.config.UseSQLite != 1 || m.db == nil {
+			return nil
+		}
+
+		maxReminderMin := 0
+		for _, rm := range m.config.EventsReminderMin {
+			if rm > maxReminderMin {
+				maxReminderMin = rm
+			}
+		}
+
+		now := time.Now().UTC()
+		startQuery := now.Add(-5 * time.Minute)
+		endQuery := now.Add(time.Duration(maxReminderMin+5) * time.Minute)
+
+		events, err := m.db.GetCalendarEvents(startQuery, endQuery)
+		if err != nil {
+			return nil
+		}
+
+		for _, ev := range events {
+			if ev.IsCancelled {
+				continue
+			}
+			if strings.ToLower(ev.ResponseStatus.Response) == "declined" {
+				continue
+			}
+
+			eventStart := ev.Start.Time()
+			timeToEvent := eventStart.Sub(now)
+			minutesToEvent := int(math.Round(timeToEvent.Minutes()))
+
+			for _, reminderMin := range m.config.EventsReminderMin {
+				// Trigger reminder if minutesToEvent is within the window: (reminderMin - 2, reminderMin]
+				if minutesToEvent <= reminderMin && minutesToEvent > reminderMin-2 {
+					sent, err := m.db.HasReminderBeenSent(ev.ID, reminderMin)
+					if err != nil || sent {
+						continue
+					}
+
+					playBell := m.config.TerminalBell != 0
+					SendCalendarEventReminder(ev.Subject, ev.Start.DateTime, reminderMin, playBell)
+
+					_ = m.db.MarkReminderAsSent(ev.ID, reminderMin)
+				}
+			}
+		}
+
+		_ = m.db.PruneSentReminders()
+		return nil
+	}
+}
+
 // normaliseSubject strips common reply/forward prefixes for grouping.
 func normaliseSubject(s string) string {
 	for {
@@ -1560,6 +1625,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds := []tea.Cmd{
 					fetchInboxMessagesCmd(m.graphClient),
 					m.tickCmd(),
+				}
+				if m.config.UseSQLite == 1 && m.db != nil {
+					cmds = append(cmds, m.checkCalendarRemindersCmd(), m.calendarReminderTickCmd())
 				}
 				if firstFolderID != "favorites" {
 					cmds = append(cmds, fetchMessagesCmd(m.graphClient, firstFolderID))
@@ -2174,6 +2242,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Not in stateMain: skip fetching but keep the tick chain alive.
 		cmds = append(cmds, m.tickCmd())
+
+	case calendarReminderTickMsg:
+		if m.config.UseSQLite == 1 && m.db != nil {
+			cmds = append(cmds, m.checkCalendarRemindersCmd())
+		}
+		cmds = append(cmds, m.calendarReminderTickCmd())
 	}
 
 	// State-specific input handling
