@@ -564,6 +564,9 @@ type CalendarEvent struct {
 	IsAllDay         bool                    `json:"isAllDay"`
 	IsCancelled      bool                    `json:"isCancelled"`
 	IsOnlineMeeting  bool                    `json:"isOnlineMeeting"`
+	OnlineMeeting    *struct {
+		JoinURL string `json:"joinUrl"`
+	} `json:"onlineMeeting"`
 	ShowAs           string                  `json:"showAs"` // free, tentative, busy, oof, workingElsewhere, unknown
 	ResponseRequested bool                   `json:"responseRequested"`
 	ResponseStatus   struct {
@@ -607,7 +610,7 @@ func (gc *GraphClient) GetCalendarEventsForRange(start time.Time, end time.Time)
 	endStr := end.Format("2006-01-02T15:04:05Z")
 
 	reqURL := fmt.Sprintf(
-		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=100",
+		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,onlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=100",
 		graphBaseURL, url.QueryEscape(startStr), url.QueryEscape(endStr),
 	)
 
@@ -632,14 +635,14 @@ func (gc *GraphClient) GetCalendarEventsForRange(start time.Time, end time.Time)
 	return result.Value, nil
 }
 
-// GetCalendarEvents fetches the user's upcoming calendar events for the next N days.
+// GetCalendarEvents fetches the user's calendar events from 7 days ago to N days in the future.
 func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
 	if days <= 0 {
 		days = 30
 	}
-	now := time.Now().UTC()
-	end := now.AddDate(0, 0, days)
-	return gc.GetCalendarEventsForRange(now, end)
+	start := time.Now().AddDate(0, 0, -7).UTC()
+	end := time.Now().AddDate(0, 0, days).UTC()
+	return gc.GetCalendarEventsForRange(start, end)
 }
 
 

@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -937,6 +938,87 @@ func TestExtractAllURLsForOpen(t *testing.T) {
 		if actual[i] != expected[i] {
 			t.Errorf("at index %d: expected %q, got %q", i, expected[i], actual[i])
 		}
+	}
+
+	// Test fallback when URL is below a line divider
+	inputFallback := `
+		________________________________________________________________________________
+		Spotkanie w Microsoft Teams 
+		Dołącz: https://teams.microsoft.com/meet/342002411780331?p=KRv4BfbESnCa663gt6
+	`
+	expectedFallback := []string{
+		"https://teams.microsoft.com/meet/342002411780331?p=KRv4BfbESnCa663gt6",
+	}
+	actualFallback := extractAllURLsForOpen(inputFallback, "1to1")
+	if len(actualFallback) != 1 || actualFallback[0] != expectedFallback[0] {
+		t.Errorf("Expected fallback URL to be extracted, got: %v", actualFallback)
+	}
+}
+
+func TestClassifyURLCalendarAndMeeting(t *testing.T) {
+	calType, calURL := classifyURL("calendar-event://event123?subject=Hello")
+	if calType != "calendar" || calURL != "calendar-event://event123?subject=Hello" {
+		t.Errorf("Expected type 'calendar' and same URL, got type %q, url %q", calType, calURL)
+	}
+
+	meetType, meetURL := classifyURL("online-meeting://https://teams.microsoft.com/meet/123")
+	if meetType != "meeting" || meetURL != "online-meeting://https://teams.microsoft.com/meet/123" {
+		t.Errorf("Expected type 'meeting' and same URL, got type %q, url %q", meetType, meetURL)
+	}
+}
+
+func TestFindMatchingCalendarEvent(t *testing.T) {
+	now := time.Now()
+	msg := &Message{
+		Subject:          "Re: 1to1 sync",
+		ReceivedDateTime: now,
+	}
+
+	events := []CalendarEvent{
+		{
+			ID:      "ev1",
+			Subject: "Different Subject",
+			Start:   CalendarDateTime{DateTime: now.Format("2006-01-02T15:04:05")},
+		},
+		{
+			ID:      "ev2",
+			Subject: "1to1 sync",
+			Start:   CalendarDateTime{DateTime: now.Add(25 * time.Hour).Format("2006-01-02T15:04:05")}, // too far
+		},
+		{
+			ID:      "ev3",
+			Subject: "1to1 sync",
+			Start:   CalendarDateTime{DateTime: now.Add(2 * time.Hour).Format("2006-01-02T15:04:05")}, // match by subject/time
+		},
+	}
+
+	matched := findMatchingCalendarEvent(msg, events, nil)
+	if matched == nil || matched.ID != "ev3" {
+		t.Errorf("Expected matching event ev3, got %v", matched)
+	}
+
+	// Match by Teams URL
+	teamsURL := "https://teams.microsoft.com/meet/342002411780331?p=KRv4BfbESnCa"
+	msg2 := &Message{
+		Subject:          "Random Title",
+		ReceivedDateTime: now,
+	}
+	events2 := []CalendarEvent{
+		{
+			ID:      "ev4",
+			Subject: "Teams meeting",
+			Start:   CalendarDateTime{DateTime: now.Format("2006-01-02T15:04:05")},
+			OnlineMeeting: &struct {
+				JoinURL string `json:"joinUrl"`
+			}{
+				JoinURL: teamsURL,
+			},
+		},
+	}
+
+	matched2 := findMatchingCalendarEvent(msg2, events2, []string{teamsURL})
+	if matched2 == nil || matched2.ID != "ev4" {
+		t.Errorf("Expected matching event ev4 by URL, got %v", matched2)
 	}
 }
 

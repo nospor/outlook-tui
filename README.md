@@ -161,7 +161,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `M`                            | Load the next portion/page of 50 messages in the selected folder                                                                                                                                                                                                       |
 | `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
-| `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. |
+| `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. When `calendar_enabled` is true, it also matches the message to any calendar event (by subject and time, or by Teams/Zoom URL) and includes options to directly view the calendar event or join the meeting. |
 | `c`                            | Open the **Calendar popup** showing upcoming events for the next 30 days (only available when `calendar_enabled: true` in the config). See [Calendar](#calendar) section below for details.                                                                            |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
 | `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
@@ -251,6 +251,11 @@ Outlook TUI lets you quickly open URLs found in messages:
   - If the specialized TUI app is not found in your system `PATH`, these URLs will fall back to opening in your standard web browser.
 - **Browser Fallback / Other Links**:
   - General links and TUI links (without their TUI apps installed) are opened in the browser using the configured `browser_command` (which defaults to `"xdg-open"` but can be changed in `config.json`).
+- **Calendar & Online Meeting Integrations**:
+  - When `calendar_enabled` is `true` in your config, pressing **`o`** will automatically search for a matching calendar event (by matching Teams/Zoom meeting join URLs, or by matching subject and date/time proximity within a 24-hour window).
+  - If a match is found, two additional options will be prepended to the selection list:
+    - **`[Calendar] View event: <Subject>`**: Selecting this and pressing `Enter` will switch the TUI to the Calendar view (`c`) and automatically focus/select the matching event (and center/navigate to the correct week if in week view).
+    - **`[Meeting] Join online meeting (Teams/Zoom)`**: Selecting this and pressing `Enter` will directly open the online meeting's join URL in your browser.
 
 ---
 

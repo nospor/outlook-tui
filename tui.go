@@ -1471,10 +1471,14 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg), m.config.CalendarEnabled)
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
 
-		return m, tea.Batch(
-			fetchFoldersCmd(m.graphClient),
-			fetchUserEmailCmd(m.graphClient),
-		)
+		var startCmds []tea.Cmd
+		startCmds = append(startCmds, fetchFoldersCmd(m.graphClient))
+		startCmds = append(startCmds, fetchUserEmailCmd(m.graphClient))
+		if m.config.CalendarEnabled {
+			startCmds = append(startCmds, fetchCalendarEventsCmd(m.graphClient))
+		}
+
+		return m, tea.Batch(startCmds...)
 
 	case foldersFetchedMsg:
 		sortedFolders := sortFolders(msg, m.config.ExcludedFolders, m.db)
@@ -2049,10 +2053,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarFetchedMsg:
 		m.calendarLoading = false
 		m.calendarEvents = msg.Events
-		if len(msg.Events) == 0 {
-			m.statusMsg = "No upcoming calendar events found"
-		} else {
-			m.statusMsg = fmt.Sprintf("Loaded %d calendar events", len(msg.Events))
+		if m.state == stateCalendar {
+			if len(msg.Events) == 0 {
+				m.statusMsg = "No upcoming calendar events found"
+			} else {
+				m.statusMsg = fmt.Sprintf("Loaded %d calendar events", len(msg.Events))
+			}
 		}
 		m = m.updateViewportSize()
 
@@ -2571,6 +2577,22 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			allURLs := extractAllURLsForOpen(m.detailMessage.Body.Content, m.detailMessage.Subject)
+
+			if m.config.CalendarEnabled {
+				if matchedEv := findMatchingCalendarEvent(m.detailMessage, m.calendarEvents, allURLs); matchedEv != nil {
+					// 1. Add view calendar event link
+					eventURL := fmt.Sprintf("calendar-event://%s?subject=%s", matchedEv.ID, url.QueryEscape(matchedEv.Subject))
+					
+					// 2. Add online meeting link if present
+					if matchedEv.OnlineMeeting != nil && matchedEv.OnlineMeeting.JoinURL != "" {
+						meetingURL := "online-meeting://" + matchedEv.OnlineMeeting.JoinURL
+						allURLs = append([]string{eventURL, meetingURL}, allURLs...)
+					} else {
+						allURLs = append([]string{eventURL}, allURLs...)
+					}
+				}
+			}
+
 			totalCount := len(allURLs)
 
 			if totalCount == 0 {
@@ -2593,6 +2615,31 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.statusMsg = "Launching yt-tui..."
 						return m, openYouTrackTuiCmd(normURL)
 					}
+				} else if urlType == "calendar" {
+					if u, err := url.Parse(normURL); err == nil {
+						eventID := u.Host
+						foundIdx := -1
+						for i, ev := range m.calendarEvents {
+							if ev.ID == eventID {
+								foundIdx = i
+								break
+							}
+						}
+						if foundIdx != -1 {
+							m.state = stateCalendar
+							m.calendarSelected = foundIdx
+							eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
+							m.calendarWeekStart = getStartOfWeek(eventDate)
+							m = m.updateViewportSize()
+							m.statusMsg = "Opened calendar event"
+							return m, nil
+						}
+					}
+				} else if urlType == "meeting" {
+					actualURL := strings.TrimPrefix(normURL, "online-meeting://")
+					m.state = stateMain
+					m.statusMsg = "Opening meeting in browser..."
+					return m, m.openBrowserCmd(actualURL)
 				}
 
 				m.state = stateMain
@@ -2958,6 +3005,34 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.statusMsg = "Launching yt-tui..."
 						return m, openYouTrackTuiCmd(normURL)
 					}
+				} else if urlType == "calendar" {
+					if u, err := url.Parse(normURL); err == nil {
+						eventID := u.Host
+						foundIdx := -1
+						for i, ev := range m.calendarEvents {
+							if ev.ID == eventID {
+								foundIdx = i
+								break
+							}
+						}
+						if foundIdx != -1 {
+							m.state = stateCalendar
+							m.calendarSelected = foundIdx
+							eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
+							m.calendarWeekStart = getStartOfWeek(eventDate)
+							m = m.updateViewportSize()
+							m.statusMsg = "Opened calendar event"
+							return m, nil
+						} else {
+							m.statusMsg = "Event not found in loaded calendar events"
+							break
+						}
+					}
+				} else if urlType == "meeting" {
+					actualURL := strings.TrimPrefix(normURL, "online-meeting://")
+					m.state = stateMain
+					m.statusMsg = "Opening meeting in browser..."
+					return m, m.openBrowserCmd(actualURL)
 				}
 
 				m.state = stateMain
@@ -6872,6 +6947,13 @@ func extractGitLabURLs(htmlContent string, subject string) []string {
 }
 
 func classifyURL(uStr string) (string, string) {
+	if strings.HasPrefix(uStr, "calendar-event://") {
+		return "calendar", uStr
+	}
+	if strings.HasPrefix(uStr, "online-meeting://") {
+		return "meeting", uStr
+	}
+
 	parsed, err := url.Parse(uStr)
 	if err != nil {
 		return "normal", uStr
@@ -6918,6 +7000,9 @@ func classifyURL(uStr string) (string, string) {
 
 func extractAllURLsForOpen(htmlContent string, subject string) []string {
 	allURLs := extractURLsFromMainMessage(htmlContent, subject)
+	if len(allURLs) == 0 {
+		allURLs = extractURLs(htmlContent, true)
+	}
 	var recognized []string
 	var others []string
 	seen := make(map[string]bool)
@@ -6960,6 +7045,9 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		if endIdx > totalURLs {
 			endIdx = totalURLs
 			startIdx = endIdx - maxVisible
+			if startIdx < 0 {
+				startIdx = 0
+			}
 		}
 	}
 
@@ -6976,13 +7064,27 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 
 		urlType, _ := classifyURL(urlStr)
 		prefix := "[Link]     "
+		displayURL := urlStr
 		if urlType == "gitlab" {
 			prefix = "[GitLab]   "
 		} else if urlType == "youtrack" {
 			prefix = "[YouTrack] "
+		} else if urlType == "calendar" {
+			prefix = "[Calendar] "
+			if u, err := url.Parse(urlStr); err == nil {
+				subj := u.Query().Get("subject")
+				if subj != "" {
+					displayURL = "View event: " + subj
+				} else {
+					displayURL = "View calendar event"
+				}
+			}
+		} else if urlType == "meeting" {
+			prefix = "[Meeting]  "
+			displayURL = "Join online meeting (Teams/Zoom)"
 		}
 
-		line := fmt.Sprintf("%s%s%s", indicator, prefix, urlStr)
+		line := fmt.Sprintf("%s%s%s", indicator, prefix, displayURL)
 
 		// Pad/crop line
 		if len(line) < dropdownWidth-2 {
@@ -7017,6 +7119,76 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
+}
+
+func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedURLs []string) *CalendarEvent {
+	if msg == nil {
+		return nil
+	}
+
+	// Normalize email subject (remove Re:, Fwd:, etc. and trim spaces)
+	cleanSubj := strings.ToLower(strings.TrimSpace(msg.Subject))
+	for {
+		old := cleanSubj
+		cleanSubj = strings.TrimPrefix(cleanSubj, "re:")
+		cleanSubj = strings.TrimPrefix(cleanSubj, "fwd:")
+		cleanSubj = strings.TrimPrefix(cleanSubj, "fw:")
+		cleanSubj = strings.TrimSpace(cleanSubj)
+		if cleanSubj == old {
+			break
+		}
+	}
+
+	if cleanSubj == "" {
+		return nil
+	}
+
+	// First pass: try matching by exact meeting join URL if any Teams/Zoom/etc URL was extracted
+	for _, uStr := range extractedURLs {
+		if strings.Contains(uStr, "teams.microsoft.com") || strings.Contains(uStr, "teams.live.com") {
+			for i := range events {
+				ev := &events[i]
+				if ev.OnlineMeeting != nil && ev.OnlineMeeting.JoinURL != "" {
+					if strings.Contains(ev.OnlineMeeting.JoinURL, uStr) || strings.Contains(uStr, ev.OnlineMeeting.JoinURL) {
+						return ev
+					}
+				}
+				// Also check if the URL is in the event's body preview or location (just in case)
+				if strings.Contains(ev.BodyPreview, uStr) {
+					return ev
+				}
+			}
+		}
+	}
+
+	// Second pass: try matching by subject and date proximity (within 24 hours)
+	for i := range events {
+		ev := &events[i]
+		evSubj := strings.ToLower(strings.TrimSpace(ev.Subject))
+		for {
+			old := evSubj
+			evSubj = strings.TrimPrefix(evSubj, "re:")
+			evSubj = strings.TrimPrefix(evSubj, "fwd:")
+			evSubj = strings.TrimPrefix(evSubj, "fw:")
+			evSubj = strings.TrimSpace(evSubj)
+			if evSubj == old {
+				break
+			}
+		}
+
+		if evSubj == cleanSubj {
+			// Check if event start time is within 24 hours of message received time
+			diff := ev.Start.Time().Sub(msg.ReceivedDateTime)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff <= 24*time.Hour {
+				return ev
+			}
+		}
+	}
+
+	return nil
 }
 
 var cssColors = map[string][3]int{
