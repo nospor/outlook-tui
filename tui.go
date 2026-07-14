@@ -56,7 +56,8 @@ const (
 	stateComposeCancelConfirm
 	stateDeleteThreadConfirm
 	stateYankSelect
-	stateCalendar // calendar popup (requires calendar_enabled = true)
+	stateCalendar                // calendar popup (requires calendar_enabled = true)
+	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
 	stateNotifiedEventsSelect
 )
 
@@ -199,6 +200,10 @@ type mainModel struct {
 	// Thread deletion confirm state
 	deleteThreadMsgIDs  []string
 	deleteThreadSubject string
+
+	// Calendar decline confirm state
+	calendarDeclineEventID string
+	calendarDeclineSubject string
 
 	// Calendar state (only active when config.CalendarEnabled == true)
 	calendarEvents      []CalendarEvent // currently loaded events
@@ -3408,12 +3413,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "d", "D":
-			// Decline the selected event
+			// Decline the selected event — ask for confirmation first
 			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
 				ev := m.calendarEvents[m.calendarSelected]
 				if ev.ResponseRequested {
-					m.statusMsg = "Declining event..."
-					cmds = append(cmds, calendarRespondCmd(m.graphClient, ev.ID, EventResponseDecline))
+					m.calendarDeclineEventID = ev.ID
+					m.calendarDeclineSubject = ev.Subject
+					m.state = stateCalendarDeclineConfirm
 				} else {
 					m.statusMsg = "This event does not require a response"
 				}
@@ -3480,6 +3486,27 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMain
 			m.deleteThreadMsgIDs = nil
 			m.deleteThreadSubject = ""
+		}
+
+	case stateCalendarDeclineConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "y", "Y":
+			m.state = stateCalendar
+			if m.calendarDeclineEventID != "" {
+				m.statusMsg = "Declining event..."
+				cmds = append(cmds, calendarRespondCmd(m.graphClient, m.calendarDeclineEventID, EventResponseDecline))
+			}
+			m.calendarDeclineEventID = ""
+			m.calendarDeclineSubject = ""
+		case "n", "N", "esc":
+			m.state = stateCalendar
+			m.calendarDeclineEventID = ""
+			m.calendarDeclineSubject = ""
+			m.statusMsg = "Decline cancelled"
 		}
 
 	case stateNotifiedEventsSelect:
@@ -4240,12 +4267,12 @@ func (m mainModel) View() string {
 	case stateFileBrowse:
 		s.WriteString(m.renderFilePickerPopup(m.width-4, m.height-10))
 
-	case stateCalendar:
+	case stateCalendar, stateCalendarDeclineConfirm:
 		s.WriteString(m.renderCalendarView())
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateNotifiedEventsSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4257,6 +4284,8 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Open in TUI"
 		} else if m.state == stateDeleteThreadConfirm {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
+		} else if m.state == stateCalendarDeclineConfirm {
+			keysText = "  [y] Yes, decline event | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
 		} else if m.state == stateNotifiedEventsSelect {
@@ -4311,6 +4340,26 @@ func (m mainModel) View() string {
 		}
 		modalHeight := 11
 		dropdownView := m.renderDeleteThreadConfirmPopup(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateCalendarDeclineConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 11
+		dropdownView := m.renderCalendarDeclineConfirmPopup(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -4543,7 +4592,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateNotifiedEventsSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -5902,6 +5951,74 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ColorRed)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+// renderCalendarDeclineConfirmPopup renders a confirmation modal asking the user
+// to confirm before declining a calendar event.
+func (m mainModel) renderCalendarDeclineConfirmPopup(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	headerText := " DECLINE EVENT? "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorYellow)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line1 := "You are about to decline this calendar event:"
+	if len(line1) < dropdownWidth-2 {
+		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
+	} else if len(line1) > dropdownWidth-2 {
+		line1 = line1[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line1)
+
+	subjText := fmt.Sprintf("  \"%s\"", m.calendarDeclineSubject)
+	if len(subjText) < dropdownWidth-2 {
+		subjText = subjText + strings.Repeat(" ", dropdownWidth-2-len(subjText))
+	} else if len(subjText) > dropdownWidth-2 {
+		subjText = subjText[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(subjText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line2 := "Do you really want to decline?"
+	if len(line2) < dropdownWidth-2 {
+		line2 = line2 + strings.Repeat(" ", dropdownWidth-2-len(line2))
+	} else if len(line2) > dropdownWidth-2 {
+		line2 = line2[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line2)
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	btnYesRaw := "  [y] Yes, decline event"
+	paddingYes := dropdownWidth - 2 - len(btnYesRaw)
+	if paddingYes < 0 {
+		paddingYes = 0
+	}
+	btnYesRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorYellow)).Render("[y]") + " Yes, decline event" + strings.Repeat(" ", paddingYes)
+	rows = append(rows, btnYesRendered)
+
+	btnNoRaw := "  [n] No, go back"
+	paddingNo := dropdownWidth - 2 - len(btnNoRaw)
+	if paddingNo < 0 {
+		paddingNo = 0
+	}
+	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, go back" + strings.Repeat(" ", paddingNo)
+	rows = append(rows, btnNoRendered)
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorYellow)).
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
