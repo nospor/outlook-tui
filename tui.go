@@ -214,7 +214,8 @@ type mainModel struct {
 	prevState               appState        // previous app state (for overlays)
 	notifiedEvents          []NotifiedEvent // unread notified events
 	notifiedEventsSelected  int             // selected index in the unread notifications popup
-	pendingCalendarSelectID string          // pending calendar event ID to select after a fresh fetch
+	pendingCalendarSelectID  string          // pending calendar event ID to select after a fresh fetch
+	calendarAutoSelectToday bool            // when true, auto-position cursor on today's first event after load
 }
 
 func initialModel() mainModel {
@@ -350,6 +351,11 @@ func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 		m.calendarEvents = cached
 		m.calendarLoading = false
 		m.statusMsg = fmt.Sprintf("Loaded %d calendar events from cache", len(cached))
+		// Auto-position cursor on today when entering week view for the current week.
+		if m.calendarAutoSelectToday && m.config.CalendarView == "week" {
+			m.calendarSelected = selectEventForToday(cached)
+			m.calendarAutoSelectToday = false
+		}
 	} else {
 		m.calendarLoading = true
 		if m.config.CalendarView == "week" {
@@ -359,6 +365,38 @@ func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 		}
 	}
 	return m.fetchCalendarCmd()
+}
+
+// selectEventForToday returns the index of the first event whose start time falls on today
+// (local time). If no event falls on today, it returns the index of the earliest event that
+// starts after now. Falls back to 0 if the slice is empty or every event is in the past.
+func selectEventForToday(events []CalendarEvent) int {
+	now := time.Now().Local()
+	todayY, todayM, todayD := now.Date()
+	best := -1
+	for i, ev := range events {
+		evLocal := ev.Start.Time().Local()
+		y, mo, d := evLocal.Date()
+		if y == todayY && mo == todayM && d == todayD {
+			// Prefer events still in the future today; accept past ones as fallback.
+			if best == -1 {
+				best = i
+			}
+			if evLocal.After(now) {
+				return i
+			}
+		}
+	}
+	if best != -1 {
+		return best
+	}
+	// No event today — find the earliest upcoming event in the week.
+	for i, ev := range events {
+		if ev.Start.Time().Local().After(now) {
+			return i
+		}
+	}
+	return 0
 }
 
 func getStartOfWeek(t time.Time) time.Time {
@@ -2189,6 +2227,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.pendingCalendarSelectID = ""
+		} else if m.calendarAutoSelectToday && m.config.CalendarView == "week" {
+			// Auto-position cursor on today's first event when opening the current week.
+			m.calendarSelected = selectEventForToday(m.calendarEvents)
+			m.calendarAutoSelectToday = false
 		}
 		if m.state == stateCalendar {
 			if len(msg.Events) == 0 {
@@ -2832,6 +2874,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateCalendar
 			m.calendarSelected = 0
 			m.calendarWeekStart = getStartOfWeek(time.Now())
+			if m.config.CalendarView == "week" {
+				m.calendarAutoSelectToday = true
+			}
 			m = m.updateViewportSize()
 			cmds = append(cmds, m.loadCalendarWithCache())
 		case "ctrl+e":
@@ -3385,6 +3430,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.config.CalendarView = "week"
 					m.calendarWeekStart = getStartOfWeek(time.Now())
+					m.calendarAutoSelectToday = true
 				}
 				_ = SaveConfig(m.config)
 				m.calendarSelected = 0
