@@ -330,6 +330,15 @@ func isSameDay(t1, t2 time.Time) bool {
 	return y1 == y2 && m1 == m2 && d1 == d2
 }
 
+func getDayOffset(t, weekStart time.Time) int {
+	tLocal := t.Local()
+	wsLocal := weekStart.Local()
+	tDate := time.Date(tLocal.Year(), tLocal.Month(), tLocal.Day(), 0, 0, 0, 0, time.UTC)
+	wsDate := time.Date(wsLocal.Year(), wsLocal.Month(), wsLocal.Day(), 0, 0, 0, 0, time.UTC)
+	return int(tDate.Sub(wsDate).Hours() / 24)
+}
+
+
 
 // calendarRespondCmd sends an accept/tentative/decline response to an event.
 func calendarRespondCmd(gc *GraphClient, eventID string, response EventResponse) tea.Cmd {
@@ -3015,13 +3024,95 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "c":
 			m.state = stateMain
 			m.statusMsg = "Ready"
-		case "up", "k", "left":
+		case "up", "k":
 			if m.calendarSelected > 0 {
 				m.calendarSelected--
 			}
-		case "down", "j", "right":
+		case "down", "j":
 			if m.calendarSelected < len(m.calendarEvents)-1 {
 				m.calendarSelected++
+			}
+		case "left", "h":
+			if m.config.CalendarView == "week" {
+				if m.graphClient != nil && !m.calendarLoading {
+					if len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+						currentEvent := m.calendarEvents[m.calendarSelected]
+						currentDay := getDayOffset(currentEvent.Start.Time().Local(), m.calendarWeekStart)
+						targetOffset := -1
+						for _, ev := range m.calendarEvents {
+							offset := getDayOffset(ev.Start.Time().Local(), m.calendarWeekStart)
+							if offset < currentDay {
+								if offset > targetOffset {
+									targetOffset = offset
+								}
+							}
+						}
+						if targetOffset != -1 {
+							for i, ev := range m.calendarEvents {
+								offset := getDayOffset(ev.Start.Time().Local(), m.calendarWeekStart)
+								if offset == targetOffset {
+									m.calendarSelected = i
+									break
+								}
+							}
+						} else {
+							// No previous day in this week has events, go to previous week
+							m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
+							m.calendarSelected = 0
+							m.calendarLoading = true
+							m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+							cmds = append(cmds, m.fetchCalendarCmd())
+						}
+					} else {
+						// No events in current week, go to previous week
+						m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
+						m.calendarSelected = 0
+						m.calendarLoading = true
+						m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+						cmds = append(cmds, m.fetchCalendarCmd())
+					}
+				}
+			} else {
+				if key.String() == "left" && m.calendarSelected > 0 {
+					m.calendarSelected--
+				}
+			}
+		case "right", "l":
+			if m.config.CalendarView == "week" {
+				if m.graphClient != nil && !m.calendarLoading {
+					if len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+						currentEvent := m.calendarEvents[m.calendarSelected]
+						currentDay := getDayOffset(currentEvent.Start.Time().Local(), m.calendarWeekStart)
+						found := false
+						for i, ev := range m.calendarEvents {
+							offset := getDayOffset(ev.Start.Time().Local(), m.calendarWeekStart)
+							if offset > currentDay {
+								m.calendarSelected = i
+								found = true
+								break
+							}
+						}
+						if !found {
+							// No events on subsequent days in the current week, go to next week
+							m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
+							m.calendarSelected = 0
+							m.calendarLoading = true
+							m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+							cmds = append(cmds, m.fetchCalendarCmd())
+						}
+					} else {
+						// No events in current week, go to next week
+						m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
+						m.calendarSelected = 0
+						m.calendarLoading = true
+						m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+						cmds = append(cmds, m.fetchCalendarCmd())
+					}
+				}
+			} else {
+				if key.String() == "right" && m.calendarSelected < len(m.calendarEvents)-1 {
+					m.calendarSelected++
+				}
 			}
 		case "pageup":
 			m.calendarViewport.HalfPageUp()
@@ -3874,7 +3965,7 @@ func (m mainModel) View() string {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
 			} else {
 				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
 			}

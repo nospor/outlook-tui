@@ -190,7 +190,8 @@ Press **`c`** from the main view to open the calendar popup.
 
 | Key                  | Action                                            |
 | -------------------- | ------------------------------------------------- |
-| `Up` / `Down` / `Left` / `Right` / `j` / `k` | Navigate/select the events                        |
+| `Up` / `Down` / `j` / `k` (or `Left` / `Right` in List View) | Navigate/select the events |
+| `Left` / `Right` / `h` / `l` (only in Week View) | Go to previous/next day (or load previous/next week) |
 | `a`                  | **Accept** the selected meeting invitation        |
 | `t`                  | **Tentatively accept** the selected invitation    |
 | `d`                  | **Decline** the selected invitation               |
