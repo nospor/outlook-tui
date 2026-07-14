@@ -381,3 +381,126 @@ func TestDBFavorites(t *testing.T) {
 		t.Errorf("expected isFav to be false after removal")
 	}
 }
+
+func TestDBCalendar(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Now().Truncate(time.Second)
+
+	// 1. Create mock events
+	ev1 := CalendarEvent{
+		ID:      "ev-1",
+		Subject: "Meeting 1",
+		Start: CalendarDateTime{
+			DateTime: now.Format("2006-01-02T15:04:05"),
+			TimeZone: "UTC",
+		},
+		End: CalendarDateTime{
+			DateTime: now.Add(1 * time.Hour).Format("2006-01-02T15:04:05"),
+			TimeZone: "UTC",
+		},
+		Location: struct{ DisplayName string }{DisplayName: "Conference Room A"},
+		Organizer: Recipient{
+			EmailAddress: EmailAddress{Name: "Organizer", Address: "organizer@example.com"},
+		},
+		Attendees: []CalendarEventAttendee{
+			{
+				EmailAddress: EmailAddress{Name: "Attendee 1", Address: "att1@example.com"},
+				Type:         "required",
+			},
+		},
+		IsAllDay:        false,
+		IsCancelled:     false,
+		IsOnlineMeeting: true,
+		OnlineMeeting: &struct {
+			JoinURL string `json:"joinUrl"`
+		}{JoinURL: "https://teams.microsoft.com/join/1"},
+		ShowAs:            "busy",
+		ResponseRequested: true,
+	}
+	ev1.ResponseStatus.Response = "none"
+
+	ev2 := CalendarEvent{
+		ID:      "ev-2",
+		Subject: "Meeting 2",
+		Start: CalendarDateTime{
+			DateTime: now.Add(2 * time.Hour).Format("2006-01-02T15:04:05"),
+			TimeZone: "UTC",
+		},
+		End: CalendarDateTime{
+			DateTime: now.Add(3 * time.Hour).Format("2006-01-02T15:04:05"),
+			TimeZone: "UTC",
+		},
+		Location: struct{ DisplayName string }{DisplayName: "Online"},
+		Organizer: Recipient{
+			EmailAddress: EmailAddress{Name: "Organizer", Address: "organizer@example.com"},
+		},
+		Attendees: []CalendarEventAttendee{},
+	}
+	ev2.ResponseStatus.Response = "accepted"
+
+	startRange := now.Add(-1 * time.Hour)
+	endRange := now.Add(5 * time.Hour)
+
+	// Test UpsertCalendarEvents
+	err = db.UpsertCalendarEvents([]CalendarEvent{ev1, ev2}, startRange, endRange)
+	if err != nil {
+		t.Fatalf("failed to upsert calendar events: %v", err)
+	}
+
+	// Test GetCalendarEvents
+	events, err := db.GetCalendarEvents(startRange, endRange)
+	if err != nil {
+		t.Fatalf("failed to get calendar events: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	retrievedEv1 := events[0]
+	if retrievedEv1.ID != ev1.ID || retrievedEv1.Subject != ev1.Subject {
+		t.Errorf("expected event 1, got %+v", retrievedEv1)
+	}
+	if !retrievedEv1.IsOnlineMeeting || retrievedEv1.OnlineMeeting == nil || retrievedEv1.OnlineMeeting.JoinURL != ev1.OnlineMeeting.JoinURL {
+		t.Errorf("expected online meeting join url %q, got %+v", ev1.OnlineMeeting.JoinURL, retrievedEv1.OnlineMeeting)
+	}
+	if len(retrievedEv1.Attendees) != 1 || retrievedEv1.Attendees[0].EmailAddress.Address != "att1@example.com" {
+		t.Errorf("expected attendee address att1@example.com, got %+v", retrievedEv1.Attendees)
+	}
+
+	// Test UpdateCalendarResponseStatus
+	err = db.UpdateCalendarResponseStatus(ev1.ID, "accepted")
+	if err != nil {
+		t.Fatalf("failed to update response status: %v", err)
+	}
+
+	events2, err := db.GetCalendarEvents(startRange, endRange)
+	if err != nil {
+		t.Fatalf("failed to get calendar events: %v", err)
+	}
+	if events2[0].ResponseStatus.Response != "accepted" {
+		t.Errorf("expected response status 'accepted', got %q", events2[0].ResponseStatus.Response)
+	}
+
+	// Test pruning: upsert only ev2 in range, ev1 should be deleted from range
+	err = db.UpsertCalendarEvents([]CalendarEvent{ev2}, startRange, endRange)
+	if err != nil {
+		t.Fatalf("failed to upsert and prune: %v", err)
+	}
+
+	events3, err := db.GetCalendarEvents(startRange, endRange)
+	if err != nil {
+		t.Fatalf("failed to get calendar events: %v", err)
+	}
+	if len(events3) != 1 || events3[0].ID != ev2.ID {
+		t.Errorf("expected only ev2 to remain, got %d items: %+v", len(events3), events3)
+	}
+}

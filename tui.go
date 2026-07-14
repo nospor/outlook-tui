@@ -115,6 +115,8 @@ type (
 	// Calendar messages
 	calendarFetchedMsg struct {
 		Events []CalendarEvent
+		Start  time.Time
+		End    time.Time
 	}
 	calendarRespondedMsg struct {
 		EventID  string
@@ -282,11 +284,13 @@ func fetchDeviceCodeCmd(clientID, tenantID string, calendarEnabled bool) tea.Cmd
 // fetchCalendarEventsCmd fetches the next 30 days of calendar events.
 func fetchCalendarEventsCmd(gc *GraphClient) tea.Cmd {
 	return func() tea.Msg {
+		start := time.Now().AddDate(0, 0, -7).UTC()
+		end := time.Now().AddDate(0, 0, 30).UTC()
 		events, err := gc.GetCalendarEvents(30)
 		if err != nil {
 			return errMsg(err)
 		}
-		return calendarFetchedMsg{Events: events}
+		return calendarFetchedMsg{Events: events, Start: start, End: end}
 	}
 }
 
@@ -297,7 +301,7 @@ func fetchCalendarEventsForRangeCmd(gc *GraphClient, start, end time.Time) tea.C
 		if err != nil {
 			return errMsg(err)
 		}
-		return calendarFetchedMsg{Events: events}
+		return calendarFetchedMsg{Events: events, Start: start, End: end}
 	}
 }
 
@@ -311,6 +315,35 @@ func (m mainModel) fetchCalendarCmd() tea.Cmd {
 		return fetchCalendarEventsForRangeCmd(m.graphClient, startUTC, endUTC)
 	}
 	return fetchCalendarEventsCmd(m.graphClient)
+}
+
+func (m *mainModel) loadCalendarWithCache() tea.Cmd {
+	var cached []CalendarEvent
+	if m.config.UseSQLite == 1 && m.db != nil {
+		var start, end time.Time
+		if m.config.CalendarView == "week" {
+			start = m.calendarWeekStart.UTC()
+			end = m.calendarWeekStart.AddDate(0, 0, 5).UTC()
+		} else {
+			start = time.Now().AddDate(0, 0, -7).UTC()
+			end = time.Now().AddDate(0, 0, 30).UTC()
+		}
+		cached, _ = m.db.GetCalendarEvents(start, end)
+	}
+
+	if len(cached) > 0 {
+		m.calendarEvents = cached
+		m.calendarLoading = false
+		m.statusMsg = fmt.Sprintf("Loaded %d calendar events from cache", len(cached))
+	} else {
+		m.calendarLoading = true
+		if m.config.CalendarView == "week" {
+			m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+		} else {
+			m.statusMsg = "Loading calendar events..."
+		}
+	}
+	return m.fetchCalendarCmd()
 }
 
 func getStartOfWeek(t time.Time) time.Time {
@@ -1475,6 +1508,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		startCmds = append(startCmds, fetchFoldersCmd(m.graphClient))
 		startCmds = append(startCmds, fetchUserEmailCmd(m.graphClient))
 		if m.config.CalendarEnabled {
+			if m.config.UseSQLite == 1 && m.db != nil {
+				start := time.Now().AddDate(0, 0, -7).UTC()
+				end := time.Now().AddDate(0, 0, 30).UTC()
+				if cached, err := m.db.GetCalendarEvents(start, end); err == nil && len(cached) > 0 {
+					m.calendarEvents = cached
+				}
+			}
 			startCmds = append(startCmds, fetchCalendarEventsCmd(m.graphClient))
 		}
 
@@ -2053,6 +2093,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarFetchedMsg:
 		m.calendarLoading = false
 		m.calendarEvents = msg.Events
+		if m.config.UseSQLite == 1 && m.db != nil {
+			_ = m.db.UpsertCalendarEvents(msg.Events, msg.Start, msg.End)
+		}
 		if m.state == stateCalendar {
 			if len(msg.Events) == 0 {
 				m.statusMsg = "No upcoming calendar events found"
@@ -2079,6 +2122,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.calendarEvents[i].ResponseStatus.Response = "tentativelyAccepted"
 				case EventResponseDecline:
 					m.calendarEvents[i].ResponseStatus.Response = "declined"
+				}
+				if m.config.UseSQLite == 1 && m.db != nil {
+					_ = m.db.UpdateCalendarResponseStatus(msg.EventID, m.calendarEvents[i].ResponseStatus.Response)
 				}
 				break
 			}
@@ -2116,6 +2162,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Fetch inbox messages for notification tracking
 			bgCmds = append(bgCmds, fetchInboxMessagesCmd(m.graphClient))
+
+			if m.config.CalendarEnabled {
+				bgCmds = append(bgCmds, fetchCalendarEventsCmd(m.graphClient))
+			}
 
 			return m, tea.Batch(
 				tea.Batch(bgCmds...),
@@ -2678,13 +2728,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarSelected = 0
 			m.calendarWeekStart = getStartOfWeek(time.Now())
 			m = m.updateViewportSize()
-			m.calendarLoading = true
-			if m.config.CalendarView == "week" {
-				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-			} else {
-				m.statusMsg = "Loading calendar events..."
-			}
-			cmds = append(cmds, m.fetchCalendarCmd())
+			cmds = append(cmds, m.loadCalendarWithCache())
 		}
 
 	case stateCompose:
@@ -3134,17 +3178,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// No previous day in this week has events, go to previous week
 							m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
 							m.calendarSelected = 0
-							m.calendarLoading = true
-							m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-							cmds = append(cmds, m.fetchCalendarCmd())
+							cmds = append(cmds, m.loadCalendarWithCache())
 						}
 					} else {
 						// No events in current week, go to previous week
 						m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
 						m.calendarSelected = 0
-						m.calendarLoading = true
-						m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-						cmds = append(cmds, m.fetchCalendarCmd())
+						cmds = append(cmds, m.loadCalendarWithCache())
 					}
 				}
 			} else {
@@ -3171,17 +3211,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							// No events on subsequent days in the current week, go to next week
 							m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
 							m.calendarSelected = 0
-							m.calendarLoading = true
-							m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-							cmds = append(cmds, m.fetchCalendarCmd())
+							cmds = append(cmds, m.loadCalendarWithCache())
 						}
 					} else {
 						// No events in current week, go to next week
 						m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
 						m.calendarSelected = 0
-						m.calendarLoading = true
-						m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-						cmds = append(cmds, m.fetchCalendarCmd())
+						cmds = append(cmds, m.loadCalendarWithCache())
 					}
 				}
 			} else {
@@ -3209,18 +3245,14 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.config.CalendarView == "week" && m.graphClient != nil && !m.calendarLoading {
 				m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
 				m.calendarSelected = 0
-				m.calendarLoading = true
-				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-				cmds = append(cmds, m.fetchCalendarCmd())
+				cmds = append(cmds, m.loadCalendarWithCache())
 			}
 		case "p":
 			// Previous week (only active in week view)
 			if m.config.CalendarView == "week" && m.graphClient != nil && !m.calendarLoading {
 				m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
 				m.calendarSelected = 0
-				m.calendarLoading = true
-				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-				cmds = append(cmds, m.fetchCalendarCmd())
+				cmds = append(cmds, m.loadCalendarWithCache())
 			}
 		case "v":
 			// Toggle view layout (list/week) and save to config
@@ -3233,13 +3265,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				_ = SaveConfig(m.config)
 				m.calendarSelected = 0
-				m.calendarLoading = true
-				if m.config.CalendarView == "week" {
-					m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
-				} else {
-					m.statusMsg = "Loading calendar events..."
-				}
-				cmds = append(cmds, m.fetchCalendarCmd())
+				cmds = append(cmds, m.loadCalendarWithCache())
 			}
 		case "a", "A":
 			// Accept the selected event

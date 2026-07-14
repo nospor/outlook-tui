@@ -102,6 +102,31 @@ func (d *DB) migrate() error {
 			fetched_at        TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_favorite_messages_received ON favorite_messages(received_datetime DESC);
+
+		CREATE TABLE IF NOT EXISTS calendar_events (
+			id                 TEXT PRIMARY KEY,
+			subject            TEXT NOT NULL DEFAULT '',
+			start_utc          TEXT NOT NULL DEFAULT '',
+			end_utc            TEXT NOT NULL DEFAULT '',
+			start_original     TEXT NOT NULL DEFAULT '',
+			start_timezone     TEXT NOT NULL DEFAULT '',
+			end_original       TEXT NOT NULL DEFAULT '',
+			end_timezone       TEXT NOT NULL DEFAULT '',
+			location           TEXT NOT NULL DEFAULT '',
+			organizer_name     TEXT NOT NULL DEFAULT '',
+			organizer_address  TEXT NOT NULL DEFAULT '',
+			attendees          TEXT NOT NULL DEFAULT '[]',
+			is_all_day         INTEGER NOT NULL DEFAULT 0,
+			is_cancelled       INTEGER NOT NULL DEFAULT 0,
+			is_online_meeting  INTEGER NOT NULL DEFAULT 0,
+			online_meeting_url TEXT NOT NULL DEFAULT '',
+			show_as            TEXT NOT NULL DEFAULT '',
+			response_requested INTEGER NOT NULL DEFAULT 0,
+			response_status    TEXT NOT NULL DEFAULT '',
+			body_preview       TEXT NOT NULL DEFAULT '',
+			fetched_at         TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_calendar_events_start_utc ON calendar_events(start_utc ASC);
 	`)
 	if err != nil {
 		return err
@@ -575,4 +600,172 @@ func (d *DB) IsFavorite(messageID string) (bool, error) {
 func (d *DB) GetFavoritesCounts() (unread int, total int, err error) {
 	err = d.db.QueryRow(`SELECT COUNT(CASE WHEN is_read = 0 THEN 1 END), COUNT(*) FROM favorite_messages`).Scan(&unread, &total)
 	return unread, total, err
+}
+
+// parseAttendees unmarshals a JSON string back to []CalendarEventAttendee.
+func parseAttendees(s string) []CalendarEventAttendee {
+	var as []CalendarEventAttendee
+	_ = json.Unmarshal([]byte(s), &as)
+	if as == nil {
+		as = []CalendarEventAttendee{}
+	}
+	return as
+}
+
+// UpsertCalendarEvents inserts or updates calendar events in the database, and prunes obsolete ones within the range.
+func (d *DB) UpsertCalendarEvents(events []CalendarEvent, startRange, endRange time.Time) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO calendar_events (
+			id, subject, start_utc, end_utc, start_original, start_timezone, end_original, end_timezone,
+			location, organizer_name, organizer_address, attendees,
+			is_all_day, is_cancelled, is_online_meeting, online_meeting_url,
+			show_as, response_requested, response_status, body_preview, fetched_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			subject = excluded.subject,
+			start_utc = excluded.start_utc,
+			end_utc = excluded.end_utc,
+			start_original = excluded.start_original,
+			start_timezone = excluded.start_timezone,
+			end_original = excluded.end_original,
+			end_timezone = excluded.end_timezone,
+			location = excluded.location,
+			organizer_name = excluded.organizer_name,
+			organizer_address = excluded.organizer_address,
+			attendees = excluded.attendees,
+			is_all_day = excluded.is_all_day,
+			is_cancelled = excluded.is_cancelled,
+			is_online_meeting = excluded.is_online_meeting,
+			online_meeting_url = excluded.online_meeting_url,
+			show_as = excluded.show_as,
+			response_requested = excluded.response_requested,
+			response_status = excluded.response_status,
+			body_preview = excluded.body_preview,
+			fetched_at = excluded.fetched_at
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, ev := range events {
+		attendeesBytes, _ := json.Marshal(ev.Attendees)
+		var joinURL string
+		if ev.OnlineMeeting != nil {
+			joinURL = ev.OnlineMeeting.JoinURL
+		}
+		_, err := stmt.Exec(
+			ev.ID,
+			ev.Subject,
+			ev.Start.Time().Format(time.RFC3339Nano),
+			ev.End.Time().Format(time.RFC3339Nano),
+			ev.Start.DateTime,
+			ev.Start.TimeZone,
+			ev.End.DateTime,
+			ev.End.TimeZone,
+			ev.Location.DisplayName,
+			ev.Organizer.EmailAddress.Name,
+			ev.Organizer.EmailAddress.Address,
+			string(attendeesBytes),
+			boolToInt(ev.IsAllDay),
+			boolToInt(ev.IsCancelled),
+			boolToInt(ev.IsOnlineMeeting),
+			joinURL,
+			ev.ShowAs,
+			boolToInt(ev.ResponseRequested),
+			ev.ResponseStatus.Response,
+			ev.BodyPreview,
+			now,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Delete obsolete events within the startRange and endRange
+	startStr := startRange.Format(time.RFC3339Nano)
+	endStr := endRange.Format(time.RFC3339Nano)
+	if len(events) == 0 {
+		_, err = tx.Exec(`DELETE FROM calendar_events WHERE start_utc >= ? AND start_utc <= ?`, startStr, endStr)
+		if err != nil {
+			return err
+		}
+	} else {
+		placeholders := make([]string, len(events))
+		args := make([]interface{}, len(events)+2)
+		args[0] = startStr
+		args[1] = endStr
+		for i, ev := range events {
+			placeholders[i] = "?"
+			args[i+2] = ev.ID
+		}
+		query := fmt.Sprintf(`DELETE FROM calendar_events WHERE start_utc >= ? AND start_utc <= ? AND id NOT IN (%s)`, strings.Join(placeholders, ","))
+		_, err = tx.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetCalendarEvents retrieves cached calendar events starting within the start and end range, sorted by start_utc asc.
+func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
+	rows, err := d.db.Query(`
+		SELECT id, subject, start_original, start_timezone, end_original, end_timezone,
+		       location, organizer_name, organizer_address, attendees,
+		       is_all_day, is_cancelled, is_online_meeting, online_meeting_url,
+		       show_as, response_requested, response_status, body_preview
+		FROM calendar_events
+		WHERE start_utc >= ? AND start_utc <= ?
+		ORDER BY start_utc ASC`, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []CalendarEvent
+	for rows.Next() {
+		var ev CalendarEvent
+		var isAllDay, isCancelled, isOnlineMeeting, responseRequested int
+		var attendeesStr string
+		var joinURL string
+
+		err := rows.Scan(
+			&ev.ID, &ev.Subject, &ev.Start.DateTime, &ev.Start.TimeZone, &ev.End.DateTime, &ev.End.TimeZone,
+			&ev.Location.DisplayName, &ev.Organizer.EmailAddress.Name, &ev.Organizer.EmailAddress.Address, &attendeesStr,
+			&isAllDay, &isCancelled, &isOnlineMeeting, &joinURL,
+			&ev.ShowAs, &responseRequested, &ev.ResponseStatus.Response, &ev.BodyPreview,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		ev.IsAllDay = isAllDay != 0
+		ev.IsCancelled = isCancelled != 0
+		ev.IsOnlineMeeting = isOnlineMeeting != 0
+		if ev.IsOnlineMeeting {
+			ev.OnlineMeeting = &struct {
+				JoinURL string `json:"joinUrl"`
+			}{JoinURL: joinURL}
+		}
+		ev.ResponseRequested = responseRequested != 0
+		ev.Attendees = parseAttendees(attendeesStr)
+
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
+// UpdateCalendarResponseStatus updates the response status of a cached calendar event.
+func (d *DB) UpdateCalendarResponseStatus(eventID string, status string) error {
+	_, err := d.db.Exec(`UPDATE calendar_events SET response_status = ? WHERE id = ?`, status, eventID)
+	return err
 }
