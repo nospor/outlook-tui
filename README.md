@@ -52,6 +52,7 @@ To connect to Outlook 365, you need to register a public client application in y
      - `Mail.Send` (To send new messages)
      - `User.Read` (To read profile/user metadata)
      - `offline_access` (Normally added automatically, this lets you get refresh tokens so you don't have to re-login every hour).
+     - `Calendars.ReadWrite` *(optional)* — Only needed when `calendar_enabled` is set to `true` in the config. Allows reading calendar events and responding to meeting invitations (accept/tentative/decline).
    - Click **Add permissions**.
 
 ---
@@ -106,6 +107,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
   - **`"catppuccin"` (default)** — A gorgeous theme based on Catppuccin Mocha colors.
   - **`"teams"`** — A theme mimicking teams-tui-go palette
 * `browser_command`: The command/executable used to open URLs in the browser (defaults to `"xdg-open"`). You can change this to any browser command you prefer (e.g., `"google-chrome"`, `"firefox"`).
+* `calendar_enabled`: Enables the calendar feature (defaults to `false`).
+  - **`false` (default)** — Calendar is disabled. The `c` key will show a warning message. No `Calendars.ReadWrite` permission is requested during authentication.
+  - **`true`** — Enables the calendar popup (`c` key) and accept/tentative/decline responses for meeting events. **Requires re-authentication** after enabling (delete `~/.config/outlook-tui/token.json` and restart) so that the `Calendars.ReadWrite` OAuth2 scope is added to the token. You must also add the `Calendars.ReadWrite` delegated permission to your Azure App Registration.
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -154,10 +158,50 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
 | `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. |
+| `c`                            | Open the **Calendar popup** showing upcoming events for the next 30 days (only available when `calendar_enabled: true` in the config). See [Calendar](#calendar) section below for details.                                                                            |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
 | `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
 | `Esc`                          | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)                                                                                                                                     |
 | `q` (or `Ctrl+C`)              | Quit the application                                                                                                                                                                                                                                                   |
+
+---
+
+## Calendar
+
+The calendar feature is **opt-in** and disabled by default.
+
+### Enabling Calendar
+
+1. Add `Calendars.ReadWrite` to your Azure App Registration's delegated permissions (see [Azure Setup](#azure-setup-how-to-get-a-client-id)).
+2. Set `calendar_enabled: true` in `~/.config/outlook-tui/config.json`.
+3. Delete your cached token to trigger re-authentication:
+   ```bash
+   rm ~/.config/outlook-tui/token.json
+   ```
+4. Restart the app and authenticate — the new scope will be included in the login prompt.
+
+### Calendar Popup Key Bindings
+
+Press **`c`** from the main view to open the calendar popup.
+
+| Key                  | Action                                            |
+| -------------------- | ------------------------------------------------- |
+| `Up` / `Down` / `j` / `k` | Navigate the event list                    |
+| `a`                  | **Accept** the selected meeting invitation        |
+| `t`                  | **Tentatively accept** the selected invitation    |
+| `d`                  | **Decline** the selected invitation               |
+| `r`                  | Refresh calendar events from the server           |
+| `Esc` / `q` / `c`   | Close the calendar popup                          |
+
+The right-hand detail pane shows:
+- Event subject, date/time, location
+- Whether the meeting is online
+- Organizer name and email
+- Your current response status (✓ Accepted / ? Tentative / ✗ Declined / ⏳ Not responded)
+- Up to 5 attendees with their individual response statuses
+- A preview of the event body
+
+> **Note**: Accept/decline/tentative actions send a response notification to the organizer by email. Only events with `responseRequested = true` can be responded to.
 
 ---
 

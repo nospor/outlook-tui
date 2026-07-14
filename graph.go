@@ -540,3 +540,142 @@ func (gc *GraphClient) MarkAsRead(messageID string, isRead bool) error {
 
 	return nil
 }
+
+// ─── Calendar Types ───────────────────────────────────────────────────────────
+
+// CalendarEventAttendee represents a meeting attendee.
+type CalendarEventAttendee struct {
+	EmailAddress EmailAddress `json:"emailAddress"`
+	Type         string       `json:"type"`    // required, optional, resource
+	Status       struct {
+		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
+	} `json:"status"`
+}
+
+// CalendarEvent represents a single Outlook calendar event.
+type CalendarEvent struct {
+	ID               string                  `json:"id"`
+	Subject          string                  `json:"subject"`
+	Start            CalendarDateTime        `json:"start"`
+	End              CalendarDateTime        `json:"end"`
+	Location         struct{ DisplayName string } `json:"location"`
+	Organizer        Recipient               `json:"organizer"`
+	Attendees        []CalendarEventAttendee `json:"attendees"`
+	IsAllDay         bool                    `json:"isAllDay"`
+	IsCancelled      bool                    `json:"isCancelled"`
+	IsOnlineMeeting  bool                    `json:"isOnlineMeeting"`
+	ShowAs           string                  `json:"showAs"` // free, tentative, busy, oof, workingElsewhere, unknown
+	ResponseRequested bool                   `json:"responseRequested"`
+	ResponseStatus   struct {
+		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
+	} `json:"responseStatus"`
+	BodyPreview string `json:"bodyPreview"`
+}
+
+// CalendarDateTime holds an ISO-8601 datetime string and its timezone.
+type CalendarDateTime struct {
+	DateTime string `json:"dateTime"`
+	TimeZone string `json:"timeZone"`
+}
+
+// Time returns the CalendarDateTime parsed as a time.Time in UTC.
+func (cdt CalendarDateTime) Time() time.Time {
+	loc := time.UTC
+	if cdt.TimeZone != "" {
+		if l, err := time.LoadLocation(cdt.TimeZone); err == nil {
+			loc = l
+		}
+	}
+	formats := []string{
+		"2006-01-02T15:04:05.9999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z07:00",
+	}
+	for _, f := range formats {
+		if t, err := time.ParseInLocation(f, cdt.DateTime, loc); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+// ─── Calendar API Methods ─────────────────────────────────────────────────────
+
+// GetCalendarEvents fetches the user's upcoming calendar events for the next N days.
+func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
+	if days <= 0 {
+		days = 30
+	}
+	now := time.Now().UTC()
+	end := now.AddDate(0, 0, days)
+
+	startStr := now.Format("2006-01-02T15:04:05Z")
+	endStr := end.Format("2006-01-02T15:04:05Z")
+
+	reqURL := fmt.Sprintf(
+		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=50",
+		graphBaseURL, url.QueryEscape(startStr), url.QueryEscape(endStr),
+	)
+
+	resp, err := gc.client.Get(reqURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get calendar events: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Value []CalendarEvent `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Value, nil
+}
+
+// EventResponse is one of the allowed response actions for a calendar event.
+type EventResponse string
+
+const (
+	EventResponseAccept    EventResponse = "accept"
+	EventResponseTentative EventResponse = "tentativelyAccept"
+	EventResponseDecline   EventResponse = "decline"
+)
+
+// RespondToCalendarEvent sends an accept/tentativelyAccept/decline response to a
+// calendar event. Set sendResponse=true to notify the organiser by email.
+func (gc *GraphClient) RespondToCalendarEvent(eventID string, response EventResponse, comment string, sendResponse bool) error {
+	reqURL := fmt.Sprintf("%s/me/events/%s/%s", graphBaseURL, url.PathEscape(eventID), string(response))
+
+	body := struct {
+		Comment      string `json:"comment,omitempty"`
+		SendResponse bool   `json:"sendResponse"`
+	}{
+		Comment:      comment,
+		SendResponse: sendResponse,
+	}
+
+	jsonBytes, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	resp, err := gc.client.Post(reqURL, "application/json", bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to respond to event: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+

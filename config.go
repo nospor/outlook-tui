@@ -21,6 +21,7 @@ type Config struct {
 	TerminalBell    int      `json:"terminal_bell"`   // 0 = disabled, 1 = enabled (default)
 	Theme           string   `json:"theme"`           // "catppuccin" (default) or "teams"
 	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
+	CalendarEnabled bool     `json:"calendar_enabled"` // false (default) — enables calendar view (c) and event responses; requires Calendars.ReadWrite re-auth
 }
 
 func GetConfigDir() (string, error) {
@@ -49,16 +50,17 @@ func LoadConfig() (Config, error) {
 			defaultAttachmentDir = "."
 		}
 		cfg := Config{
-			ClientID:       "",
-			TenantID:       "common",
-			RefreshTimeMin: 5,
-			Layout:         1,
-			UseSQLite:      0,
-			ScrollLines:    1,
-			AttachmentDir:  defaultAttachmentDir,
-			TerminalBell:   1,
-			Theme:          "catppuccin",
-			BrowserCommand: "xdg-open",
+			ClientID:        "",
+			TenantID:        "common",
+			RefreshTimeMin:  5,
+			Layout:          1,
+			UseSQLite:       0,
+			ScrollLines:     1,
+			AttachmentDir:   defaultAttachmentDir,
+			TerminalBell:    1,
+			Theme:           "catppuccin",
+			BrowserCommand:  "xdg-open",
+			CalendarEnabled: false,
 		}
 		_ = SaveConfig(cfg)
 		return cfg, nil
@@ -124,7 +126,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") {
 		_ = SaveConfig(cfg)
 	}
 

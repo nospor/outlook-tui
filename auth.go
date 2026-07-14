@@ -69,12 +69,17 @@ func SaveToken(t TokenCache) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-func RequestDeviceCode(clientID, tenantID string) (*DeviceCodeResponse, error) {
+func RequestDeviceCode(clientID, tenantID string, calendarEnabled bool) (*DeviceCodeResponse, error) {
 	endpoint := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/devicecode", tenantID)
+
+	scope := "offline_access User.Read Mail.ReadWrite Mail.Send"
+	if calendarEnabled {
+		scope += " Calendars.ReadWrite"
+	}
 
 	form := url.Values{}
 	form.Add("client_id", clientID)
-	form.Add("scope", "offline_access User.Read Mail.ReadWrite Mail.Send")
+	form.Add("scope", scope)
 
 	resp, err := http.PostForm(endpoint, form)
 	if err != nil {
@@ -160,14 +165,19 @@ func PollForToken(clientID, tenantID string, deviceResp *DeviceCodeResponse, upd
 	return TokenCache{}, errors.New("device code expired")
 }
 
-func RefreshToken(clientID, tenantID, refreshToken string) (TokenCache, error) {
+func RefreshToken(clientID, tenantID, refreshToken string, calendarEnabled bool) (TokenCache, error) {
 	endpoint := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenantID)
+
+	scope := "offline_access User.Read Mail.ReadWrite Mail.Send"
+	if calendarEnabled {
+		scope += " Calendars.ReadWrite"
+	}
 
 	form := url.Values{}
 	form.Add("grant_type", "refresh_token")
 	form.Add("client_id", clientID)
 	form.Add("refresh_token", refreshToken)
-	form.Add("scope", "offline_access User.Read Mail.ReadWrite Mail.Send")
+	form.Add("scope", scope)
 
 	resp, err := http.PostForm(endpoint, form)
 	if err != nil {
@@ -198,16 +208,18 @@ func RefreshToken(clientID, tenantID, refreshToken string) (TokenCache, error) {
 }
 
 type Authenticator struct {
-	ClientID string
-	TenantID string
-	token    TokenCache
+	ClientID        string
+	TenantID        string
+	CalendarEnabled bool
+	token           TokenCache
 }
 
-func NewAuthenticator(clientID, tenantID string, token TokenCache) *Authenticator {
+func NewAuthenticator(clientID, tenantID string, token TokenCache, calendarEnabled bool) *Authenticator {
 	return &Authenticator{
-		ClientID: clientID,
-		TenantID: tenantID,
-		token:    token,
+		ClientID:        clientID,
+		TenantID:        tenantID,
+		CalendarEnabled: calendarEnabled,
+		token:           token,
 	}
 }
 
@@ -231,7 +243,7 @@ func (t *oauthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if t.authenticator.token.RefreshToken == "" {
 			return nil, errors.New("token expired and no refresh token available")
 		}
-		newToken, err := RefreshToken(t.authenticator.ClientID, t.authenticator.TenantID, t.authenticator.token.RefreshToken)
+		newToken, err := RefreshToken(t.authenticator.ClientID, t.authenticator.TenantID, t.authenticator.token.RefreshToken, t.authenticator.CalendarEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh token: %w", err)
 		}

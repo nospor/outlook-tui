@@ -55,6 +55,7 @@ const (
 	stateComposeCancelConfirm
 	stateDeleteThreadConfirm
 	stateYankSelect
+	stateCalendar // calendar popup (requires calendar_enabled = true)
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -110,6 +111,15 @@ type (
 	attachmentSavedMsg  string
 	userEmailFetchedMsg string
 	editorBodyLoadedMsg string // body text returned after external editor exits
+
+	// Calendar messages
+	calendarFetchedMsg struct {
+		Events []CalendarEvent
+	}
+	calendarRespondedMsg struct {
+		EventID  string
+		Response EventResponse
+	}
 )
 
 type mainModel struct {
@@ -184,6 +194,12 @@ type mainModel struct {
 	// Thread deletion confirm state
 	deleteThreadMsgIDs  []string
 	deleteThreadSubject string
+
+	// Calendar state (only active when config.CalendarEnabled == true)
+	calendarEvents      []CalendarEvent // currently loaded events
+	calendarSelected    int             // index of the selected event in the popup
+	calendarViewport    viewport.Model  // scrollable event detail view
+	calendarLoading     bool            // true while a fetch is in progress
 }
 
 func initialModel() mainModel {
@@ -251,13 +267,35 @@ func checkConfigCmd() tea.Cmd {
 	}
 }
 
-func fetchDeviceCodeCmd(clientID, tenantID string) tea.Cmd {
+func fetchDeviceCodeCmd(clientID, tenantID string, calendarEnabled bool) tea.Cmd {
 	return func() tea.Msg {
-		code, err := RequestDeviceCode(clientID, tenantID)
+		code, err := RequestDeviceCode(clientID, tenantID, calendarEnabled)
 		if err != nil {
 			return errMsg(err)
 		}
 		return deviceCodeMsg(code)
+	}
+}
+
+// fetchCalendarEventsCmd fetches the next 30 days of calendar events.
+func fetchCalendarEventsCmd(gc *GraphClient) tea.Cmd {
+	return func() tea.Msg {
+		events, err := gc.GetCalendarEvents(30)
+		if err != nil {
+			return errMsg(err)
+		}
+		return calendarFetchedMsg{Events: events}
+	}
+}
+
+// calendarRespondCmd sends an accept/tentative/decline response to an event.
+func calendarRespondCmd(gc *GraphClient, eventID string, response EventResponse) tea.Cmd {
+	return func() tea.Msg {
+		err := gc.RespondToCalendarEvent(eventID, response, "", true)
+		if err != nil {
+			return errMsg(err)
+		}
+		return calendarRespondedMsg{EventID: eventID, Response: response}
 	}
 }
 
@@ -1334,7 +1372,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "auth_needed":
 			m.state = stateLoading
 			m.statusMsg = "Requesting device code..."
-			return m, fetchDeviceCodeCmd(m.config.ClientID, m.config.TenantID)
+			return m, fetchDeviceCodeCmd(m.config.ClientID, m.config.TenantID, m.config.CalendarEnabled)
 		}
 
 	case errMsg:
@@ -1378,7 +1416,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg))
+		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg), m.config.CalendarEnabled)
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
 
 		return m, tea.Batch(
@@ -1956,6 +1994,38 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case calendarFetchedMsg:
+		m.calendarLoading = false
+		m.calendarEvents = msg.Events
+		if len(msg.Events) == 0 {
+			m.statusMsg = "No upcoming calendar events found"
+		} else {
+			m.statusMsg = fmt.Sprintf("Loaded %d calendar events", len(msg.Events))
+		}
+		m = m.updateViewportSize()
+
+	case calendarRespondedMsg:
+		responseLabel := map[EventResponse]string{
+			EventResponseAccept:    "Accepted",
+			EventResponseTentative: "Tentatively accepted",
+			EventResponseDecline:   "Declined",
+		}[msg.Response]
+		m.statusMsg = fmt.Sprintf("%s — response sent to organizer", responseLabel)
+		// Update the local response status so the UI reflects the change immediately
+		for i := range m.calendarEvents {
+			if m.calendarEvents[i].ID == msg.EventID {
+				switch msg.Response {
+				case EventResponseAccept:
+					m.calendarEvents[i].ResponseStatus.Response = "accepted"
+				case EventResponseTentative:
+					m.calendarEvents[i].ResponseStatus.Response = "tentativelyAccepted"
+				case EventResponseDecline:
+					m.calendarEvents[i].ResponseStatus.Response = "declined"
+				}
+				break
+			}
+		}
+
 	case tickMsg:
 		// Background tick: fetch folders and current messages silently.
 		// Always reschedule the next tick regardless of state, so the chain
@@ -2018,7 +2088,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.config.TenantID = val
 					m.state = stateLoading
 					m.statusMsg = "Requesting device code..."
-					cmds = append(cmds, fetchDeviceCodeCmd(m.config.ClientID, m.config.TenantID))
+					cmds = append(cmds, fetchDeviceCodeCmd(m.config.ClientID, m.config.TenantID, m.config.CalendarEnabled))
 				}
 			}
 		}
@@ -2499,6 +2569,20 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.updateViewportSize()
 			m.helpViewport.SetContent(m.renderHelpContent())
 			m.helpViewport.GotoTop()
+		case "c":
+			// Open calendar popup (only when CalendarEnabled is true)
+			if !m.config.CalendarEnabled {
+				m.statusMsg = "Calendar is disabled. Set calendar_enabled: true in config and re-authenticate."
+				break
+			}
+			m.state = stateCalendar
+			m.calendarSelected = 0
+			m = m.updateViewportSize()
+			if len(m.calendarEvents) == 0 && !m.calendarLoading {
+				m.calendarLoading = true
+				m.statusMsg = "Loading calendar events..."
+				cmds = append(cmds, fetchCalendarEventsCmd(m.graphClient))
+			}
 		}
 
 	case stateCompose:
@@ -2870,6 +2954,73 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpViewport.HalfPageUp()
 		case "pagedown":
 			m.helpViewport.HalfPageDown()
+		}
+
+	case stateCalendar:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		scrollLines := m.config.ScrollLines
+		if scrollLines <= 0 {
+			scrollLines = 1
+		}
+		switch key.String() {
+		case "esc", "q", "c":
+			m.state = stateMain
+			m.statusMsg = "Ready"
+		case "up", "k":
+			if m.calendarSelected > 0 {
+				m.calendarSelected--
+			}
+		case "down", "j":
+			if m.calendarSelected < len(m.calendarEvents)-1 {
+				m.calendarSelected++
+			}
+		case "pageup":
+			m.calendarViewport.HalfPageUp()
+		case "pagedown":
+			m.calendarViewport.HalfPageDown()
+		case "r":
+			// Refresh calendar events
+			if m.graphClient != nil && !m.calendarLoading {
+				m.calendarLoading = true
+				m.statusMsg = "Refreshing calendar events..."
+				cmds = append(cmds, fetchCalendarEventsCmd(m.graphClient))
+			}
+		case "a", "A":
+			// Accept the selected event
+			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				if ev.ResponseRequested {
+					m.statusMsg = "Accepting event..."
+					cmds = append(cmds, calendarRespondCmd(m.graphClient, ev.ID, EventResponseAccept))
+				} else {
+					m.statusMsg = "This event does not require a response"
+				}
+			}
+		case "t", "T":
+			// Tentatively accept the selected event
+			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				if ev.ResponseRequested {
+					m.statusMsg = "Tentatively accepting event..."
+					cmds = append(cmds, calendarRespondCmd(m.graphClient, ev.ID, EventResponseTentative))
+				} else {
+					m.statusMsg = "This event does not require a response"
+				}
+			}
+		case "d", "D":
+			// Decline the selected event
+			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				if ev.ResponseRequested {
+					m.statusMsg = "Declining event..."
+					cmds = append(cmds, calendarRespondCmd(m.graphClient, ev.ID, EventResponseDecline))
+				} else {
+					m.statusMsg = "This event does not require a response"
+				}
+			}
 		}
 
 	case stateFileBrowse:
@@ -3614,6 +3765,9 @@ func (m mainModel) View() string {
 
 	case stateFileBrowse:
 		s.WriteString(m.renderFilePickerPopup(m.width-4, m.height-10))
+
+	case stateCalendar:
+		s.WriteString(m.renderCalendarView())
 	}
 
 	// Bottom Status/Keybinds Bar
@@ -3894,7 +4048,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -4132,6 +4286,211 @@ func (m mainModel) renderLayout2() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, dView) + "\n"
 }
 
+// renderCalendarView renders the full-screen calendar popup with a two-column
+// layout: left = event list, right = selected event details.
+func (m mainModel) renderCalendarView() string {
+	var s strings.Builder
+	title := headerStyle.Render("📅  CALENDAR — UPCOMING EVENTS (30 days)")
+	s.WriteString("   " + title + "\n\n")
+
+	if m.calendarLoading && len(m.calendarEvents) == 0 {
+		s.WriteString("   " + m.spinner.View() + " Loading calendar events...\n")
+		s.WriteString("\n   " + dimStyle.Render("[Esc/q/c] Close  |  [r] Refresh") + "\n")
+		return s.String()
+	}
+
+	if len(m.calendarEvents) == 0 {
+		s.WriteString("   " + dimStyle.Render("No upcoming events in the next 30 days.") + "\n\n")
+		s.WriteString("   " + dimStyle.Render("[Esc/q/c] Close  |  [r] Refresh") + "\n")
+		return s.String()
+	}
+
+	// ── Layout constants ──────────────────────────────────────────────────────
+	listWidth := 42
+	if m.width < 90 {
+		listWidth = m.width / 3
+	}
+	detailWidth := m.width - listWidth - 6
+	if detailWidth < 20 {
+		detailWidth = 20
+	}
+	listHeight := m.height - 7
+	if listHeight < 5 {
+		listHeight = 5
+	}
+
+	// Each event occupies 3 terminal lines: subject, time, blank separator.
+	// Calculate the maximum number of events that fit in the pane height.
+	linesPerEvent := 3
+	maxVisibleEvents := listHeight / linesPerEvent
+	if maxVisibleEvents < 1 {
+		maxVisibleEvents = 1
+	}
+
+	// Scroll the list so the selected item is always visible.
+	visibleStart := 0
+	visibleEnd := len(m.calendarEvents)
+	if len(m.calendarEvents) > maxVisibleEvents {
+		visibleStart = m.calendarSelected - maxVisibleEvents/2
+		if visibleStart < 0 {
+			visibleStart = 0
+		}
+		visibleEnd = visibleStart + maxVisibleEvents
+		if visibleEnd > len(m.calendarEvents) {
+			visibleEnd = len(m.calendarEvents)
+			visibleStart = visibleEnd - maxVisibleEvents
+			if visibleStart < 0 {
+				visibleStart = 0
+			}
+		}
+	}
+
+	// ── Left: event list ──────────────────────────────────────────────────────
+	var listBuf strings.Builder
+	for i := visibleStart; i < visibleEnd; i++ {
+		ev := m.calendarEvents[i]
+		start := ev.Start.Time().Local()
+		timeStr := start.Format("Mon 02 Jan 15:04")
+		if ev.IsAllDay {
+			timeStr = start.Format("Mon 02 Jan") + " (all day)"
+		}
+
+		subj := ev.Subject
+		maxSubj := listWidth - 3
+		if len(subj) > maxSubj {
+			subj = subj[:maxSubj-2] + ".."
+		}
+		line := fmt.Sprintf(" %s\n %s", subj, dimStyle.Render(timeStr))
+
+		if i == m.calendarSelected {
+			listBuf.WriteString(selectedItemStyle.Copy().Width(listWidth - 2).Render(line) + "\n")
+		} else {
+			listBuf.WriteString(line + "\n")
+		}
+	}
+
+	listPane := paneNormalStyle.Copy().Width(listWidth).Height(listHeight).Render(listBuf.String())
+	listPane = applyPaneTitle(listPane, "EVENTS", false)
+
+	// ── Right: event detail ───────────────────────────────────────────────────
+	var detailBuf strings.Builder
+	if m.calendarSelected < len(m.calendarEvents) {
+		ev := m.calendarEvents[m.calendarSelected]
+		start := ev.Start.Time().Local()
+		end := ev.End.Time().Local()
+		cyan := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true)
+		dim := dimStyle
+
+		detailBuf.WriteString(cyan.Render(ev.Subject) + "\n\n")
+
+		// Date / time
+		if ev.IsAllDay {
+			detailBuf.WriteString(dim.Render("Date:     ") + start.Format("Monday, 2 January 2006") + "\n")
+		} else {
+			detailBuf.WriteString(dim.Render("Start:    ") + start.Format("Mon, 2 Jan 2006  15:04") + "\n")
+			detailBuf.WriteString(dim.Render("End:      ") + end.Format("Mon, 2 Jan 2006  15:04") + "\n")
+		}
+
+		// Location
+		if ev.Location.DisplayName != "" {
+			detailBuf.WriteString(dim.Render("Location: ") + ev.Location.DisplayName + "\n")
+		}
+
+		// Online meeting
+		if ev.IsOnlineMeeting {
+			detailBuf.WriteString(dim.Render("Type:     ") + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Render("Online meeting") + "\n")
+		}
+
+		// Organizer
+		org := ev.Organizer.EmailAddress
+		orgStr := org.Name
+		if orgStr == "" {
+			orgStr = org.Address
+		} else if org.Address != "" {
+			orgStr += " <" + org.Address + ">"
+		}
+		detailBuf.WriteString(dim.Render("Organizer:") + " " + orgStr + "\n")
+
+		// My response status
+		myStatus := ev.ResponseStatus.Response
+		statusColor := lipgloss.Color(ColorText)
+		switch myStatus {
+		case "accepted":
+			statusColor = lipgloss.Color(ColorGreen)
+			myStatus = "✓ Accepted"
+		case "tentativelyAccepted":
+			statusColor = lipgloss.Color(ColorYellow)
+			myStatus = "? Tentative"
+		case "declined":
+			statusColor = lipgloss.Color(ColorRed)
+			myStatus = "✗ Declined"
+		case "notResponded", "none", "":
+			statusColor = lipgloss.Color(ColorYellow)
+			myStatus = "⏳ Not responded"
+		}
+		detailBuf.WriteString(dim.Render("Response: ") + lipgloss.NewStyle().Foreground(statusColor).Render(myStatus) + "\n")
+
+		// Show as
+		if ev.ShowAs != "" && ev.ShowAs != "busy" {
+			detailBuf.WriteString(dim.Render("Show as:  ") + ev.ShowAs + "\n")
+		}
+
+		// Attendees (up to 5)
+		if len(ev.Attendees) > 0 {
+			detailBuf.WriteString("\n" + dim.Render("Attendees:") + "\n")
+			shown := ev.Attendees
+			if len(shown) > 5 {
+				shown = shown[:5]
+			}
+			for _, att := range shown {
+				name := att.EmailAddress.Name
+				if name == "" {
+					name = att.EmailAddress.Address
+				}
+				resp := ""
+				switch att.Status.Response {
+				case "accepted":
+					resp = " ✓"
+				case "tentativelyAccepted":
+					resp = " ?"
+				case "declined":
+					resp = " ✗"
+				}
+				detailBuf.WriteString("  • " + name + dimStyle.Render(resp) + "\n")
+			}
+			if len(ev.Attendees) > 5 {
+				detailBuf.WriteString(dim.Render(fmt.Sprintf("  … and %d more\n", len(ev.Attendees)-5)))
+			}
+		}
+
+		// Preview
+		if ev.BodyPreview != "" {
+			preview := ev.BodyPreview
+			if len(preview) > 300 {
+				preview = preview[:297] + "..."
+			}
+			detailBuf.WriteString("\n" + dim.Render("Preview:") + "\n")
+			detailBuf.WriteString(wrapText(preview, detailWidth-2) + "\n")
+		}
+
+		// Response hints
+		if ev.ResponseRequested && !ev.IsCancelled {
+			detailBuf.WriteString("\n" + dim.Render("[a] Accept  [t] Tentative  [d] Decline") + "\n")
+		}
+		if ev.IsCancelled {
+			detailBuf.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Render("⚠ This event has been cancelled") + "\n")
+		}
+	}
+
+	detailPane := paneActiveStyle.Copy().Width(detailWidth).Height(listHeight).Render(detailBuf.String())
+	detailPane = applyPaneTitle(detailPane, "EVENT DETAILS", true)
+
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listPane, " ", detailPane) + "\n\n")
+	s.WriteString("   " + dimStyle.Render("[Esc/q/c] Close  |  [Up/Down/j/k] Select  |  [r] Refresh  |  [a] Accept  [t] Tentative  [d] Decline") + "\n")
+	s.WriteString(m.renderStatusBar(m.statusMsg, false))
+	return s.String()
+}
+
 func (m mainModel) renderHelpContent() string {
 	var s strings.Builder
 
@@ -4173,6 +4532,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
 		"  [Ctrl+g]            View message in external editor",
+		"  [c]                 Open Calendar popup (if calendar_enabled)",
 	}
 
 	// Compose Shortcuts Section
