@@ -165,6 +165,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
 | `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. When `calendar_enabled` is true, it also matches the message to any calendar event (by subject and time, or by Teams/Zoom URL) and includes options to directly view the calendar event or join the meeting. |
 | `c`                            | Open the **Calendar popup** showing upcoming events for the next 30 days (only available when `calendar_enabled: true` in the config). See [Calendar](#calendar) section below for details.                                                                            |
+| `Ctrl+e`                       | Open the unread event reminders popup to select a reminder and jump to that event in the Calendar view.                                                                                                                                                                 |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
 | `Enter` (in Attachments list)  | Save the selected attachment to your local `Downloads` directory and open it with `xdg-open`                                                                                                                                                                           |
 | `Esc`                          | Go back (cancel compose [with confirmation if the body is filled], close attachments list, close help popup, or go back to config)                                                                                                                                     |
@@ -201,6 +202,7 @@ Press **`c`** from the main view to open the calendar popup.
 | `p`                  | Navigate to the **Previous Week** (only in Week View) |
 | `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |
 | `r`                  | Refresh calendar events from the server           |
+| `Ctrl+e`             | Open the unread event reminders popup             |
 | `Esc` / `q` / `c`   | Close the calendar popup                          |
 
 The right-hand detail pane shows:

@@ -57,6 +57,7 @@ const (
 	stateDeleteThreadConfirm
 	stateYankSelect
 	stateCalendar // calendar popup (requires calendar_enabled = true)
+	stateNotifiedEventsSelect
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -123,6 +124,7 @@ type (
 		EventID  string
 		Response EventResponse
 	}
+	calendarRemindersCheckedMsg struct{}
 )
 
 type mainModel struct {
@@ -203,7 +205,11 @@ type mainModel struct {
 	calendarSelected    int             // index of the selected event in the popup
 	calendarViewport    viewport.Model  // scrollable event detail view
 	calendarLoading     bool            // true while a fetch is in progress
-	calendarWeekStart   time.Time       // start of the week currently viewed (Monday 00:00 local time)
+	calendarWeekStart       time.Time       // start of the week currently viewed (Monday 00:00 local time)
+	prevState               appState        // previous app state (for overlays)
+	notifiedEvents          []NotifiedEvent // unread notified events
+	notifiedEventsSelected  int             // selected index in the unread notifications popup
+	pendingCalendarSelectID string          // pending calendar event ID to select after a fresh fetch
 }
 
 func initialModel() mainModel {
@@ -237,6 +243,8 @@ func initialModel() mainModel {
 	}
 	fp.Styles = filepicker.DefaultStyles()
 
+	evs, _ := loadNotifiedEventsFromFile()
+
 	return mainModel{
 		state:             stateLoading,
 		txtInput:          ti,
@@ -246,6 +254,7 @@ func initialModel() mainModel {
 		config:            cfg,
 		appFocused:        true,
 		calendarWeekStart: getStartOfWeek(time.Now()),
+		notifiedEvents:    evs,
 	}
 }
 
@@ -1123,12 +1132,13 @@ func (m mainModel) checkCalendarRemindersCmd() tea.Cmd {
 					SendCalendarEventReminder(ev.Subject, ev.Start.DateTime, reminderMin, playBell)
 
 					_ = m.db.MarkReminderAsSent(ev.ID, reminderMin)
+					_ = addNotifiedEventToFile(ev)
 				}
 			}
 		}
 
 		_ = m.db.PruneSentReminders()
-		return nil
+		return calendarRemindersCheckedMsg{}
 	}
 }
 
@@ -2164,6 +2174,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.config.UseSQLite == 1 && m.db != nil {
 			_ = m.db.UpsertCalendarEvents(msg.Events, msg.Start, msg.End)
 		}
+		if m.pendingCalendarSelectID != "" {
+			for i, ev := range m.calendarEvents {
+				if ev.ID == m.pendingCalendarSelectID {
+					m.calendarSelected = i
+					eventDate := ev.Start.Time().Local()
+					m.calendarWeekStart = getStartOfWeek(eventDate)
+					break
+				}
+			}
+			m.pendingCalendarSelectID = ""
+		}
 		if m.state == stateCalendar {
 			if len(msg.Events) == 0 {
 				m.statusMsg = "No upcoming calendar events found"
@@ -2172,6 +2193,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m = m.updateViewportSize()
+
+	case calendarRemindersCheckedMsg:
+		if evs, err := loadNotifiedEventsFromFile(); err == nil {
+			m.notifiedEvents = evs
+		}
 
 	case calendarRespondedMsg:
 		responseLabel := map[EventResponse]string{
@@ -2803,6 +2829,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarWeekStart = getStartOfWeek(time.Now())
 			m = m.updateViewportSize()
 			cmds = append(cmds, m.loadCalendarWithCache())
+		case "ctrl+e":
+			if len(m.notifiedEvents) > 0 {
+				m.prevState = m.state
+				m.state = stateNotifiedEventsSelect
+				m.notifiedEventsSelected = 0
+				m.statusMsg = "Select reminder event..."
+			} else {
+				m.statusMsg = "No unread event reminders"
+			}
 		}
 
 	case stateCompose:
@@ -3217,6 +3252,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "c":
 			m.state = stateMain
 			m.statusMsg = "Ready"
+		case "ctrl+e":
+			if len(m.notifiedEvents) > 0 {
+				m.prevState = m.state
+				m.state = stateNotifiedEventsSelect
+				m.notifiedEventsSelected = 0
+				m.statusMsg = "Select reminder event..."
+			} else {
+				m.statusMsg = "No unread event reminders"
+			}
 		case "up", "k":
 			if m.calendarSelected > 0 {
 				m.calendarSelected--
@@ -3437,10 +3481,83 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteThreadMsgIDs = nil
 			m.deleteThreadSubject = ""
 		}
+
+	case stateNotifiedEventsSelect:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "esc", "q", "ctrl+e":
+			m.state = m.prevState
+			m.statusMsg = "Ready"
+		case "up", "k":
+			if len(m.notifiedEvents) > 0 {
+				m.notifiedEventsSelected = (m.notifiedEventsSelected - 1 + len(m.notifiedEvents)) % len(m.notifiedEvents)
+			}
+		case "down", "j":
+			if len(m.notifiedEvents) > 0 {
+				m.notifiedEventsSelected = (m.notifiedEventsSelected + 1) % len(m.notifiedEvents)
+			}
+		case "enter":
+			if len(m.notifiedEvents) > 0 && m.notifiedEventsSelected < len(m.notifiedEvents) {
+				selectedEvent := m.notifiedEvents[m.notifiedEventsSelected]
+				m.state = stateCalendar
+				m.statusMsg = "Going to calendar event..."
+
+				foundIdx := -1
+				for i, ev := range m.calendarEvents {
+					if ev.ID == selectedEvent.ID {
+						foundIdx = i
+						break
+					}
+				}
+
+				if foundIdx != -1 {
+					m.calendarSelected = foundIdx
+					eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
+					m.calendarWeekStart = getStartOfWeek(eventDate)
+					_ = removeNotifiedEventFromFile(selectedEvent.ID)
+					if evs, err := loadNotifiedEventsFromFile(); err == nil {
+						m.notifiedEvents = evs
+					}
+				} else {
+					eventTime, err := parseEventTime(selectedEvent.StartStr)
+					if err == nil {
+						m.calendarWeekStart = getStartOfWeek(eventTime.Local())
+					}
+					m.pendingCalendarSelectID = selectedEvent.ID
+					cmds = append(cmds, m.loadCalendarWithCache())
+
+					_ = removeNotifiedEventFromFile(selectedEvent.ID)
+					if evs, err := loadNotifiedEventsFromFile(); err == nil {
+						m.notifiedEvents = evs
+					}
+				}
+				m = m.updateViewportSize()
+			}
+		}
 	}
 
 	if m.state == stateCompose || m.state == stateComposeCancelConfirm {
 		m.updateComposeBodyHeight()
+	}
+
+	if m.state == stateCalendar && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+		selectedEvent := m.calendarEvents[m.calendarSelected]
+		found := false
+		for _, e := range m.notifiedEvents {
+			if e.ID == selectedEvent.ID {
+				found = true
+				break
+			}
+		}
+		if found {
+			_ = removeNotifiedEventFromFile(selectedEvent.ID)
+			if evs, err := loadNotifiedEventsFromFile(); err == nil {
+				m.notifiedEvents = evs
+			}
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -3999,11 +4116,15 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments:
-		if m.config.Layout == 2 {
-			s.WriteString(m.renderLayout2())
+	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments, stateNotifiedEventsSelect:
+		if m.state == stateNotifiedEventsSelect && m.prevState == stateCalendar {
+			s.WriteString(m.renderCalendarView())
 		} else {
-			s.WriteString(m.renderLayout1())
+			if m.config.Layout == 2 {
+				s.WriteString(m.renderLayout2())
+			} else {
+				s.WriteString(m.renderLayout1())
+			}
 		}
 
 	case stateCompose, stateComposeCancelConfirm:
@@ -4124,7 +4245,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateNotifiedEventsSelect {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4138,6 +4259,8 @@ func (m mainModel) View() string {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
+		} else if m.state == stateNotifiedEventsSelect {
+			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
 				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
@@ -4405,9 +4528,22 @@ func (m mainModel) View() string {
 		baseView = overlayLines(baseView, dropdownView, x, y)
 	}
 
+	// Overlay notified events box if there are any, and the state allows it
+	if len(m.notifiedEvents) > 0 && (m.state == stateMain || m.state == stateCalendar || m.state == stateNotifiedEventsSelect) {
+		active := m.state == stateNotifiedEventsSelect
+		boxStr := m.renderNotifiedEventsBox(active)
+		boxWidth := lipgloss.Width(strings.Split(boxStr, "\n")[0])
+		x := m.width - boxWidth - 2
+		y := 2 // Below title bar
+		if x < 0 {
+			x = 0
+		}
+		baseView = overlayLines(baseView, boxStr, x, y)
+	}
+
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateNotifiedEventsSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -4419,6 +4555,72 @@ func (m mainModel) View() string {
 		return strings.Join(lines, "\n")
 	}
 	return baseView
+}
+
+func (m mainModel) renderNotifiedEventsBox(active bool) string {
+	if len(m.notifiedEvents) == 0 {
+		return ""
+	}
+
+	width := 38
+	var content strings.Builder
+
+	visibleEvents := m.notifiedEvents
+	startIdx := 0
+	maxVisible := 5
+	if len(m.notifiedEvents) > maxVisible {
+		startIdx = m.notifiedEventsSelected - maxVisible/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if startIdx+maxVisible > len(m.notifiedEvents) {
+			startIdx = len(m.notifiedEvents) - maxVisible
+		}
+		visibleEvents = m.notifiedEvents[startIdx : startIdx+maxVisible]
+	}
+
+	for i, ev := range visibleEvents {
+		actualIdx := startIdx + i
+		prefix := " • "
+		if active && actualIdx == m.notifiedEventsSelected {
+			prefix = " ▶ "
+		}
+
+		subject := ev.Subject
+		maxSubjLen := width - 6
+		if len(subject) > maxSubjLen {
+			subject = subject[:maxSubjLen-3] + "..."
+		}
+
+		line := prefix + subject
+		actualLen := lipgloss.Width(line)
+		if actualLen < width-4 {
+			line += strings.Repeat(" ", width-4-actualLen)
+		}
+
+		if active && actualIdx == m.notifiedEventsSelected {
+			line = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Bold(true).Render(line)
+		} else {
+			line = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText)).Render(line)
+		}
+		content.WriteString(line + "\n")
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorOverlay)).
+		Padding(0, 1)
+
+	if active {
+		boxStyle = boxStyle.BorderForeground(lipgloss.Color(ColorViolet))
+	}
+
+	rendered := boxStyle.Render(strings.TrimSuffix(content.String(), "\n"))
+	titleText := "REMINDERS (ctrl+e)"
+	if active {
+		titleText = "SELECT REMINDER"
+	}
+	return applyPaneTitle(rendered, titleText, active)
 }
 
 func (m mainModel) renderContactsPopup() string {

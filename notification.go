@@ -1,11 +1,153 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// NotifiedEvent represents a calendar event that has triggered a notification
+// and hasn't been viewed/entered in the calendar view yet.
+type NotifiedEvent struct {
+	ID       string `json:"id"`
+	Subject  string `json:"subject"`
+	StartStr string `json:"start_str"` // CalendarDateTime.DateTime
+}
+
+var notifiedEventsMutex sync.Mutex
+
+func getNotifiedEventsPath() (string, error) {
+	dir, err := GetCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "notified_events.json"), nil
+}
+
+func addNotifiedEventToFile(ev CalendarEvent) error {
+	notifiedEventsMutex.Lock()
+	defer notifiedEventsMutex.Unlock()
+
+	path, err := getNotifiedEventsPath()
+	if err != nil {
+		return err
+	}
+
+	var events []NotifiedEvent
+	data, err := os.ReadFile(path)
+	if err == nil {
+		_ = json.Unmarshal(data, &events)
+	}
+
+	// Check if already exists
+	for _, e := range events {
+		if e.ID == ev.ID {
+			return nil
+		}
+	}
+
+	events = append(events, NotifiedEvent{
+		ID:       ev.ID,
+		Subject:  ev.Subject,
+		StartStr: ev.Start.DateTime,
+	})
+
+	newData, err := json.MarshalIndent(events, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, newData, 0600)
+}
+
+func removeNotifiedEventFromFile(eventID string) error {
+	notifiedEventsMutex.Lock()
+	defer notifiedEventsMutex.Unlock()
+
+	path, err := getNotifiedEventsPath()
+	if err != nil {
+		return err
+	}
+
+	var events []NotifiedEvent
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	_ = json.Unmarshal(data, &events)
+
+	var filtered []NotifiedEvent
+	for _, e := range events {
+		if e.ID != eventID {
+			filtered = append(filtered, e)
+		}
+	}
+
+	if len(filtered) == len(events) {
+		return nil
+	}
+
+	newData, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, newData, 0600)
+}
+
+func loadNotifiedEventsFromFile() ([]NotifiedEvent, error) {
+	notifiedEventsMutex.Lock()
+	defer notifiedEventsMutex.Unlock()
+
+	path, err := getNotifiedEventsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	var events []NotifiedEvent
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []NotifiedEvent{}, nil
+		}
+		return nil, err
+	}
+
+	err = json.Unmarshal(data, &events)
+	if err != nil {
+		return nil, err
+	}
+
+	return events, nil
+}
+
+func parseEventTime(dateTimeStr string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02T15:04:05.9999999",
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05.999",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, dateTimeStr); err == nil {
+			return t, nil
+		}
+	}
+	return time.Parse(time.RFC3339, dateTimeStr)
+}
+
 
 // SendSystemNotification triggers a system desktop notification using notify-send.
 // If playBell is true, it also outputs a terminal bell character (\a).
