@@ -110,6 +110,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `calendar_enabled`: Enables the calendar feature (defaults to `false`).
   - **`false` (default)** — Calendar is disabled. The `c` key will show a warning message. No `Calendars.ReadWrite` permission is requested during authentication.
   - **`true`** — Enables the calendar popup (`c` key) and accept/tentative/decline responses for meeting events. **Requires re-authentication** after enabling (delete `~/.config/outlook-tui/token.json` and restart) so that the `Calendars.ReadWrite` OAuth2 scope is added to the token. You must also add the `Calendars.ReadWrite` delegated permission to your Azure App Registration.
+* `calendar_view`: The default layout for the calendar (defaults to `"list"`).
+  - **`"list"` (default)** — Shows a list of upcoming events for the next 30 days.
+  - **`"week"`** — Shows a grid view of the active week's events (Monday to Friday).
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -125,7 +128,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "attachment_dir": "~/Downloads/attachments",
   "terminal_bell": 1,
   "theme": "teams",
-  "browser_command": "xdg-open"
+  "browser_command": "xdg-open",
+  "calendar_view": "list"
 }
 ```
 
@@ -186,10 +190,13 @@ Press **`c`** from the main view to open the calendar popup.
 
 | Key                  | Action                                            |
 | -------------------- | ------------------------------------------------- |
-| `Up` / `Down` / `j` / `k` | Navigate the event list                    |
+| `Up` / `Down` / `Left` / `Right` / `j` / `k` | Navigate/select the events                        |
 | `a`                  | **Accept** the selected meeting invitation        |
 | `t`                  | **Tentatively accept** the selected invitation    |
 | `d`                  | **Decline** the selected invitation               |
+| `n`                  | Navigate to the **Next Week** (only in Week View) |
+| `p`                  | Navigate to the **Previous Week** (only in Week View) |
+| `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |
 | `r`                  | Refresh calendar events from the server           |
 | `Esc` / `q` / `c`   | Close the calendar popup                          |
 

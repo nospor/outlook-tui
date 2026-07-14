@@ -601,19 +601,13 @@ func (cdt CalendarDateTime) Time() time.Time {
 
 // ─── Calendar API Methods ─────────────────────────────────────────────────────
 
-// GetCalendarEvents fetches the user's upcoming calendar events for the next N days.
-func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
-	if days <= 0 {
-		days = 30
-	}
-	now := time.Now().UTC()
-	end := now.AddDate(0, 0, days)
-
-	startStr := now.Format("2006-01-02T15:04:05Z")
+// GetCalendarEventsForRange fetches the user's calendar events within a specific start and end time.
+func (gc *GraphClient) GetCalendarEventsForRange(start time.Time, end time.Time) ([]CalendarEvent, error) {
+	startStr := start.Format("2006-01-02T15:04:05Z")
 	endStr := end.Format("2006-01-02T15:04:05Z")
 
 	reqURL := fmt.Sprintf(
-		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=50",
+		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=100",
 		graphBaseURL, url.QueryEscape(startStr), url.QueryEscape(endStr),
 	)
 
@@ -637,6 +631,17 @@ func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
 
 	return result.Value, nil
 }
+
+// GetCalendarEvents fetches the user's upcoming calendar events for the next N days.
+func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
+	if days <= 0 {
+		days = 30
+	}
+	now := time.Now().UTC()
+	end := now.AddDate(0, 0, days)
+	return gc.GetCalendarEventsForRange(now, end)
+}
+
 
 // EventResponse is one of the allowed response actions for a calendar event.
 type EventResponse string

@@ -200,6 +200,7 @@ type mainModel struct {
 	calendarSelected    int             // index of the selected event in the popup
 	calendarViewport    viewport.Model  // scrollable event detail view
 	calendarLoading     bool            // true while a fetch is in progress
+	calendarWeekStart   time.Time       // start of the week currently viewed (Monday 00:00 local time)
 }
 
 func initialModel() mainModel {
@@ -234,13 +235,14 @@ func initialModel() mainModel {
 	fp.Styles = filepicker.DefaultStyles()
 
 	return mainModel{
-		state:      stateLoading,
-		txtInput:   ti,
-		spinner:    s,
-		configStep: 0,
-		filepicker: fp,
-		config:     cfg,
-		appFocused: true,
+		state:             stateLoading,
+		txtInput:          ti,
+		spinner:           s,
+		configStep:        0,
+		filepicker:        fp,
+		config:            cfg,
+		appFocused:        true,
+		calendarWeekStart: getStartOfWeek(time.Now()),
 	}
 }
 
@@ -287,6 +289,47 @@ func fetchCalendarEventsCmd(gc *GraphClient) tea.Cmd {
 		return calendarFetchedMsg{Events: events}
 	}
 }
+
+// fetchCalendarEventsForRangeCmd fetches calendar events for a specific range.
+func fetchCalendarEventsForRangeCmd(gc *GraphClient, start, end time.Time) tea.Cmd {
+	return func() tea.Msg {
+		events, err := gc.GetCalendarEventsForRange(start, end)
+		if err != nil {
+			return errMsg(err)
+		}
+		return calendarFetchedMsg{Events: events}
+	}
+}
+
+func (m mainModel) fetchCalendarCmd() tea.Cmd {
+	if m.graphClient == nil {
+		return nil
+	}
+	if m.config.CalendarView == "week" {
+		startUTC := m.calendarWeekStart.UTC()
+		endUTC := m.calendarWeekStart.AddDate(0, 0, 5).UTC()
+		return fetchCalendarEventsForRangeCmd(m.graphClient, startUTC, endUTC)
+	}
+	return fetchCalendarEventsCmd(m.graphClient)
+}
+
+func getStartOfWeek(t time.Time) time.Time {
+	tLocal := t.Local()
+	weekday := int(tLocal.Weekday())
+	if weekday == 0 { // Sunday
+		weekday = 7
+	}
+	daysToSubtract := weekday - 1
+	startOfDay := time.Date(tLocal.Year(), tLocal.Month(), tLocal.Day(), 0, 0, 0, 0, tLocal.Location())
+	return startOfDay.AddDate(0, 0, -daysToSubtract)
+}
+
+func isSameDay(t1, t2 time.Time) bool {
+	y1, m1, d1 := t1.Date()
+	y2, m2, d2 := t2.Date()
+	return y1 == y2 && m1 == m2 && d1 == d2
+}
+
 
 // calendarRespondCmd sends an accept/tentative/decline response to an event.
 func calendarRespondCmd(gc *GraphClient, eventID string, response EventResponse) tea.Cmd {
@@ -2577,12 +2620,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.state = stateCalendar
 			m.calendarSelected = 0
+			m.calendarWeekStart = getStartOfWeek(time.Now())
 			m = m.updateViewportSize()
-			if len(m.calendarEvents) == 0 && !m.calendarLoading {
-				m.calendarLoading = true
+			m.calendarLoading = true
+			if m.config.CalendarView == "week" {
+				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+			} else {
 				m.statusMsg = "Loading calendar events..."
-				cmds = append(cmds, fetchCalendarEventsCmd(m.graphClient))
 			}
+			cmds = append(cmds, m.fetchCalendarCmd())
 		}
 
 	case stateCompose:
@@ -2969,11 +3015,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "c":
 			m.state = stateMain
 			m.statusMsg = "Ready"
-		case "up", "k":
+		case "up", "k", "left":
 			if m.calendarSelected > 0 {
 				m.calendarSelected--
 			}
-		case "down", "j":
+		case "down", "j", "right":
 			if m.calendarSelected < len(m.calendarEvents)-1 {
 				m.calendarSelected++
 			}
@@ -2985,8 +3031,49 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Refresh calendar events
 			if m.graphClient != nil && !m.calendarLoading {
 				m.calendarLoading = true
-				m.statusMsg = "Refreshing calendar events..."
-				cmds = append(cmds, fetchCalendarEventsCmd(m.graphClient))
+				if m.config.CalendarView == "week" {
+					m.statusMsg = fmt.Sprintf("Refreshing week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+				} else {
+					m.statusMsg = "Refreshing calendar events..."
+				}
+				cmds = append(cmds, m.fetchCalendarCmd())
+			}
+		case "n":
+			// Next week (only active in week view)
+			if m.config.CalendarView == "week" && m.graphClient != nil && !m.calendarLoading {
+				m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, 7)
+				m.calendarSelected = 0
+				m.calendarLoading = true
+				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+				cmds = append(cmds, m.fetchCalendarCmd())
+			}
+		case "p":
+			// Previous week (only active in week view)
+			if m.config.CalendarView == "week" && m.graphClient != nil && !m.calendarLoading {
+				m.calendarWeekStart = m.calendarWeekStart.AddDate(0, 0, -7)
+				m.calendarSelected = 0
+				m.calendarLoading = true
+				m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+				cmds = append(cmds, m.fetchCalendarCmd())
+			}
+		case "v":
+			// Toggle view layout (list/week) and save to config
+			if m.graphClient != nil && !m.calendarLoading {
+				if m.config.CalendarView == "week" {
+					m.config.CalendarView = "list"
+				} else {
+					m.config.CalendarView = "week"
+					m.calendarWeekStart = getStartOfWeek(time.Now())
+				}
+				_ = SaveConfig(m.config)
+				m.calendarSelected = 0
+				m.calendarLoading = true
+				if m.config.CalendarView == "week" {
+					m.statusMsg = fmt.Sprintf("Loading week of %s...", m.calendarWeekStart.Format("2006-01-02"))
+				} else {
+					m.statusMsg = "Loading calendar events..."
+				}
+				cmds = append(cmds, m.fetchCalendarCmd())
 			}
 		case "a", "A":
 			// Accept the selected event
@@ -3771,7 +3858,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar {
 		s.WriteString("\n")
 
 		var keysText string
@@ -3785,6 +3872,12 @@ func (m mainModel) View() string {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
+		} else if m.state == stateCalendar {
+			if m.config.CalendarView == "week" {
+				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
+			} else {
+				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
+			}
 		} else {
 			if m.width >= 160 {
 				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
@@ -4288,20 +4381,115 @@ func (m mainModel) renderLayout2() string {
 
 // renderCalendarView renders the full-screen calendar popup with a two-column
 // layout: left = event list, right = selected event details.
+// renderDayPanel renders a day box in the week calendar view.
+// renderDayContent collects and styles the events for a given day in week view.
+func (m mainModel) renderDayContent(dayDate time.Time, width int, height int) []string {
+	type dayEv struct {
+		ev  CalendarEvent
+		idx int
+	}
+	var dayEvents []dayEv
+	for i, ev := range m.calendarEvents {
+		startLocal := ev.Start.Time().Local()
+		if startLocal.Year() == dayDate.Year() && startLocal.Month() == dayDate.Month() && startLocal.Day() == dayDate.Day() {
+			dayEvents = append(dayEvents, dayEv{ev: ev, idx: i})
+		}
+	}
+
+	var lines []string
+	headerText := dayDate.Format("Mon, 02 Jan")
+	isToday := isSameDay(dayDate, time.Now())
+
+	var headerStyle lipgloss.Style
+	if isToday {
+		headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Bold(true).Underline(true)
+	} else {
+		headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true)
+	}
+	lines = append(lines, " " + headerStyle.Render(headerText))
+
+	maxEvents := height - 1
+	if maxEvents < 1 {
+		maxEvents = 1
+	}
+
+	for i, item := range dayEvents {
+		if i >= maxEvents {
+			break
+		}
+		if i == maxEvents-1 && len(dayEvents) > maxEvents {
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("   ... and %d more", len(dayEvents)-(maxEvents-1))))
+			break
+		}
+
+		timeStr := item.ev.Start.Time().Local().Format("15:04")
+		if item.ev.IsAllDay {
+			timeStr = "All Day"
+		}
+
+		subj := item.ev.Subject
+		contentWidth := width - 1
+		prefix := "• " + timeStr + " "
+		maxSubjLen := contentWidth - len(prefix)
+		if maxSubjLen > 2 {
+			if len(subj) > maxSubjLen {
+				subj = subj[:maxSubjLen-2] + ".."
+			}
+		} else {
+			subj = ""
+		}
+
+		lineText := prefix + subj
+
+		if item.idx == m.calendarSelected {
+			paddedLine := selectedItemStyle.Copy().Width(contentWidth).Render(lineText)
+			lines = append(lines, " " + paddedLine)
+		} else {
+			lineText = " " + lineText
+			if item.ev.IsCancelled {
+				lines = append(lines, dimStyle.Render(lineText))
+			} else {
+				lines = append(lines, lineText)
+			}
+		}
+	}
+
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+
+	return lines
+}
+
+func padString(s string, width int) string {
+	visualWidth := lipgloss.Width(s)
+	if visualWidth >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-visualWidth)
+}
+
+// renderCalendarView renders the calendar popup with a two-pane layout.
 func (m mainModel) renderCalendarView() string {
 	var s strings.Builder
-	title := headerStyle.Render("📅  CALENDAR — UPCOMING EVENTS (30 days)")
+	var title string
+	if m.config.CalendarView == "week" {
+		title = headerStyle.Render(fmt.Sprintf("📅  CALENDAR — WEEK OF %s", strings.ToUpper(m.calendarWeekStart.Format("02 JAN 2006"))))
+	} else {
+		title = headerStyle.Render("📅  CALENDAR — UPCOMING EVENTS (30 days)")
+	}
 	s.WriteString("   " + title + "\n\n")
 
 	if m.calendarLoading && len(m.calendarEvents) == 0 {
 		s.WriteString("   " + m.spinner.View() + " Loading calendar events...\n")
-		s.WriteString("\n   " + dimStyle.Render("[Esc/q/c] Close  |  [r] Refresh") + "\n")
 		return s.String()
 	}
 
-	if len(m.calendarEvents) == 0 {
-		s.WriteString("   " + dimStyle.Render("No upcoming events in the next 30 days.") + "\n\n")
-		s.WriteString("   " + dimStyle.Render("[Esc/q/c] Close  |  [r] Refresh") + "\n")
+	if len(m.calendarEvents) == 0 && m.config.CalendarView != "week" {
+		s.WriteString("   " + dimStyle.Render("No upcoming events in the next 30 days.") + "\n")
 		return s.String()
 	}
 
@@ -4314,67 +4502,119 @@ func (m mainModel) renderCalendarView() string {
 	if detailWidth < 20 {
 		detailWidth = 20
 	}
-	listHeight := m.height - 7
+	listHeight := m.height - 10
 	if listHeight < 5 {
 		listHeight = 5
 	}
 
-	// Each event occupies 3 terminal lines: subject, time, blank separator.
-	// Calculate the maximum number of events that fit in the pane height.
-	linesPerEvent := 3
-	maxVisibleEvents := listHeight / linesPerEvent
-	if maxVisibleEvents < 1 {
-		maxVisibleEvents = 1
-	}
-
-	// Scroll the list so the selected item is always visible.
-	visibleStart := 0
-	visibleEnd := len(m.calendarEvents)
-	if len(m.calendarEvents) > maxVisibleEvents {
-		visibleStart = m.calendarSelected - maxVisibleEvents/2
-		if visibleStart < 0 {
-			visibleStart = 0
+	var leftPane string
+	if m.config.CalendarView == "week" {
+		leftWidth := m.width / 2
+		if leftWidth < 50 {
+			leftWidth = 50
 		}
-		visibleEnd = visibleStart + maxVisibleEvents
-		if visibleEnd > len(m.calendarEvents) {
-			visibleEnd = len(m.calendarEvents)
-			visibleStart = visibleEnd - maxVisibleEvents
+		if leftWidth > 80 {
+			leftWidth = 80
+		}
+
+		colWidth := (leftWidth - 7) / 2
+		contentWidth := colWidth * 2 + 3
+		leftWidth = contentWidth + 4
+		detailWidth = m.width - leftWidth - 6
+		if detailWidth < 20 {
+			detailWidth = 20
+		}
+
+		innerHeight := listHeight - 2
+		rowHeight := (innerHeight - 2) / 3
+		if rowHeight < 2 {
+			rowHeight = 2
+		}
+
+		monLines := m.renderDayContent(m.calendarWeekStart, colWidth, rowHeight)
+		tueLines := m.renderDayContent(m.calendarWeekStart.AddDate(0, 0, 1), colWidth, rowHeight)
+		wedLines := m.renderDayContent(m.calendarWeekStart.AddDate(0, 0, 2), colWidth, rowHeight)
+		thuLines := m.renderDayContent(m.calendarWeekStart.AddDate(0, 0, 3), colWidth, rowHeight)
+		friLines := m.renderDayContent(m.calendarWeekStart.AddDate(0, 0, 4), contentWidth, rowHeight)
+
+		var gridLines []string
+		for i := 0; i < rowHeight; i++ {
+			gridLines = append(gridLines, padString(monLines[i], colWidth)+" │ "+padString(tueLines[i], colWidth))
+		}
+		gridLines = append(gridLines, dimStyle.Render(strings.Repeat("─", colWidth)+"─┼─"+strings.Repeat("─", colWidth)))
+		for i := 0; i < rowHeight; i++ {
+			gridLines = append(gridLines, padString(wedLines[i], colWidth)+" │ "+padString(thuLines[i], colWidth))
+		}
+		gridLines = append(gridLines, dimStyle.Render(strings.Repeat("─", colWidth)+"─┴─"+strings.Repeat("─", colWidth)))
+		for i := 0; i < rowHeight; i++ {
+			gridLines = append(gridLines, padString(friLines[i], contentWidth))
+		}
+
+		leftPane = paneNormalStyle.Copy().Width(leftWidth).Height(listHeight).Render(strings.Join(gridLines, "\n"))
+		leftPane = applyPaneTitle(leftPane, "WEEK VIEW", false)
+	} else {
+		// Each event occupies 3 terminal lines: subject, time, blank separator.
+		// Calculate the maximum number of events that fit in the pane height.
+		linesPerEvent := 3
+		maxVisibleEvents := listHeight / linesPerEvent
+		if maxVisibleEvents < 1 {
+			maxVisibleEvents = 1
+		}
+
+		// Scroll the list so the selected item is always visible.
+		visibleStart := 0
+		visibleEnd := len(m.calendarEvents)
+		if len(m.calendarEvents) > maxVisibleEvents {
+			visibleStart = m.calendarSelected - maxVisibleEvents/2
 			if visibleStart < 0 {
 				visibleStart = 0
 			}
+			visibleEnd = visibleStart + maxVisibleEvents
+			if visibleEnd > len(m.calendarEvents) {
+				visibleEnd = len(m.calendarEvents)
+				visibleStart = visibleEnd - maxVisibleEvents
+				if visibleStart < 0 {
+					visibleStart = 0
+				}
+			}
 		}
+
+		var listBuf strings.Builder
+		for i := visibleStart; i < visibleEnd; i++ {
+			ev := m.calendarEvents[i]
+			start := ev.Start.Time().Local()
+			timeStr := start.Format("Mon 02 Jan 15:04")
+			if ev.IsAllDay {
+				timeStr = start.Format("Mon 02 Jan") + " (all day)"
+			}
+
+			subj := ev.Subject
+			maxSubj := listWidth - 3
+			if len(subj) > maxSubj {
+				subj = subj[:maxSubj-2] + ".."
+			}
+			line := fmt.Sprintf(" %s\n %s", subj, dimStyle.Render(timeStr))
+
+			if i == m.calendarSelected {
+				listBuf.WriteString(selectedItemStyle.Copy().Width(listWidth - 2).Render(line) + "\n")
+			} else {
+				listBuf.WriteString(line + "\n")
+			}
+		}
+
+		listPane := paneNormalStyle.Copy().Width(listWidth).Height(listHeight).Render(listBuf.String())
+		leftPane = applyPaneTitle(listPane, "EVENTS", false)
 	}
-
-	// ── Left: event list ──────────────────────────────────────────────────────
-	var listBuf strings.Builder
-	for i := visibleStart; i < visibleEnd; i++ {
-		ev := m.calendarEvents[i]
-		start := ev.Start.Time().Local()
-		timeStr := start.Format("Mon 02 Jan 15:04")
-		if ev.IsAllDay {
-			timeStr = start.Format("Mon 02 Jan") + " (all day)"
-		}
-
-		subj := ev.Subject
-		maxSubj := listWidth - 3
-		if len(subj) > maxSubj {
-			subj = subj[:maxSubj-2] + ".."
-		}
-		line := fmt.Sprintf(" %s\n %s", subj, dimStyle.Render(timeStr))
-
-		if i == m.calendarSelected {
-			listBuf.WriteString(selectedItemStyle.Copy().Width(listWidth - 2).Render(line) + "\n")
-		} else {
-			listBuf.WriteString(line + "\n")
-		}
-	}
-
-	listPane := paneNormalStyle.Copy().Width(listWidth).Height(listHeight).Render(listBuf.String())
-	listPane = applyPaneTitle(listPane, "EVENTS", false)
 
 	// ── Right: event detail ───────────────────────────────────────────────────
-	var detailBuf strings.Builder
-	if m.calendarSelected < len(m.calendarEvents) {
+	var detailPane string
+	if len(m.calendarEvents) == 0 {
+		var detailBuf strings.Builder
+		detailBuf.WriteString(dimStyle.Render("No events this week.") + "\n")
+		detailPane = paneActiveStyle.Copy().Width(detailWidth).Height(listHeight).Render(detailBuf.String())
+		detailPane = applyPaneTitle(detailPane, "EVENT DETAILS", true)
+	} else if m.calendarSelected < len(m.calendarEvents) {
+		var detailBuf strings.Builder
 		ev := m.calendarEvents[m.calendarSelected]
 		start := ev.Start.Time().Local()
 		end := ev.End.Time().Local()
@@ -4480,14 +4720,12 @@ func (m mainModel) renderCalendarView() string {
 		if ev.IsCancelled {
 			detailBuf.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Render("⚠ This event has been cancelled") + "\n")
 		}
+
+		detailPane = paneActiveStyle.Copy().Width(detailWidth).Height(listHeight).Render(detailBuf.String())
+		detailPane = applyPaneTitle(detailPane, "EVENT DETAILS", true)
 	}
 
-	detailPane := paneActiveStyle.Copy().Width(detailWidth).Height(listHeight).Render(detailBuf.String())
-	detailPane = applyPaneTitle(detailPane, "EVENT DETAILS", true)
-
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listPane, " ", detailPane) + "\n\n")
-	s.WriteString("   " + dimStyle.Render("[Esc/q/c] Close  |  [Up/Down/j/k] Select  |  [r] Refresh  |  [a] Accept  [t] Tentative  [d] Decline") + "\n")
-	s.WriteString(m.renderStatusBar(m.statusMsg, false))
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", detailPane))
 	return s.String()
 }
 

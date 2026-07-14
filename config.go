@@ -22,6 +22,7 @@ type Config struct {
 	Theme           string   `json:"theme"`           // "catppuccin" (default) or "teams"
 	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
 	CalendarEnabled bool     `json:"calendar_enabled"` // false (default) — enables calendar view (c) and event responses; requires Calendars.ReadWrite re-auth
+	CalendarView    string   `json:"calendar_view"`    // "list" (default) or "week"
 }
 
 func GetConfigDir() (string, error) {
@@ -61,6 +62,7 @@ func LoadConfig() (Config, error) {
 			Theme:           "catppuccin",
 			BrowserCommand:  "xdg-open",
 			CalendarEnabled: false,
+			CalendarView:    "list",
 		}
 		_ = SaveConfig(cfg)
 		return cfg, nil
@@ -75,6 +77,7 @@ func LoadConfig() (Config, error) {
 		TerminalBell:   1,
 		Theme:          "catppuccin",
 		BrowserCommand: "xdg-open",
+		CalendarView:   "list",
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
@@ -95,6 +98,11 @@ func LoadConfig() (Config, error) {
 
 	if cfg.Layout != 1 && cfg.Layout != 2 {
 		cfg.Layout = 1
+		_ = SaveConfig(cfg)
+	}
+
+	if cfg.CalendarView != "list" && cfg.CalendarView != "week" {
+		cfg.CalendarView = "list"
 		_ = SaveConfig(cfg)
 	}
 
@@ -126,7 +134,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") {
 		_ = SaveConfig(cfg)
 	}
 
