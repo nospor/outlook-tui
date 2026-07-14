@@ -36,7 +36,7 @@ type TokenCache struct {
 }
 
 func GetTokenCachePath() (string, error) {
-	dir, err := GetConfigDir()
+	dir, err := GetCacheDir()
 	if err != nil {
 		return "", err
 	}

@@ -14,15 +14,20 @@ func main() {
 	flag.Parse()
 
 	if *resetFlag {
-		configDir, err := GetConfigDir()
-		if err == nil {
-			configPath := filepath.Join(configDir, "config.json")
-			tokenPath := filepath.Join(configDir, "token.json")
-			_ = os.Remove(configPath)
-			_ = os.Remove(tokenPath)
-			fmt.Println("Configuration and token files reset.")
+		configDir, configErr := GetConfigDir()
+		cacheDir, cacheErr := GetCacheDir()
+		if configErr == nil {
+			_ = os.Remove(filepath.Join(configDir, "config.json"))
 		} else {
-			fmt.Printf("Error resolving config directory: %v\n", err)
+			fmt.Printf("Error resolving config directory: %v\n", configErr)
+		}
+		if cacheErr == nil {
+			_ = os.Remove(filepath.Join(cacheDir, "token.json"))
+		} else {
+			fmt.Printf("Error resolving cache directory: %v\n", cacheErr)
+		}
+		if configErr == nil && cacheErr == nil {
+			fmt.Println("Configuration and token files reset.")
 		}
 		os.Exit(0)
 	}

@@ -109,7 +109,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `browser_command`: The command/executable used to open URLs in the browser (defaults to `"xdg-open"`). You can change this to any browser command you prefer (e.g., `"google-chrome"`, `"firefox"`).
 * `calendar_enabled`: Enables the calendar feature (defaults to `false`).
   - **`false` (default)** — Calendar is disabled. The `c` key will show a warning message. No `Calendars.ReadWrite` permission is requested during authentication.
-  - **`true`** — Enables the calendar popup (`c` key) and accept/tentative/decline responses for meeting events. **Requires re-authentication** after enabling (delete `~/.config/outlook-tui/token.json` and restart) so that the `Calendars.ReadWrite` OAuth2 scope is added to the token. You must also add the `Calendars.ReadWrite` delegated permission to your Azure App Registration.
+  - **`true`** — Enables the calendar popup (`c` key) and accept/tentative/decline responses for meeting events. **Requires re-authentication** after enabling (delete `~/.cache/outlook-tui/token.json` and restart) so that the `Calendars.ReadWrite` OAuth2 scope is added to the token. You must also add the `Calendars.ReadWrite` delegated permission to your Azure App Registration.
 * `calendar_view`: The default layout for the calendar (defaults to `"list"`).
   - **`"list"` (default)** — Shows a list of upcoming events for the next 30 days.
   - **`"week"`** — Shows a grid view of the active week's events (Monday to Friday).
@@ -183,7 +183,7 @@ The calendar feature is **opt-in** and disabled by default.
 2. Set `calendar_enabled: true` in `~/.config/outlook-tui/config.json`.
 3. Delete your cached token to trigger re-authentication:
    ```bash
-   rm ~/.config/outlook-tui/token.json
+   rm ~/.cache/outlook-tui/token.json
    ```
 4. Restart the app and authenticate — the new scope will be included in the login prompt.
 

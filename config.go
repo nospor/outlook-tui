@@ -188,7 +188,7 @@ func LoadFilepickerSettings() (string, string, string) {
 		homeDir = abs
 	}
 
-	dir, err := GetConfigDir()
+	dir, err := GetCacheDir()
 	if err != nil {
 		return "Name", "asc", homeDir
 	}
@@ -218,7 +218,7 @@ func LoadFilepickerSettings() (string, string, string) {
 
 // SaveFilepickerSettings writes the current filepicker settings to filepicker_settings.json.
 func SaveFilepickerSettings(sortBy string, sortOrder string, currentDirectory string) error {
-	dir, err := GetConfigDir()
+	dir, err := GetCacheDir()
 	if err != nil {
 		return err
 	}
