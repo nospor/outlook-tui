@@ -216,6 +216,7 @@ type mainModel struct {
 	notifiedEventsSelected  int             // selected index in the unread notifications popup
 	pendingCalendarSelectID  string          // pending calendar event ID to select after a fresh fetch
 	calendarAutoSelectToday bool            // when true, auto-position cursor on today's first event after load
+	pendingOpenMessageID     string          // message ID we are waiting to open URLs for after a fresh calendar fetch
 }
 
 func initialModel() mainModel {
@@ -2243,6 +2244,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m = m.updateViewportSize()
+		if m.pendingOpenMessageID != "" {
+			targetMsgID := m.pendingOpenMessageID
+			m.pendingOpenMessageID = ""
+			if m.detailMessage != nil && m.detailMessage.ID == targetMsgID {
+				var cmd tea.Cmd
+				m, cmd = m.handleOpenURLs(true)
+				return m, cmd
+			}
+		}
 
 	case calendarRemindersCheckedMsg:
 		if evs, err := loadNotifiedEventsFromFile(); err == nil {
@@ -2767,90 +2777,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Yank: [m] Msg (no quotes), [a] All (with quotes), [u] URLs, [s] Subject"
 			m = m.updateViewportSize()
 		case "o":
-			am := m.activeMessage()
-			if am == nil {
-				m.statusMsg = "No message selected"
-				break
-			}
-			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
-				m.statusMsg = "Message details loading, please try again..."
-				break
-			}
-			allURLs := extractAllURLsForOpen(m.detailMessage.Body.Content, m.detailMessage.Subject)
-
-			if m.config.CalendarEnabled {
-				if matchedEv := findMatchingCalendarEvent(m.detailMessage, m.calendarEvents, allURLs); matchedEv != nil {
-					// 1. Add view calendar event link
-					eventURL := fmt.Sprintf("calendar-event://%s?subject=%s", matchedEv.ID, url.QueryEscape(matchedEv.Subject))
-					
-					// 2. Add online meeting link if present
-					if matchedEv.OnlineMeeting != nil && matchedEv.OnlineMeeting.JoinURL != "" {
-						meetingURL := "online-meeting://" + matchedEv.OnlineMeeting.JoinURL
-						allURLs = append([]string{eventURL, meetingURL}, allURLs...)
-					} else {
-						allURLs = append([]string{eventURL}, allURLs...)
-					}
-				}
-			}
-
-			totalCount := len(allURLs)
-
-			if totalCount == 0 {
-				m.statusMsg = "No URLs found in the message"
-				break
-			}
-
-			if totalCount == 1 {
-				targetURL := allURLs[0]
-				urlType, normURL := classifyURL(targetURL)
-				if urlType == "gitlab" {
-					if _, err := exec.LookPath("gitlab-tui"); err == nil {
-						m.state = stateLoading
-						m.statusMsg = "Launching gitlab-tui..."
-						return m, openGitLabTuiCmd(normURL)
-					}
-				} else if urlType == "youtrack" {
-					if _, err := exec.LookPath("yt-tui"); err == nil {
-						m.state = stateLoading
-						m.statusMsg = "Launching yt-tui..."
-						return m, openYouTrackTuiCmd(normURL)
-					}
-				} else if urlType == "calendar" {
-					if u, err := url.Parse(normURL); err == nil {
-						eventID := u.Host
-						foundIdx := -1
-						for i, ev := range m.calendarEvents {
-							if ev.ID == eventID {
-								foundIdx = i
-								break
-							}
-						}
-						if foundIdx != -1 {
-							m.state = stateCalendar
-							m.calendarSelected = foundIdx
-							eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
-							m.calendarWeekStart = getStartOfWeek(eventDate)
-							m = m.updateViewportSize()
-							m.statusMsg = "Opened calendar event"
-							return m, nil
-						}
-					}
-				} else if urlType == "meeting" {
-					actualURL := strings.TrimPrefix(normURL, "online-meeting://")
-					m.state = stateMain
-					m.statusMsg = "Opening meeting in browser..."
-					return m, m.openBrowserCmd(actualURL)
-				}
-
-				m.state = stateMain
-				m.statusMsg = "Opening link in browser..."
-				return m, m.openBrowserCmd(normURL)
-			}
-
-			// Multiple URLs: show popup/modal
-			m.extractedURLs = allURLs
-			m.selectedURLIdx = 0
-			m.state = stateExternalURLSelect
+			var cmd tea.Cmd
+			m, cmd = m.handleOpenURLs(false)
+			return m, cmd
 		case "ctrl+g":
 			am := m.activeMessage()
 			if am == nil {
@@ -8164,4 +8093,98 @@ func (m mainModel) renderStatusBar(text string, includePrefix bool) string {
 
 	// Pad to full terminal width using statusStyle (which has ColorSurface background and 0,1 padding)
 	return statusStyle.Width(m.width).Render(content)
+}
+
+func (m mainModel) handleOpenURLs(skipFetch bool) (mainModel, tea.Cmd) {
+	am := m.activeMessage()
+	if am == nil {
+		m.statusMsg = "No message selected"
+		return m, nil
+	}
+	if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+		m.statusMsg = "Message details loading, please try again..."
+		return m, nil
+	}
+	allURLs := extractAllURLsForOpen(m.detailMessage.Body.Content, m.detailMessage.Subject)
+
+	if m.config.CalendarEnabled {
+		matchedEv := findMatchingCalendarEvent(m.detailMessage, m.calendarEvents, allURLs)
+		if matchedEv != nil {
+			// 1. Add view calendar event link
+			eventURL := fmt.Sprintf("calendar-event://%s?subject=%s", matchedEv.ID, url.QueryEscape(matchedEv.Subject))
+
+			// 2. Add online meeting link if present
+			if matchedEv.OnlineMeeting != nil && matchedEv.OnlineMeeting.JoinURL != "" {
+				meetingURL := "online-meeting://" + matchedEv.OnlineMeeting.JoinURL
+				allURLs = append([]string{eventURL, meetingURL}, allURLs...)
+			} else {
+				allURLs = append([]string{eventURL}, allURLs...)
+			}
+		} else if !skipFetch {
+			// If not found and we haven't fetched yet, trigger a refresh!
+			m.pendingOpenMessageID = m.detailMessage.ID
+			m.statusMsg = "Refreshing calendar events to check for event..."
+			return m, m.fetchCalendarCmd()
+		}
+	}
+
+	totalCount := len(allURLs)
+
+	if totalCount == 0 {
+		m.statusMsg = "No URLs found in the message"
+		return m, nil
+	}
+
+	if totalCount == 1 {
+		targetURL := allURLs[0]
+		urlType, normURL := classifyURL(targetURL)
+		if urlType == "gitlab" {
+			if _, err := exec.LookPath("gitlab-tui"); err == nil {
+				m.state = stateLoading
+				m.statusMsg = "Launching gitlab-tui..."
+				return m, openGitLabTuiCmd(normURL)
+			}
+		} else if urlType == "youtrack" {
+			if _, err := exec.LookPath("yt-tui"); err == nil {
+				m.state = stateLoading
+				m.statusMsg = "Launching yt-tui..."
+				return m, openYouTrackTuiCmd(normURL)
+			}
+		} else if urlType == "calendar" {
+			if u, err := url.Parse(normURL); err == nil {
+				eventID := u.Host
+				foundIdx := -1
+				for i, ev := range m.calendarEvents {
+					if ev.ID == eventID {
+						foundIdx = i
+						break
+					}
+				}
+				if foundIdx != -1 {
+					m.state = stateCalendar
+					m.calendarSelected = foundIdx
+					eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
+					m.calendarWeekStart = getStartOfWeek(eventDate)
+					m = m.updateViewportSize()
+					m.statusMsg = "Opened calendar event"
+					return m, nil
+				}
+			}
+		} else if urlType == "meeting" {
+			actualURL := strings.TrimPrefix(normURL, "online-meeting://")
+			m.state = stateMain
+			m.statusMsg = "Opening meeting in browser..."
+			return m, m.openBrowserCmd(actualURL)
+		}
+
+		m.state = stateMain
+		m.statusMsg = "Opening link in browser..."
+		return m, m.openBrowserCmd(normURL)
+	}
+
+	// Multiple URLs: show popup/modal
+	m.extractedURLs = allURLs
+	m.selectedURLIdx = 0
+	m.state = stateExternalURLSelect
+	return m, nil
 }
