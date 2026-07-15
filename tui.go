@@ -59,6 +59,7 @@ const (
 	stateCalendar                // calendar popup (requires calendar_enabled = true)
 	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
 	stateNotifiedEventsSelect
+	stateMoveFolderSelect
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -111,6 +112,11 @@ type (
 		Errors     []error
 	}
 	mailRestoredMsg     struct{ MessageID string }
+	mailMovedMsg        struct {
+		MessageID       string
+		DestinationID   string
+		DestinationName string
+	}
 	attachmentSavedMsg  string
 	userEmailFetchedMsg string
 	editorBodyLoadedMsg string // body text returned after external editor exits
@@ -196,6 +202,7 @@ type mainModel struct {
 	extractedURLs   []string
 	selectedURLIdx  int
 	selectedYankIdx int
+	selectedMoveFolderIdx int
 
 	// Thread deletion confirm state
 	deleteThreadMsgIDs  []string
@@ -611,6 +618,20 @@ func restoreMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return mailRestoredMsg{MessageID: msgID}
+	}
+}
+
+func moveMailCmd(gc *GraphClient, msgID, destID, destName string) tea.Cmd {
+	return func() tea.Msg {
+		err := gc.MoveMessage(msgID, destID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return mailMovedMsg{
+			MessageID:       msgID,
+			DestinationID:   destID,
+			DestinationName: destName,
+		}
 	}
 }
 
@@ -2185,6 +2206,66 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 
+	case mailMovedMsg:
+		m.statusMsg = fmt.Sprintf("Message moved to %s", msg.DestinationName)
+		// Find if the moved message was unread before moving
+		wasUnread := false
+		var movedMsgFolderID string
+		for _, em := range m.messages {
+			if em.ID == msg.MessageID {
+				wasUnread = !em.IsRead
+				break
+			}
+		}
+		if !wasUnread {
+			for _, tg := range m.threadGroups {
+				for _, mem := range tg.Members {
+					if mem.ID == msg.MessageID {
+						wasUnread = !mem.IsRead
+						break
+					}
+				}
+			}
+		}
+		// Remove from SQLite cache and favorites
+		if m.db != nil {
+			if fID, err := m.db.GetMessageFolderID(msg.MessageID); err == nil && fID != "" {
+				movedMsgFolderID = fID
+			}
+			_ = m.db.DeleteMessage(msg.MessageID)
+			_ = m.db.RemoveFromFavorites(msg.MessageID)
+		}
+		// Update folder unread count in memory
+		if wasUnread && len(m.folders) > 0 {
+			fID := movedMsgFolderID
+			if fID == "" {
+				fID = m.folders[m.selectedFolder].ID
+			}
+			if fID != "favorites" {
+				for i := range m.folders {
+					if m.folders[i].ID == fID {
+						m.folders[i].UnreadItemCount = m.folders[i].UnreadItemCount - 1
+						if m.folders[i].UnreadItemCount < 0 {
+							m.folders[i].UnreadItemCount = 0
+						}
+						break
+					}
+				}
+			}
+		}
+		// Reload messages
+		if len(m.folders) > 0 {
+			if m.folders[m.selectedFolder].ID == "favorites" {
+				m, _ = m.loadCachedFolderMessages()
+				m.updateFavoritesFolderCounts()
+				return m, nil
+			}
+			return m, tea.Batch(
+				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
+				fetchFoldersCmd(m.graphClient),
+			)
+		}
+
 	case attachmentSavedMsg:
 		m.statusMsg = fmt.Sprintf("Saved attachment to: %s", msg)
 
@@ -2776,6 +2857,21 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedYankIdx = 0
 			m.statusMsg = "Yank: [m] Msg (no quotes), [a] All (with quotes), [u] URLs, [s] Subject"
 			m = m.updateViewportSize()
+		case "m":
+			am := m.activeMessage()
+			if am == nil {
+				m.statusMsg = "No message selected"
+				break
+			}
+			dests := m.getMoveDestinations()
+			if len(dests) == 0 {
+				m.statusMsg = "No other folders available to move to"
+				break
+			}
+			m.state = stateMoveFolderSelect
+			m.selectedMoveFolderIdx = 0
+			m.statusMsg = "Select destination folder"
+			m = m.updateViewportSize()
 		case "o":
 			var cmd tea.Cmd
 			m, cmd = m.handleOpenURLs(false)
@@ -3105,6 +3201,51 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.executeYank("u")
 		case "s":
 			m = m.executeYank("s")
+		}
+
+	case stateMoveFolderSelect:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		dests := m.getMoveDestinations()
+		switch key.String() {
+		case "esc", "q":
+			m.state = stateMain
+			m.statusMsg = "Move cancelled"
+			m = m.updateViewportSize()
+		case "up", "k":
+			if len(dests) > 0 {
+				if m.selectedMoveFolderIdx > 0 {
+					m.selectedMoveFolderIdx--
+				} else {
+					m.selectedMoveFolderIdx = len(dests) - 1
+				}
+			}
+		case "down", "j":
+			if len(dests) > 0 {
+				if m.selectedMoveFolderIdx < len(dests)-1 {
+					m.selectedMoveFolderIdx++
+				} else {
+					m.selectedMoveFolderIdx = 0
+				}
+			}
+		case "enter":
+			if len(dests) > 0 && m.selectedMoveFolderIdx >= 0 && m.selectedMoveFolderIdx < len(dests) {
+				destFolder := dests[m.selectedMoveFolderIdx]
+				am := m.activeMessage()
+				if am == nil {
+					m.statusMsg = "No message selected"
+					m.state = stateMain
+					m = m.updateViewportSize()
+					break
+				}
+				m.state = stateMain
+				m.statusMsg = fmt.Sprintf("Moving message to %s...", destFolder.DisplayName)
+				return m, moveMailCmd(m.graphClient, am.ID, destFolder.ID, destFolder.DisplayName)
+			}
+			m.state = stateMain
+			m = m.updateViewportSize()
 		}
 
 	case stateExternalURLSelect:
@@ -4121,7 +4262,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments, stateNotifiedEventsSelect:
+	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments, stateNotifiedEventsSelect, stateMoveFolderSelect:
 		if m.state == stateNotifiedEventsSelect && m.prevState == stateCalendar {
 			s.WriteString(m.renderCalendarView())
 		} else {
@@ -4250,12 +4391,14 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
 		s.WriteString("\n")
 
 		var keysText string
 		if m.state == stateYankSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
+		} else if m.state == stateMoveFolderSelect {
+			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select Folder | [Enter] Move Message"
 		} else if m.state == stateURLSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Copy to Clipboard"
 		} else if m.state == stateExternalURLSelect {
@@ -4276,11 +4419,11 @@ func (m mainModel) View() string {
 			}
 		} else {
 			if m.width >= 160 {
-				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
+				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [m] Move | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
 			} else if m.width >= 130 {
-				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
+				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [m] Move | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
 			} else if m.width >= 95 {
-				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
+				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [m] Move | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
 			} else {
 				keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
 			}
@@ -4298,6 +4441,45 @@ func (m mainModel) View() string {
 		modalWidth := 46
 		modalHeight := 7
 		dropdownView := m.renderYankDropdown(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateMoveFolderSelect {
+		dests := m.getMoveDestinations()
+		modalWidth := 46
+		maxLen := 0
+		for _, d := range dests {
+			if len(d.DisplayName) > maxLen {
+				maxLen = len(d.DisplayName)
+			}
+		}
+		titleLen := len(" SELECT DESTINATION FOLDER: ")
+		if titleLen+4 > modalWidth {
+			modalWidth = titleLen + 4
+		}
+		if maxLen+8 > modalWidth {
+			modalWidth = maxLen + 8
+		}
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+
+		modalHeight := len(dests) + 4
+		if modalHeight > 15 {
+			modalHeight = 15
+		}
+
+		dropdownView := m.renderMoveFolderDropdown(modalWidth, modalHeight, dests)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -4570,7 +4752,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -5261,6 +5443,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [d] / [Delete]      Move message to Deleted Items",
 		"  [D]                 Move entire thread to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
+		"  [m]                 Move message to specified folder",
 		"  [a]                 Open attachments pane (if any)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
@@ -5856,6 +6039,99 @@ func (m mainModel) renderYankDropdown(width int) string {
 				Render(line)
 		}
 		rows = append(rows, line)
+	}
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorViolet)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) getMoveDestinations() []MailFolder {
+	var dests []MailFolder
+	var currentFolderID string
+	if len(m.folders) > 0 && m.selectedFolder >= 0 && m.selectedFolder < len(m.folders) {
+		currentFolderID = m.folders[m.selectedFolder].ID
+	}
+	for _, f := range m.folders {
+		if f.ID == "favorites" || f.ID == currentFolderID {
+			continue
+		}
+		dests = append(dests, f)
+	}
+	return dests
+}
+
+func (m mainModel) renderMoveFolderDropdown(width, height int, dests []MailFolder) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(" SELECT DESTINATION FOLDER: "))
+	rows = append(rows, "") // Empty separator line
+
+	// Header is 2 rows (title + empty line). So available rows for folders is height - 4.
+	availRows := height - 4
+	if availRows < 1 {
+		availRows = 1
+	}
+
+	start := 0
+	end := len(dests)
+	if len(dests) > availRows {
+		start = m.selectedMoveFolderIdx - (availRows / 2)
+		if start < 0 {
+			start = 0
+		}
+		end = start + availRows
+		if end > len(dests) {
+			end = len(dests)
+			start = end - availRows
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+
+	for i := start; i < end; i++ {
+		f := dests[i]
+		indicator := "  "
+		if i == m.selectedMoveFolderIdx {
+			indicator = "> "
+		}
+
+		line := fmt.Sprintf("%s%s", indicator, f.DisplayName)
+
+		// Pad/crop line
+		if len(line) < dropdownWidth-2 {
+			line = line + strings.Repeat(" ", dropdownWidth-2-len(line))
+		} else if len(line) > dropdownWidth-2 {
+			line = line[:dropdownWidth-5] + "..."
+		}
+
+		if i == m.selectedMoveFolderIdx {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorBg)).
+				Background(lipgloss.Color(ColorViolet)).
+				Bold(true).
+				Render(line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(ColorText)).
+				Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	// Add padding/empty lines to match the height exactly
+	for len(rows) < height-2 {
+		rows = append(rows, "")
 	}
 
 	joined := strings.Join(rows, "\n")
