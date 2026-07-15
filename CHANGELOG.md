@@ -1,4 +1,14 @@
 
+## [0.6.5] - 2026-07-15
+
+### Bug Fixes
+
+- *(tui)* Fix detail pane double-wrapping in layout 2 and collapse HTML whitespace ([30989f3](https://github.com/nospor/outlook-tui/commit/30989f3e626edfd8800e0c53d51d0f0b82a49530))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.4 [skip ci] ([6b4908e](https://github.com/nospor/outlook-tui/commit/6b4908e9a209501ec6a9a8ff88bc8c717bfbc820))
+
 ## [0.6.4] - 2026-07-15
 
 ### Features
