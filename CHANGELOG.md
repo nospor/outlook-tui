@@ -1,4 +1,18 @@
 
+## [0.6.6] - 2026-07-15
+
+### Features
+
+- Auto-refresh calendar when matching event is not found on pressing o ([a641b72](https://github.com/nospor/outlook-tui/commit/a641b725b20a5e56d949ca534162d961797c6158))
+- Add functionality to move selected message to specified folder ([f524776](https://github.com/nospor/outlook-tui/commit/f52477660cb5e68aaf60636d41e8bd450dde3cee))
+
+            - Implemented `m` keyboard shortcut in main view to trigger folder
+            selection popup overlay (`stateMoveFolderSelect`).
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.5 [skip ci] ([a11c97c](https://github.com/nospor/outlook-tui/commit/a11c97c5c4c0caa252f98e9a8dde433e321e7591))
+
 ## [0.6.5] - 2026-07-15
 
 ### Bug Fixes
