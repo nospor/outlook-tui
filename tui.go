@@ -5043,7 +5043,7 @@ func (m mainModel) renderCalendarView() string {
 	var s strings.Builder
 	var title string
 	if m.config.CalendarView == "week" {
-		title = headerStyle.Render(fmt.Sprintf("📅  CALENDAR — WEEK OF %s", strings.ToUpper(m.calendarWeekStart.Format("02 JAN 2006"))))
+		title = headerStyle.Render(fmt.Sprintf("📅  CALENDAR — WEEK OF %s", strings.ToUpper(m.calendarWeekStart.Format("02 Jan 2006"))))
 	} else {
 		title = headerStyle.Render("📅  CALENDAR — UPCOMING EVENTS (30 days)")
 	}
