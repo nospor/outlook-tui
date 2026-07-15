@@ -1,4 +1,28 @@
 
+## [0.6.4] - 2026-07-15
+
+### Features
+
+- Add optional calendar view with accept/tentative/decline support ([4a2423a](https://github.com/nospor/outlook-tui/commit/4a2423a99f5ce4b88a603ef96705ba827d482ec3))
+- Add configurable calendar layouts with list and weekday week views ([4f6b387](https://github.com/nospor/outlook-tui/commit/4f6b3878720b12370c5ff2cd5db1b8f26e9ff673))
+- *(calendar)* Support day-based navigation in week view ([27b5f72](https://github.com/nospor/outlook-tui/commit/27b5f72c545be3ae749b585b4252d7ae35e4ac34))
+- Add calendar event matching and direct launch actions in URL opening menu ([d635508](https://github.com/nospor/outlook-tui/commit/d635508b3a28115def8c276952dc36ded45e445f))
+- Add local SQLite caching for calendar events ([8044953](https://github.com/nospor/outlook-tui/commit/8044953acd5deae89c83a9d4d98911485376f301))
+- Add local calendar event reminders with configurable offset check ([50ef2e2](https://github.com/nospor/outlook-tui/commit/50ef2e294d49c6675375bb3cfc98f38c6410a1f2))
+- Implement unread calendar notification event cache and ctrl+e selection popup ([c3b4192](https://github.com/nospor/outlook-tui/commit/c3b4192e36204e7c6f36a29f9accd1d13cd32286))
+- *(calendar)* Require confirmation before declining an event ([8202e96](https://github.com/nospor/outlook-tui/commit/8202e9658b62231b4c28b8bb831ea19770ff80a0))
+
+### Bug Fixes
+
+- Move token.json and filepicker_settings.json to cache dir ([ff9fa25](https://github.com/nospor/outlook-tui/commit/ff9fa256a2c30c5c88a6350d4318006268d6a52d))
+- Auto-select current weekday on calendar week view open ([1f65870](https://github.com/nospor/outlook-tui/commit/1f65870a1ef855e822b27de4b1d1266a9f2e8e46))
+- Exclude past events from calendar list view ([4f2be3f](https://github.com/nospor/outlook-tui/commit/4f2be3f1346737b1adb7cf2266a3c73969bc20ec))
+- *(tui)* Correct calendar week header date formatting layout ([80849c0](https://github.com/nospor/outlook-tui/commit/80849c0f97db4d3a51743182f95ad9fef5c3f9d9))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.3 [skip ci] ([d7601fb](https://github.com/nospor/outlook-tui/commit/d7601fb01a684b89ddd1a0a69b2ab309fe3567f4))
+
 ## [0.6.3] - 2026-07-13
 
 ### Features
