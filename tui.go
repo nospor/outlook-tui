@@ -4938,7 +4938,7 @@ func (m mainModel) renderLayout2() string {
 	// left col outer = leftColInner+4=50; right pane Width = m.width - 50 - 4 = m.width - 54
 	// dView outer height must match left column outer height (= totalHeight).
 	// .Height(n) sets inner content; outer = n+2 (borders). So use totalHeight-2.
-	dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
+	dView := dStyle.Width(m.width - 52).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
 	dView = applyPaneTitle(dView, "[3] MESSAGE DETAIL", m.activePane == paneDetail)
 	dView = cropLines(dView, totalHeight)
 

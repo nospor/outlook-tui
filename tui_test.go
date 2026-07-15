@@ -377,6 +377,10 @@ func TestLipglossWrap(t *testing.T) {
 	t.Logf("ANSI Wrapped:\n%q", ansiWrapped)
 }
 
+
+
+
+
 func TestJKNavigation(t *testing.T) {
 	// Initialize a basic mainModel
 	msg1 := Message{
@@ -1221,7 +1225,7 @@ func TestLayout2Heights(t *testing.T) {
 
 		fView := fStyle.Width(leftColInner).Height(foldersHeight).Render(foldersView)
 		mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(messagesView)
-		dView := dStyle.Width(m.width - 54).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
+		dView := dStyle.Width(m.width - 52).Height(totalHeight - 2).Render(cropLines(detailView, totalHeight-2))
 
 		fH := lipgloss.Height(fView)
 		mH := lipgloss.Height(mView)
