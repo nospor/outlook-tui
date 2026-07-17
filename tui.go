@@ -361,8 +361,16 @@ func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 		m.calendarEvents = cached
 		m.calendarLoading = false
 		m.statusMsg = fmt.Sprintf("Loaded %d calendar events from cache", len(cached))
-		// Auto-position cursor on today when entering week view for the current week.
-		if m.calendarAutoSelectToday && m.config.CalendarView == "week" {
+		if m.pendingCalendarSelectID != "" {
+			for i, ev := range cached {
+				if ev.ID == m.pendingCalendarSelectID {
+					m.calendarSelected = i
+					eventDate := ev.Start.Time().Local()
+					m.calendarWeekStart = getStartOfWeek(eventDate)
+					break
+				}
+			}
+		} else if m.calendarAutoSelectToday && m.config.CalendarView == "week" {
 			m.calendarSelected = selectEventForToday(cached)
 			m.calendarAutoSelectToday = false
 		}
@@ -3651,34 +3659,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateCalendar
 				m.statusMsg = "Going to calendar event..."
 
-				foundIdx := -1
-				for i, ev := range m.calendarEvents {
-					if ev.ID == selectedEvent.ID {
-						foundIdx = i
-						break
-					}
+				eventTime, err := parseEventTime(selectedEvent.StartStr)
+				if err == nil {
+					m.calendarWeekStart = getStartOfWeek(eventTime.Local())
 				}
+				m.pendingCalendarSelectID = selectedEvent.ID
+				cmds = append(cmds, m.loadCalendarWithCache())
 
-				if foundIdx != -1 {
-					m.calendarSelected = foundIdx
-					eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
-					m.calendarWeekStart = getStartOfWeek(eventDate)
-					_ = removeNotifiedEventFromFile(selectedEvent.ID)
-					if evs, err := loadNotifiedEventsFromFile(); err == nil {
-						m.notifiedEvents = evs
-					}
-				} else {
-					eventTime, err := parseEventTime(selectedEvent.StartStr)
-					if err == nil {
-						m.calendarWeekStart = getStartOfWeek(eventTime.Local())
-					}
-					m.pendingCalendarSelectID = selectedEvent.ID
-					cmds = append(cmds, m.loadCalendarWithCache())
-
-					_ = removeNotifiedEventFromFile(selectedEvent.ID)
-					if evs, err := loadNotifiedEventsFromFile(); err == nil {
-						m.notifiedEvents = evs
-					}
+				_ = removeNotifiedEventFromFile(selectedEvent.ID)
+				if evs, err := loadNotifiedEventsFromFile(); err == nil {
+					m.notifiedEvents = evs
 				}
 				m = m.updateViewportSize()
 			}
