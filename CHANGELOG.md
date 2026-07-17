@@ -1,4 +1,14 @@
 
+## [0.6.7] - 2026-07-17
+
+### Bug Fixes
+
+- *(calendar)* Force range reload when jumping from notification popup ([7d08d16](https://github.com/nospor/outlook-tui/commit/7d08d165ef5ddae7c7e3a2a70590c47ca20ed74e))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.6 [skip ci] ([ecd1985](https://github.com/nospor/outlook-tui/commit/ecd19856962e627672cfaaf3d8ca0a92c915e1de))
+
 ## [0.6.6] - 2026-07-15
 
 ### Features
