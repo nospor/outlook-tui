@@ -6990,6 +6990,10 @@ func renderHTMLTable(tableHTML string) string {
 	// Helper: strip all HTML tags from a fragment and unescape entities.
 	stripTags := func(s string) string {
 		s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, "")
+		// Strip ANSI escape codes that may have been injected by the
+		// pre-processing pipeline (convertInlineStylesToANSI, bold/italic
+		// tag replacements, etc.) before we measure column widths.
+		s = regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(s, "")
 		s = html.UnescapeString(s)
 		s = strings.ReplaceAll(s, "\u00a0", " ")
 		s = strings.TrimSpace(s)
