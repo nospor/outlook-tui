@@ -1,4 +1,61 @@
 
+## [0.6.8] - 2026-07-20
+
+### Features
+
+- Render HTML tables as Unicode box-drawing tables in detail view ([ccaeddf](https://github.com/nospor/outlook-tui/commit/ccaeddfe7af3c1c3de8d448452d15ab80a0478b8))
+
+            Replace the flat '<tr>→newline / <td>→space' approach with a proper
+            two-pass ASCII box-table renderer (renderHTMLTable). Tables are pre-
+            processed before tag stripping, wrapped in sentinel markers so the rest
+            of the ANSI/whitespace pipeline is unaffected, then spliced back in.
+
+            - First pass collects rows/cells using regex (<tr>, <td>, <th>), strips
+              inner tags, and measures max column widths (rune-aware).
+            - Second pass renders box-drawing borders (┌┬┐ / │ / ├┼┤ / └┴┘) with
+              cells padded to column width.
+            - <th> header cells are rendered in ANSI bold (\x1b[1m…\x1b[22m).
+            - Update TestFormatBodyContent to match new rendered output.
+
+### Bug Fixes
+
+- Strip ANSI codes in renderHTMLTable before measuring column widths ([20a0507](https://github.com/nospor/outlook-tui/commit/20a0507d1847f191ea03d014f7ac7457f6d63f90))
+
+            convertInlineStylesToANSI and the bold/italic tag replacements run
+            before renderHTMLTable, so cell text already contained invisible ANSI
+            escape sequences by the time stripTags was called. len([]rune(c.text))
+            counted those invisible bytes as visible width, causing column widths
+            to be over-measured and header/data rows to misalign with the border.
+
+            Add a \x1b\[[0-9;]*m strip pass in the stripTags helper so all
+            column-width measurements are made against clean visible text.
+- Correct column width misalignment in renderHTMLTable ([2bff35a](https://github.com/nospor/outlook-tui/commit/2bff35a69ffb9780d413e79af8f2db25fa46ca7d))
+
+            Several sources of invisible bytes were inflating measured column widths,
+            causing cell text to appear shifted left relative to the box borders:
+
+            1. \x01/\x02 link-marker bytes: replaceAnchorTags wraps link text in
+               \x01...\x02 sentinels (converted to ANSI later by replaceLinkMarkers).
+               These survived the ANSI strip and were counted as visible rune width.
+               Fix: strip \x01 and \x02 via strings.Map in stripTags.
+
+            2. <br> inside cells: inline line-breaks produced multi-line cell text,
+               breaking rune-width measurement. Fix: replace <br> with a space before
+               tag stripping.
+
+            3. Internal whitespace/newlines: collapse \r\n\t runs and double-spaces
+               to a single space for clean measurement.
+
+            4. Layout-table overflow: emails that use <table> as a layout container
+               stuff full paragraphs into a single <td>, producing 200+ char columns
+               that overflow the terminal. Fix: clamp every column to maxColWidth=80
+               chars and truncate overlong cells with a … suffix.
+- Narrow CSS hidden-style detection to prevent suppression of email body content ([7226962](https://github.com/nospor/outlook-tui/commit/7226962b98e052b817b115225503302c44cb54ee))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.7 [skip ci] ([04c0525](https://github.com/nospor/outlook-tui/commit/04c0525d7381b6229aadc9ff2e8c81635d6b8710))
+
 ## [0.6.7] - 2026-07-17
 
 ### Bug Fixes
