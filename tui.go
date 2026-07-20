@@ -8306,7 +8306,12 @@ func (m mainModel) getRecipientName(msg *Message) string {
 	return getRecipientFirstName(msg.ToRecipients, m.userEmail)
 }
 
-var hiddenStyleRx = regexp.MustCompile(`(?i)\b(?:display\s*:\s*none|visibility\s*:\s*hidden|mso-hide\s*:\s*all|font-size\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|max-height\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|line-height\s*:\s*0(?:\.0*)?(?:px|pt|em|%)?|opacity\s*:\s*0(?:\.0*)?)\b`)
+// hiddenStyleRx matches CSS properties that reliably indicate an element is
+// intentionally invisible. We intentionally exclude font-size:0, max-height:0
+// and line-height:0 because those are routinely applied to structural/spacer
+// ancestor elements in HTML marketing emails, and propagating the isHidden flag
+// through the tag stack would cause the entire visible body to be suppressed.
+var hiddenStyleRx = regexp.MustCompile(`(?i)\b(?:display\s*:\s*none|visibility\s*:\s*hidden|mso-hide\s*:\s*all|opacity\s*:\s*0(?:\.0*)?)\b`)
 
 func isStyleHidden(style string) bool {
 	return hiddenStyleRx.MatchString(style)
