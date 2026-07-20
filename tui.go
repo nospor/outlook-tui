@@ -6797,6 +6797,13 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	res = strings.ReplaceAll(res, "\x01CODE_START\x01", "\x1b[38;2;249;226;175m")
 	res = strings.ReplaceAll(res, "\x01CODE_END\x01", "\x1b[39m")
 
+	// Render <table>…</table> blocks as ASCII box tables before tag stripping.
+	// We use sentinel markers (\x02TABLE\x02…\x02ENDTABLE\x02) so the rest of
+	// the pipeline (tag stripper, whitespace collapser) leaves rendered rows intact.
+	res = regexp.MustCompile(`(?is)<table(?:\s+[^>]*)?>(.+?)</table>`).ReplaceAllStringFunc(res, func(match string) string {
+		return "\x02TABLE\x02" + renderHTMLTable(match) + "\x02ENDTABLE\x02"
+	})
+
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
 	// We'll replace simple tags to preserve readability.
@@ -6808,8 +6815,6 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	res = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n• ")
 	res = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
 	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
-	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
-	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
 
 	// Strip all other HTML tags
 	var builder strings.Builder
@@ -6853,6 +6858,9 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	}
 
 	unescaped := html.UnescapeString(builder.String())
+	// Restore rendered table blocks (sentinels were protected from the tag stripper)
+	unescaped = strings.ReplaceAll(unescaped, "\x02TABLE\x02", "\n")
+	unescaped = strings.ReplaceAll(unescaped, "\x02ENDTABLE\x02", "\n")
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
 
@@ -6971,6 +6979,137 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 		cleaned[len(cleaned)-1] += pendingANSI
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// renderHTMLTable converts a raw <table>…</table> HTML fragment into a Unicode
+// box-drawing ASCII table. It performs two passes: the first collects all cell
+// text (stripping inner tags) and measures column widths; the second builds the
+// rendered lines with ┌/┬/┐, │, ├/┼/┤, and └/┴/┘ borders.
+// <th> cells are rendered in bold so header rows stand out.
+func renderHTMLTable(tableHTML string) string {
+	// Helper: strip all HTML tags from a fragment and unescape entities.
+	stripTags := func(s string) string {
+		s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, "")
+		s = html.UnescapeString(s)
+		s = strings.ReplaceAll(s, "\u00a0", " ")
+		s = strings.TrimSpace(s)
+		return s
+	}
+
+	type cell struct {
+		text   string
+		isHead bool // true for <th> cells
+	}
+	type row struct {
+		cells []cell
+	}
+
+	// ── Pass 1: collect rows and cells ──────────────────────────────────────
+	var rows []row
+	trRe := regexp.MustCompile(`(?is)<tr(?:\s+[^>]*)?>(.+?)</tr>`)
+	thRe := regexp.MustCompile(`(?is)<th(?:\s+[^>]*)?>(.+?)</th>`)
+	tdRe := regexp.MustCompile(`(?is)<td(?:\s+[^>]*)?>(.+?)</td>`)
+
+	for _, trMatch := range trRe.FindAllStringSubmatch(tableHTML, -1) {
+		trContent := trMatch[1]
+		var r row
+		// Check for <th> cells first (header row)
+		thMatches := thRe.FindAllStringSubmatch(trContent, -1)
+		if len(thMatches) > 0 {
+			for _, th := range thMatches {
+				r.cells = append(r.cells, cell{text: stripTags(th[1]), isHead: true})
+			}
+		} else {
+			// Regular <td> cells
+			for _, td := range tdRe.FindAllStringSubmatch(trContent, -1) {
+				r.cells = append(r.cells, cell{text: stripTags(td[1]), isHead: false})
+			}
+		}
+		if len(r.cells) > 0 {
+			rows = append(rows, r)
+		}
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+
+	// ── Compute column count and widths ─────────────────────────────────────
+	numCols := 0
+	for _, r := range rows {
+		if len(r.cells) > numCols {
+			numCols = len(r.cells)
+		}
+	}
+	if numCols == 0 {
+		return ""
+	}
+	colWidths := make([]int, numCols)
+	for _, r := range rows {
+		for ci, c := range r.cells {
+			if len([]rune(c.text)) > colWidths[ci] {
+				colWidths[ci] = len([]rune(c.text))
+			}
+		}
+	}
+	// Minimum column width of 1
+	for i := range colWidths {
+		if colWidths[i] < 1 {
+			colWidths[i] = 1
+		}
+	}
+
+	// ── Helpers for border lines ─────────────────────────────────────────────
+	horizLine := func(left, mid, right, fill string) string {
+		var sb strings.Builder
+		sb.WriteString(left)
+		for i, w := range colWidths {
+			sb.WriteString(strings.Repeat(fill, w+2))
+			if i < numCols-1 {
+				sb.WriteString(mid)
+			}
+		}
+		sb.WriteString(right)
+		return sb.String()
+	}
+
+	top := horizLine("┌", "┬", "┐", "─")
+	sep := horizLine("├", "┼", "┤", "─")
+	bot := horizLine("└", "┴", "┘", "─")
+
+	// ── Pass 2: render rows ──────────────────────────────────────────────────
+	var sb strings.Builder
+	sb.WriteString(top)
+	for ri, r := range rows {
+		// Data line
+		sb.WriteString("\n│")
+		for ci := 0; ci < numCols; ci++ {
+			var text string
+			var isHead bool
+			if ci < len(r.cells) {
+				text = r.cells[ci].text
+				isHead = r.cells[ci].isHead
+			}
+			w := colWidths[ci]
+			// Pad text to column width (rune-aware)
+			runes := []rune(text)
+			padded := string(runes)
+			if len(runes) < w {
+				padded += strings.Repeat(" ", w-len(runes))
+			}
+			if isHead {
+				// Bold header cells
+				sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
+			} else {
+				sb.WriteString(" " + padded + " │")
+			}
+		}
+		// Separator after every row except the last
+		if ri < len(rows)-1 {
+			sb.WriteString("\n" + sep)
+		}
+	}
+	sb.WriteString("\n" + bot)
+	return sb.String()
 }
 
 // extractRemoteImages parses the HTML body content to find all <img> tags with remote http/https src URLs,

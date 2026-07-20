@@ -205,7 +205,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    "<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>",
-			expected: " A B\n C D",
+			expected: "┌───┬───┐\n│ A │ B │\n├───┼───┤\n│ C │ D │\n└───┴───┘\n",
 		},
 		{
 			input:    `<a href="https://adwantedintl.sharepoint.com/:p:/s/HR/IQAbvgiWAYTRTaDwie8L0ze9AfbCDwDoidEwS4Na7NrzWRg?e=YoFq52"><img src="cid:4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e">Employment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx</a>`,
@@ -245,7 +245,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    `<td bgcolor="yellow">Alert</td>`,
-			expected: "\x1b[38;2;255;255;0m Alert\x1b[39m",
+			expected: "\x1b[38;2;255;255;0mAlert\x1b[39m",
 		},
 		{
 			input:    `Before <div style="display:none">Hidden text</div> After`,
