@@ -6987,18 +6987,38 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 // rendered lines with ┌/┬/┐, │, ├/┼/┤, and └/┴/┘ borders.
 // <th> cells are rendered in bold so header rows stand out.
 func renderHTMLTable(tableHTML string) string {
-	// Helper: strip all HTML tags from a fragment and unescape entities.
+	// Helper: strip all HTML tags, ANSI codes, and pipeline control bytes
+	// from a cell fragment, returning clean visible text for width measurement.
 	stripTags := func(s string) string {
+		// Replace <br> with a space before stripping tags so that line
+		// breaks inside cells don't produce multi-line cell text.
+		s = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(s, " ")
+		// Strip all remaining HTML tags.
 		s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, "")
-		// Strip ANSI escape codes that may have been injected by the
-		// pre-processing pipeline (convertInlineStylesToANSI, bold/italic
-		// tag replacements, etc.) before we measure column widths.
+		// Strip ANSI escape codes injected by convertInlineStylesToANSI,
+		// bold/italic replacements, etc.
 		s = regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(s, "")
+		// Strip \x01/\x02 link-marker bytes injected by replaceAnchorTags.
+		s = strings.Map(func(r rune) rune {
+			if r == '\x01' || r == '\x02' {
+				return -1
+			}
+			return r
+		}, s)
 		s = html.UnescapeString(s)
 		s = strings.ReplaceAll(s, "\u00a0", " ")
+		// Collapse internal newlines / tabs to a single space.
+		s = regexp.MustCompile(`[\r\n\t]+`).ReplaceAllString(s, " ")
+		// Collapse runs of spaces.
+		s = regexp.MustCompile(` {2,}`).ReplaceAllString(s, " ")
 		s = strings.TrimSpace(s)
 		return s
 	}
+
+	// Maximum visual column width. Cells wider than this are truncated with
+	// an ellipsis so that layout-style tables don't produce impossibly wide
+	// borders that overflow the terminal.
+	const maxColWidth = 80
 
 	type cell struct {
 		text   string
@@ -7055,10 +7075,13 @@ func renderHTMLTable(tableHTML string) string {
 			}
 		}
 	}
-	// Minimum column width of 1
+	// Clamp column widths: minimum 1, maximum maxColWidth.
 	for i := range colWidths {
 		if colWidths[i] < 1 {
 			colWidths[i] = 1
+		}
+		if colWidths[i] > maxColWidth {
+			colWidths[i] = maxColWidth
 		}
 	}
 
@@ -7094,12 +7117,16 @@ func renderHTMLTable(tableHTML string) string {
 				isHead = r.cells[ci].isHead
 			}
 			w := colWidths[ci]
-			// Pad text to column width (rune-aware)
+			// Truncate text that exceeds the column width (rune-aware).
 			runes := []rune(text)
-			padded := string(runes)
-			if len(runes) < w {
-				padded += strings.Repeat(" ", w-len(runes))
+			if len(runes) > w {
+				runes = runes[:w-1]
+				text = string(runes) + "…"
+			} else {
+				text = string(runes)
 			}
+			// Pad to column width.
+			padded := text + strings.Repeat(" ", w-len([]rune(text)))
 			if isHead {
 				// Bold header cells
 				sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
