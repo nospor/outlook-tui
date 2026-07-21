@@ -1,4 +1,23 @@
 
+## [0.6.9] - 2026-07-21
+
+### Bug Fixes
+
+- Preserve line-by-line diff formatting and code highlighting for HTML email tables ([a5ab573](https://github.com/nospor/outlook-tui/commit/a5ab573e8ae6bec01d3827850962731a35232f11))
+
+            - Exclude code and diff tables (e.g., from GitLab, GitHub, Bitbucket)
+            from
+            - Unicode box-drawing rendering so that line numbers, diff additions
+            (+),
+            - deletions (-), and preformatted code blocks preserve line-by-line
+            syntax
+            - highlighting and red/green colors. Standard data tables continue to
+            render as Unicode box tables.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.8 [skip ci] ([da3d6b4](https://github.com/nospor/outlook-tui/commit/da3d6b4ed6949f7de2434a4ea63e40d57803760d))
+
 ## [0.6.8] - 2026-07-20
 
 ### Features
