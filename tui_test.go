@@ -245,7 +245,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    `<td bgcolor="yellow">Alert</td>`,
-			expected: "\x1b[38;2;255;255;0mAlert\x1b[39m",
+			expected: "\x1b[38;2;255;255;0m Alert\x1b[39m",
 		},
 		{
 			input:    `Before <div style="display:none">Hidden text</div> After`,
@@ -257,7 +257,7 @@ func TestFormatBodyContent(t *testing.T) {
 		},
 		{
 			input:    `Line 1<br><span style="max-height:0px; overflow:hidden">Hidden Line<br></span>Line 2`,
-			expected: "Line 1\nLine 2",
+			expected: "Line 1\nHidden Line\nLine 2",
 		},
 		{
 			input:    `<span style="font-size:10px">Not hidden</span>`,
@@ -266,6 +266,10 @@ func TestFormatBodyContent(t *testing.T) {
 		{
 			input:    `Hello <span style="mso-hide: all">hidden</span> world`,
 			expected: "Hello  world",
+		},
+		{
+			input:    `<table class="code diff-table"><tr><td>21</td><td>23</td><td><pre> ) { </pre></td></tr><tr><td>26</td><td></td><td><pre>+ /**</pre></td></tr></table>`,
+			expected: "\x1b[38;2;203;166;247m 21 23  ) { \x1b[39m\n\x1b[38;2;166;227;161m 26  + /**\x1b[39m",
 		},
 	}
 

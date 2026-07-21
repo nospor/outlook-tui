@@ -6797,10 +6797,15 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	res = strings.ReplaceAll(res, "\x01CODE_START\x01", "\x1b[38;2;249;226;175m")
 	res = strings.ReplaceAll(res, "\x01CODE_END\x01", "\x1b[39m")
 
-	// Render <table>…</table> blocks as ASCII box tables before tag stripping.
+	// Render data <table>…</table> blocks as ASCII box tables before tag stripping.
 	// We use sentinel markers (\x02TABLE\x02…\x02ENDTABLE\x02) so the rest of
 	// the pipeline (tag stripper, whitespace collapser) leaves rendered rows intact.
+	// Code/diff tables from platforms like GitLab/GitHub are excluded so that
+	// syntax highlighting and diff colors (red/green) are preserved line-by-line.
 	res = regexp.MustCompile(`(?is)<table(?:\s+[^>]*)?>(.+?)</table>`).ReplaceAllStringFunc(res, func(match string) string {
+		if !shouldRenderAsHTMLTable(match) {
+			return match
+		}
 		return "\x02TABLE\x02" + renderHTMLTable(match) + "\x02ENDTABLE\x02"
 	})
 
@@ -6815,6 +6820,8 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	res = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n• ")
 	res = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(res, "\n\n")
 	res = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(res, "\n\n")
+	res = regexp.MustCompile(`(?i)<tr(?:\s+[^>]*)?>`).ReplaceAllString(res, "\n")
+	res = regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>`).ReplaceAllString(res, " ")
 
 	// Strip all other HTML tags
 	var builder strings.Builder
@@ -6981,6 +6988,39 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	return strings.Join(cleaned, "\n")
 }
 
+// shouldRenderAsHTMLTable determines whether an HTML <table> fragment should be
+// rendered as a Unicode box-drawing ASCII table. It returns false for code blocks,
+// diff tables (from platforms like GitLab, GitHub, Bitbucket), or nested layout tables,
+// allowing them to fall through to line-by-line formatting where syntax highlighting and
+// red/green diff colors are applied properly.
+func shouldRenderAsHTMLTable(tableHTML string) bool {
+	// If the table contains pre or code markers or tags, it's a code/diff block
+	if strings.Contains(tableHTML, "\x01PRE_START\x01") ||
+		strings.Contains(tableHTML, "\x01CODE_START\x01") ||
+		regexp.MustCompile(`(?i)<(?:pre|code)\b`).MatchString(tableHTML) {
+		return false
+	}
+
+	// Check for diff or code class/id/attributes
+	if regexp.MustCompile(`(?i)\b(?:diff|code|blob-code|syntax|highlight|file-content|line_holder|file-holder|email-diff|commit|diff-table|diff-tr|diff-line|line-num)\b`).MatchString(tableHTML) {
+		return false
+	}
+
+	// Check for nested tables (opening <table within tableHTML)
+	if strings.Count(strings.ToLower(tableHTML), "<table") > 1 {
+		return false
+	}
+
+	// Check for diff markers or hunk headers inside table cells or rows
+	if regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>\s*(?:\d+\s+)?(?:\d+\s+)?[\+\-](?:\s|[a-zA-Z_/$<#"'{(*@!\\\/]|$|[\+\-]{2})`).MatchString(tableHTML) ||
+		regexp.MustCompile(`(?i)<td(?:\s+[^>]*)?>\s*@@`).MatchString(tableHTML) ||
+		regexp.MustCompile(`(?i)\b(?:diff --git|index [0-9a-fA-F]{7,})\b`).MatchString(tableHTML) {
+		return false
+	}
+
+	return true
+}
+
 // renderHTMLTable converts a raw <table>…</table> HTML fragment into a Unicode
 // box-drawing ASCII table. It performs two passes: the first collects all cell
 // text (stripping inner tags) and measures column widths; the second builds the
@@ -6993,6 +7033,11 @@ func renderHTMLTable(tableHTML string) string {
 		// Replace <br> with a space before stripping tags so that line
 		// breaks inside cells don't produce multi-line cell text.
 		s = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(s, " ")
+		// Strip state markers if present
+		s = strings.ReplaceAll(s, "\x01PRE_START\x01", "")
+		s = strings.ReplaceAll(s, "\x01PRE_END\x01", "")
+		s = strings.ReplaceAll(s, "\x01CODE_START\x01", "")
+		s = strings.ReplaceAll(s, "\x01CODE_END\x01", "")
 		// Strip all remaining HTML tags.
 		s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, "")
 		// Strip ANSI escape codes injected by convertInlineStylesToANSI,
