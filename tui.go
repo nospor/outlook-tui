@@ -7065,61 +7065,194 @@ func renderHTMLTable(tableHTML string) string {
 	// borders that overflow the terminal.
 	const maxColWidth = 80
 
-	type cell struct {
+	type htmlCell struct {
 		text   string
-		isHead bool // true for <th> cells
+		isHead bool
+		attrs  string
 	}
-	type row struct {
-		cells []cell
+	type htmlRow struct {
+		cells []htmlCell
 	}
 
-	// ── Pass 1: collect rows and cells ──────────────────────────────────────
-	var rows []row
+	// Parse cells sequentially in each row to preserve order
+	var htmlRows []htmlRow
 	trRe := regexp.MustCompile(`(?is)<tr(?:\s+[^>]*)?>(.+?)</tr>`)
-	thRe := regexp.MustCompile(`(?is)<th(?:\s+[^>]*)?>(.+?)</th>`)
-	tdRe := regexp.MustCompile(`(?is)<td(?:\s+[^>]*)?>(.+?)</td>`)
+	cellRe := regexp.MustCompile(`(?is)<(th|td)(?:\s+([^>]*))?>(.*?)</(?:th|td)>`)
 
 	for _, trMatch := range trRe.FindAllStringSubmatch(tableHTML, -1) {
 		trContent := trMatch[1]
-		var r row
-		// Check for <th> cells first (header row)
-		thMatches := thRe.FindAllStringSubmatch(trContent, -1)
-		if len(thMatches) > 0 {
-			for _, th := range thMatches {
-				r.cells = append(r.cells, cell{text: stripTags(th[1]), isHead: true})
-			}
-		} else {
-			// Regular <td> cells
-			for _, td := range tdRe.FindAllStringSubmatch(trContent, -1) {
-				r.cells = append(r.cells, cell{text: stripTags(td[1]), isHead: false})
-			}
+		var r htmlRow
+		cellMatches := cellRe.FindAllStringSubmatch(trContent, -1)
+		for _, cellMatch := range cellMatches {
+			tagName := strings.ToLower(cellMatch[1])
+			attrs := cellMatch[2]
+			content := cellMatch[3]
+			r.cells = append(r.cells, htmlCell{
+				text:   stripTags(content),
+				isHead: tagName == "th",
+				attrs:  attrs,
+			})
 		}
 		if len(r.cells) > 0 {
-			rows = append(rows, r)
+			htmlRows = append(htmlRows, r)
 		}
 	}
-	if len(rows) == 0 {
+	if len(htmlRows) == 0 {
 		return ""
 	}
 
-	// ── Compute column count and widths ─────────────────────────────────────
-	numCols := 0
-	for _, r := range rows {
-		if len(r.cells) > numCols {
-			numCols = len(r.cells)
+	// Helper to extract span attribute
+	parseSpanAttr := func(attrs, name string) int {
+		re := regexp.MustCompile(fmt.Sprintf(`(?i)\b%s\s*=\s*['"]?([0-9]+)['"]?`, name))
+		m := re.FindStringSubmatch(attrs)
+		if len(m) > 1 {
+			val, err := strconv.Atoi(m[1])
+			if err == nil && val > 0 {
+				return val
+			}
+		}
+		return 1
+	}
+
+	type gridCell struct {
+		text      string
+		isHead    bool
+		rowSpan   int
+		colSpan   int
+		isSpanned bool
+		rootRow   int
+		rootCol   int
+	}
+
+	var grid [][]*gridCell
+
+	ensureGridSize := func(r, c int) {
+		if r >= len(grid) {
+			newGrid := make([][]*gridCell, r+1)
+			copy(newGrid, grid)
+			grid = newGrid
+		}
+		if c >= len(grid[r]) {
+			newRow := make([]*gridCell, c+1)
+			copy(newRow, grid[r])
+			grid[r] = newRow
 		}
 	}
-	if numCols == 0 {
+
+	// ── Pass 1: Build the 2D grid taking colspan/rowspan into account ──
+	for ri, hRow := range htmlRows {
+		colIdx := 0
+		for _, hCell := range hRow.cells {
+			// Find the first unoccupied slot in this row
+			for {
+				ensureGridSize(ri, colIdx)
+				if grid[ri][colIdx] == nil {
+					break
+				}
+				colIdx++
+			}
+
+			rowSpan := parseSpanAttr(hCell.attrs, "rowspan")
+			colSpan := parseSpanAttr(hCell.attrs, "colspan")
+
+			cellVal := &gridCell{
+				text:    hCell.text,
+				isHead:  hCell.isHead,
+				rowSpan: rowSpan,
+				colSpan: colSpan,
+				rootRow: ri,
+				rootCol: colIdx,
+			}
+
+			// Fill all slots covered by this span
+			for dr := 0; dr < rowSpan; dr++ {
+				for dc := 0; dc < colSpan; dc++ {
+					r := ri + dr
+					c := colIdx + dc
+					ensureGridSize(r, c)
+					if dr == 0 && dc == 0 {
+						grid[r][c] = cellVal
+					} else {
+						grid[r][c] = &gridCell{
+							text:      hCell.text,
+							isHead:    hCell.isHead,
+							rowSpan:   rowSpan,
+							colSpan:   colSpan,
+							isSpanned: true,
+							rootRow:   ri,
+							rootCol:   colIdx,
+						}
+					}
+				}
+			}
+			colIdx += colSpan
+		}
+	}
+
+	numRows := len(grid)
+	if numRows == 0 {
 		return ""
 	}
+
+	// Determine max column count across all rows in the grid
+	numCols := 0
+	for r := 0; r < numRows; r++ {
+		if len(grid[r]) > numCols {
+			numCols = len(grid[r])
+		}
+	}
+
+	// Ensure all grid rows are padded to numCols
+	for r := 0; r < numRows; r++ {
+		if len(grid[r]) < numCols {
+			newRow := make([]*gridCell, numCols)
+			copy(newRow, grid[r])
+			grid[r] = newRow
+		}
+	}
+
+	// Compute column widths
 	colWidths := make([]int, numCols)
-	for _, r := range rows {
-		for ci, c := range r.cells {
-			if len([]rune(c.text)) > colWidths[ci] {
-				colWidths[ci] = len([]rune(c.text))
+
+	// Step A: Only consider non-spanned cells of width 1 (single-column)
+	for r := 0; r < numRows; r++ {
+		for c := 0; c < numCols; c++ {
+			cell := grid[r][c]
+			if cell != nil && !cell.isSpanned && cell.colSpan == 1 {
+				w := len([]rune(cell.text))
+				if w > colWidths[c] {
+					colWidths[c] = w
+				}
 			}
 		}
 	}
+
+	// Step B: Handle colspan > 1 cells, distributing extra width if needed
+	for r := 0; r < numRows; r++ {
+		for c := 0; c < numCols; c++ {
+			cell := grid[r][c]
+			if cell != nil && !cell.isSpanned && cell.colSpan > 1 {
+				w := len([]rune(cell.text))
+				sum := 0
+				for cc := cell.rootCol; cc < cell.rootCol+cell.colSpan; cc++ {
+					sum += colWidths[cc]
+				}
+				sum += 3 * (cell.colSpan - 1)
+				if w > sum {
+					extra := w - sum
+					perCol := extra / cell.colSpan
+					rem := extra % cell.colSpan
+					for cc := cell.rootCol; cc < cell.rootCol+cell.colSpan; cc++ {
+						colWidths[cc] += perCol
+						if cc-cell.rootCol < rem {
+							colWidths[cc]++
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Clamp column widths: minimum 1, maximum maxColWidth.
 	for i := range colWidths {
 		if colWidths[i] < 1 {
@@ -7130,61 +7263,135 @@ func renderHTMLTable(tableHTML string) string {
 		}
 	}
 
-	// ── Helpers for border lines ─────────────────────────────────────────────
-	horizLine := func(left, mid, right, fill string) string {
-		var sb strings.Builder
-		sb.WriteString(left)
-		for i, w := range colWidths {
-			sb.WriteString(strings.Repeat(fill, w+2))
-			if i < numCols-1 {
-				sb.WriteString(mid)
-			}
-		}
-		sb.WriteString(right)
-		return sb.String()
+	// Helper for getting box-drawing characters based on connections (Up, Down, Left, Right)
+	getBoxChar := func(up, down, left, right bool) string {
+		if up && down && left && right { return "┼" }
+		if up && down && left { return "┤" }
+		if up && down && right { return "├" }
+		if up && left && right { return "┴" }
+		if down && left && right { return "┬" }
+		if left && right { return "─" }
+		if up && down { return "│" }
+		if up && left { return "┘" }
+		if up && right { return "└" }
+		if down && left { return "┐" }
+		if down && right { return "┌" }
+		return " "
 	}
 
-	top := horizLine("┌", "┬", "┐", "─")
-	sep := horizLine("├", "┼", "┤", "─")
-	bot := horizLine("└", "┴", "┘", "─")
-
-	// ── Pass 2: render rows ──────────────────────────────────────────────────
 	var sb strings.Builder
-	sb.WriteString(top)
-	for ri, r := range rows {
-		// Data line
-		sb.WriteString("\n│")
-		for ci := 0; ci < numCols; ci++ {
-			var text string
-			var isHead bool
-			if ci < len(r.cells) {
-				text = r.cells[ci].text
-				isHead = r.cells[ci].isHead
-			}
-			w := colWidths[ci]
-			// Truncate text that exceeds the column width (rune-aware).
-			runes := []rune(text)
-			if len(runes) > w {
-				runes = runes[:w-1]
-				text = string(runes) + "…"
-			} else {
-				text = string(runes)
-			}
-			// Pad to column width.
-			padded := text + strings.Repeat(" ", w-len([]rune(text)))
-			if isHead {
-				// Bold header cells
-				sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
-			} else {
-				sb.WriteString(" " + padded + " │")
-			}
-		}
-		// Separator after every row except the last
-		if ri < len(rows)-1 {
-			sb.WriteString("\n" + sep)
+
+	// Render Top Border
+	sb.WriteString(getBoxChar(false, len(grid) > 0, false, true)) // top-left corner
+	for c := 0; c < numCols; c++ {
+		sb.WriteString(strings.Repeat("─", colWidths[c]+2))
+		if c < numCols-1 {
+			// Is there a vertical border between column c and c+1 in row 0?
+			down := grid[0][c] == nil || grid[0][c+1] == nil || grid[0][c].rootCol != grid[0][c+1].rootCol
+			sb.WriteString(getBoxChar(false, down, true, true))
 		}
 	}
-	sb.WriteString("\n" + bot)
+	sb.WriteString(getBoxChar(false, len(grid) > 0, true, false)) // top-right corner
+
+	// Render Rows and Separators
+	for r := 0; r < numRows; r++ {
+		// Data Row
+		sb.WriteString("\n│")
+		for c := 0; c < numCols; c++ {
+			cell := grid[r][c]
+			if cell == nil {
+				sb.WriteString(strings.Repeat(" ", colWidths[c]+2) + "│")
+			} else {
+				if cell.rootCol < c {
+					// Spanned horizontally; already printed by rootCol
+					continue
+				}
+
+				// Calculate total width of horizontal span
+				totalWidth := 0
+				for cc := c; cc < c+cell.colSpan; cc++ {
+					totalWidth += colWidths[cc]
+				}
+				totalWidth += 3 * (cell.colSpan - 1)
+
+				// Decide cell text
+				text := ""
+				if r == cell.rootRow {
+					text = cell.text
+				}
+
+				// Truncate and pad
+				runes := []rune(text)
+				if len(runes) > totalWidth {
+					runes = runes[:totalWidth-1]
+					text = string(runes) + "…"
+				} else {
+					text = string(runes)
+				}
+				padded := text + strings.Repeat(" ", totalWidth-len([]rune(text)))
+
+				if cell.isHead && r == cell.rootRow {
+					sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
+				} else {
+					sb.WriteString(" " + padded + " │")
+				}
+
+				// Skip spanned columns
+				c += cell.colSpan - 1
+			}
+		}
+
+		// Separator line (only if not the last row)
+		if r < numRows-1 {
+			sb.WriteString("\n")
+			// Determine connection states for each intersection on this row boundary (between r and r+1)
+			
+			// Left corner
+			upLeft := true
+			downLeft := true
+			rightLeft := grid[r][0] == nil || grid[r+1][0] == nil || grid[r][0].rootRow != grid[r+1][0].rootRow
+			sb.WriteString(getBoxChar(upLeft, downLeft, false, rightLeft))
+
+			for c := 0; c < numCols; c++ {
+				// Horizontal segment in column c
+				hasHoriz := grid[r][c] == nil || grid[r+1][c] == nil || grid[r][c].rootRow != grid[r+1][c].rootRow
+				if hasHoriz {
+					sb.WriteString(strings.Repeat("─", colWidths[c]+2))
+				} else {
+					sb.WriteString(strings.Repeat(" ", colWidths[c]+2))
+				}
+
+				// Intersection between column c and c+1
+				if c < numCols-1 {
+					up := grid[r][c] == nil || grid[r][c+1] == nil || grid[r][c].rootCol != grid[r][c+1].rootCol
+					down := grid[r+1][c] == nil || grid[r+1][c+1] == nil || grid[r+1][c].rootCol != grid[r+1][c+1].rootCol
+					left := grid[r][c] == nil || grid[r+1][c] == nil || grid[r][c].rootRow != grid[r+1][c].rootRow
+					right := grid[r][c+1] == nil || grid[r+1][c+1] == nil || grid[r][c+1].rootRow != grid[r+1][c+1].rootRow
+					sb.WriteString(getBoxChar(up, down, left, right))
+				}
+			}
+
+			// Right corner
+			upRight := true
+			downRight := true
+			leftRight := grid[r][numCols-1] == nil || grid[r+1][numCols-1] == nil || grid[r][numCols-1].rootRow != grid[r+1][numCols-1].rootRow
+			sb.WriteString(getBoxChar(upRight, downRight, leftRight, false))
+		}
+	}
+
+	// Render Bottom Border
+	sb.WriteString("\n")
+	sb.WriteString(getBoxChar(true, false, false, true)) // bottom-left corner
+	for c := 0; c < numCols; c++ {
+		sb.WriteString(strings.Repeat("─", colWidths[c]+2))
+		if c < numCols-1 {
+			// Is there a vertical border between column c and c+1 in the last row?
+			up := grid[numRows-1][c] == nil || grid[numRows-1][c+1] == nil || grid[numRows-1][c].rootCol != grid[numRows-1][c+1].rootCol
+			sb.WriteString(getBoxChar(up, false, true, true))
+		}
+	}
+	sb.WriteString(getBoxChar(true, false, true, false)) // bottom-right corner
+
 	return sb.String()
 }
 

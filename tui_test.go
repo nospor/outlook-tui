@@ -208,6 +208,10 @@ func TestFormatBodyContent(t *testing.T) {
 			expected: "┌───┬───┐\n│ A │ B │\n├───┼───┤\n│ C │ D │\n└───┴───┘\n",
 		},
 		{
+			input:    "<table><tr><th>A</th><th colspan=\"2\">B</th></tr><tr><td rowspan=\"2\">C</td><td>D</td><td>E</td></tr><tr><td colspan=\"2\">F</td></tr></table>",
+			expected: "┌───┬───────┐\n│ \x1b[1mA\x1b[22m │ \x1b[1mB    \x1b[22m │\n├───┼───┬───┤\n│ C │ D │ E │\n│   ├───┴───┤\n│   │ F     │\n└───┴───────┘\n",
+		},
+		{
 			input:    `<a href="https://adwantedintl.sharepoint.com/:p:/s/HR/IQAbvgiWAYTRTaDwie8L0ze9AfbCDwDoidEwS4Na7NrzWRg?e=YoFq52"><img src="cid:4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e">Employment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx</a>`,
 			expected: "\x1b[38;2;137;180;250;4m\x1b[1;38;2;203;166;247m[image: 4c7fa2e7-e1e0-4830-a608-ec1a3f7d455e]\x1b[0m\x1b[38;2;137;180;250;4mEmployment Rights Act 2025 - Performance Management - End to End - Managers Copy.pptx\x1b[24;39m ",
 		},
