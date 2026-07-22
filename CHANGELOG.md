@@ -1,4 +1,15 @@
 
+## [0.7.0] - 2026-07-22
+
+### Bug Fixes
+
+- *(tui)* Support colspan and rowspan in HTML table rendering ([18a42c2](https://github.com/nospor/outlook-tui/commit/18a42c223e1cb42d2fa22655c568e85540e8cc56))
+- Wrap table cells, parse alignment, and prevent viewport wrap overflow ([9f9e217](https://github.com/nospor/outlook-tui/commit/9f9e2177f33812dadbdc69f3e86ae35cdaa46848))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.6.9 [skip ci] ([d0c0a09](https://github.com/nospor/outlook-tui/commit/d0c0a09630585d98b6fec33b89a2ccb48f598424))
+
 ## [0.6.9] - 2026-07-21
 
 ### Bug Fixes
