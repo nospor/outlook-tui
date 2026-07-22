@@ -1066,6 +1066,7 @@ func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
 
 	// Message body content formatted (with HTML stripped, ANSI stripped)
 	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content, m.getRecipientName(m.detailMessage)))
+	plainBody = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(plainBody)
 	sb.WriteString(plainBody)
 	sb.WriteString("\n")
 
@@ -3842,6 +3843,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 
 	plainBody := stripANSICodes(formatBodyContent(bodyText, m.getRecipientName(origMsgPtr)))
+	plainBody = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(plainBody)
 	lines := strings.Split(plainBody, "\n")
 	for _, line := range lines {
 		quotedBody.WriteString("> " + line + "\n")
@@ -6806,7 +6808,7 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 		if !shouldRenderAsHTMLTable(match) {
 			return match
 		}
-		return "\x02TABLE\x02" + renderHTMLTable(match) + "\x02ENDTABLE\x02"
+		return "__OUTLOOK_TUI_TABLE_START__" + renderHTMLTable(match) + "__OUTLOOK_TUI_TABLE_END__"
 	})
 
 	// Simple tags stripping
@@ -6865,9 +6867,6 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	}
 
 	unescaped := html.UnescapeString(builder.String())
-	// Restore rendered table blocks (sentinels were protected from the tag stripper)
-	unescaped = strings.ReplaceAll(unescaped, "\x02TABLE\x02", "\n")
-	unescaped = strings.ReplaceAll(unescaped, "\x02ENDTABLE\x02", "\n")
 	// Replace non-breaking spaces (\u00a0) with regular spaces to prevent display issues in the terminal
 	unescaped = strings.ReplaceAll(unescaped, "\u00a0", " ")
 
@@ -7021,18 +7020,12 @@ func shouldRenderAsHTMLTable(tableHTML string) bool {
 	return true
 }
 
-// renderHTMLTable converts a raw <table>…</table> HTML fragment into a Unicode
-// box-drawing ASCII table. It performs two passes: the first collects all cell
-// text (stripping inner tags) and measures column widths; the second builds the
-// rendered lines with ┌/┬/┐, │, ├/┼/┤, and └/┴/┘ borders.
-// <th> cells are rendered in bold so header rows stand out.
 func renderHTMLTable(tableHTML string) string {
 	// Helper: strip all HTML tags, ANSI codes, and pipeline control bytes
 	// from a cell fragment, returning clean visible text for width measurement.
 	stripTags := func(s string) string {
-		// Replace <br> with a space before stripping tags so that line
-		// breaks inside cells don't produce multi-line cell text.
-		s = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(s, " ")
+		// Replace <br> with \n
+		s = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(s, "\n")
 		// Strip state markers if present
 		s = strings.ReplaceAll(s, "\x01PRE_START\x01", "")
 		s = strings.ReplaceAll(s, "\x01PRE_END\x01", "")
@@ -7052,23 +7045,28 @@ func renderHTMLTable(tableHTML string) string {
 		}, s)
 		s = html.UnescapeString(s)
 		s = strings.ReplaceAll(s, "\u00a0", " ")
-		// Collapse internal newlines / tabs to a single space.
-		s = regexp.MustCompile(`[\r\n\t]+`).ReplaceAllString(s, " ")
-		// Collapse runs of spaces.
-		s = regexp.MustCompile(` {2,}`).ReplaceAllString(s, " ")
-		s = strings.TrimSpace(s)
-		return s
+		
+		// Split by \n, then trim space and collapse internal spaces on each line
+		lines := strings.Split(s, "\n")
+		var cleanLines []string
+		for _, line := range lines {
+			// Collapse tabs/newlines to single space
+			line = regexp.MustCompile(`[\r\n\t]+`).ReplaceAllString(line, " ")
+			// Collapse runs of spaces
+			line = regexp.MustCompile(` {2,}`).ReplaceAllString(line, " ")
+			line = strings.TrimSpace(line)
+			if line != "" || len(lines) == 1 { // keep empty line only if it's the only line
+				cleanLines = append(cleanLines, line)
+			}
+		}
+		return strings.Join(cleanLines, "\n")
 	}
-
-	// Maximum visual column width. Cells wider than this are truncated with
-	// an ellipsis so that layout-style tables don't produce impossibly wide
-	// borders that overflow the terminal.
-	const maxColWidth = 80
 
 	type htmlCell struct {
 		text   string
 		isHead bool
 		attrs  string
+		align  string
 	}
 	type htmlRow struct {
 		cells []htmlCell
@@ -7087,10 +7085,28 @@ func renderHTMLTable(tableHTML string) string {
 			tagName := strings.ToLower(cellMatch[1])
 			attrs := cellMatch[2]
 			content := cellMatch[3]
+			
+			// Detect alignment from attributes and cell content
+			combined := attrs + " " + content
+			align := "left"
+			if regexp.MustCompile(`(?i)align\s*=\s*['"]?right['"]?`).MatchString(combined) ||
+				regexp.MustCompile(`(?i)text-align\s*:\s*right`).MatchString(combined) {
+				align = "right"
+			} else if regexp.MustCompile(`(?i)align\s*=\s*['"]?center['"]?`).MatchString(combined) ||
+				regexp.MustCompile(`(?i)text-align\s*:\s*center`).MatchString(combined) {
+				align = "center"
+			}
+
+			// Bold headers or cells containing <b> / <strong> tags
+			isHead := tagName == "th" || 
+				regexp.MustCompile(`(?i)<b\b`).MatchString(content) || 
+				regexp.MustCompile(`(?i)<strong\b`).MatchString(content)
+
 			r.cells = append(r.cells, htmlCell{
 				text:   stripTags(content),
-				isHead: tagName == "th",
+				isHead: isHead,
 				attrs:  attrs,
+				align:  align,
 			})
 		}
 		if len(r.cells) > 0 {
@@ -7122,6 +7138,7 @@ func renderHTMLTable(tableHTML string) string {
 		isSpanned bool
 		rootRow   int
 		rootCol   int
+		align     string
 	}
 
 	var grid [][]*gridCell
@@ -7162,6 +7179,7 @@ func renderHTMLTable(tableHTML string) string {
 				colSpan: colSpan,
 				rootRow: ri,
 				rootCol: colIdx,
+				align:   hCell.align,
 			}
 
 			// Fill all slots covered by this span
@@ -7181,6 +7199,7 @@ func renderHTMLTable(tableHTML string) string {
 							isSpanned: true,
 							rootRow:   ri,
 							rootCol:   colIdx,
+							align:     hCell.align,
 						}
 					}
 				}
@@ -7211,6 +7230,18 @@ func renderHTMLTable(tableHTML string) string {
 		}
 	}
 
+	// Helper to find max line length in text
+	maxLineLen := func(text string) int {
+		max := 0
+		for _, line := range strings.Split(text, "\n") {
+			l := len([]rune(line))
+			if l > max {
+				max = l
+			}
+		}
+		return max
+	}
+
 	// Compute column widths
 	colWidths := make([]int, numCols)
 
@@ -7219,7 +7250,7 @@ func renderHTMLTable(tableHTML string) string {
 		for c := 0; c < numCols; c++ {
 			cell := grid[r][c]
 			if cell != nil && !cell.isSpanned && cell.colSpan == 1 {
-				w := len([]rune(cell.text))
+				w := maxLineLen(cell.text)
 				if w > colWidths[c] {
 					colWidths[c] = w
 				}
@@ -7232,7 +7263,7 @@ func renderHTMLTable(tableHTML string) string {
 		for c := 0; c < numCols; c++ {
 			cell := grid[r][c]
 			if cell != nil && !cell.isSpanned && cell.colSpan > 1 {
-				w := len([]rune(cell.text))
+				w := maxLineLen(cell.text)
 				sum := 0
 				for cc := cell.rootCol; cc < cell.rootCol+cell.colSpan; cc++ {
 					sum += colWidths[cc]
@@ -7253,6 +7284,16 @@ func renderHTMLTable(tableHTML string) string {
 		}
 	}
 
+	// Determine dynamic maxColWidth based on number of columns to keep
+	// tables within typical terminal viewport limits.
+	maxColWidth := 80
+	if numCols > 4 {
+		maxColWidth = 30
+	}
+	if numCols > 6 {
+		maxColWidth = 20
+	}
+
 	// Clamp column widths: minimum 1, maximum maxColWidth.
 	for i := range colWidths {
 		if colWidths[i] < 1 {
@@ -7260,6 +7301,79 @@ func renderHTMLTable(tableHTML string) string {
 		}
 		if colWidths[i] > maxColWidth {
 			colWidths[i] = maxColWidth
+		}
+	}
+
+	// Helper for word wrapping text
+	wrapText := func(text string, width int) []string {
+		if width <= 0 {
+			return []string{text}
+		}
+		var lines []string
+		inputLines := strings.Split(text, "\n")
+		for _, inputLine := range inputLines {
+			if len([]rune(inputLine)) <= width {
+				lines = append(lines, inputLine)
+				continue
+			}
+			words := strings.Fields(inputLine)
+			if len(words) == 0 {
+				lines = append(lines, "")
+				continue
+			}
+			currentLine := ""
+			for _, word := range words {
+				wordLen := len([]rune(word))
+				if wordLen > width {
+					if currentLine != "" {
+						lines = append(lines, currentLine)
+						currentLine = ""
+					}
+					runes := []rune(word)
+					for len(runes) > width {
+						lines = append(lines, string(runes[:width]))
+						runes = runes[width:]
+					}
+					currentLine = string(runes)
+				} else {
+					spaceNeeded := 0
+					if currentLine != "" {
+						spaceNeeded = 1
+					}
+					if len([]rune(currentLine))+spaceNeeded+wordLen > width {
+						lines = append(lines, currentLine)
+						currentLine = word
+					} else {
+						if currentLine != "" {
+							currentLine += " "
+						}
+						currentLine += word
+					}
+				}
+			}
+			if currentLine != "" {
+				lines = append(lines, currentLine)
+			}
+		}
+		return lines
+	}
+
+	// Helper to pad text according to alignment
+	padText := func(text string, totalWidth int, align string) string {
+		textLen := len([]rune(text))
+		if textLen >= totalWidth {
+			return text
+		}
+		extra := totalWidth - textLen
+		switch align {
+		case "right":
+			return strings.Repeat(" ", extra) + text
+		case "center":
+			left := extra / 2
+			right := extra - left
+			return strings.Repeat(" ", left) + text + strings.Repeat(" ", right)
+		default:
+			return text + strings.Repeat(" ", extra)
 		}
 	}
 
@@ -7295,49 +7409,70 @@ func renderHTMLTable(tableHTML string) string {
 
 	// Render Rows and Separators
 	for r := 0; r < numRows; r++ {
-		// Data Row
-		sb.WriteString("\n│")
+		// First wrap all cells in this grid row to find the maximum row height
+		wrappedCells := make([][]string, numCols)
+		rowHeight := 1
 		for c := 0; c < numCols; c++ {
 			cell := grid[r][c]
-			if cell == nil {
-				sb.WriteString(strings.Repeat(" ", colWidths[c]+2) + "│")
-			} else {
-				if cell.rootCol < c {
-					// Spanned horizontally; already printed by rootCol
-					continue
-				}
+			if cell == nil || cell.isSpanned {
+				continue
+			}
+			
+			// Calculate total width of horizontal span
+			totalWidth := 0
+			for cc := c; cc < c+cell.colSpan; cc++ {
+				totalWidth += colWidths[cc]
+			}
+			totalWidth += 3 * (cell.colSpan - 1)
 
-				// Calculate total width of horizontal span
-				totalWidth := 0
-				for cc := c; cc < c+cell.colSpan; cc++ {
-					totalWidth += colWidths[cc]
-				}
-				totalWidth += 3 * (cell.colSpan - 1)
+			var cellLines []string
+			if r == cell.rootRow {
+				cellLines = wrapText(cell.text, totalWidth)
+			}
+			wrappedCells[c] = cellLines
+			if len(cellLines) > rowHeight {
+				rowHeight = len(cellLines)
+			}
+		}
 
-				// Decide cell text
-				text := ""
-				if r == cell.rootRow {
-					text = cell.text
-				}
-
-				// Truncate and pad
-				runes := []rune(text)
-				if len(runes) > totalWidth {
-					runes = runes[:totalWidth-1]
-					text = string(runes) + "…"
+		// Render each line of the row
+		for li := 0; li < rowHeight; li++ {
+			sb.WriteString("\n│")
+			for c := 0; c < numCols; c++ {
+				cell := grid[r][c]
+				if cell == nil {
+					sb.WriteString(strings.Repeat(" ", colWidths[c]+2) + "│")
 				} else {
-					text = string(runes)
-				}
-				padded := text + strings.Repeat(" ", totalWidth-len([]rune(text)))
+					if cell.rootCol < c {
+						// Spanned horizontally; already printed by rootCol
+						continue
+					}
 
-				if cell.isHead && r == cell.rootRow {
-					sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
-				} else {
-					sb.WriteString(" " + padded + " │")
-				}
+					// Calculate total width of horizontal span
+					totalWidth := 0
+					for cc := c; cc < c+cell.colSpan; cc++ {
+						totalWidth += colWidths[cc]
+					}
+					totalWidth += 3 * (cell.colSpan - 1)
 
-				// Skip spanned columns
-				c += cell.colSpan - 1
+					// Get the text line
+					text := ""
+					cellLines := wrappedCells[cell.rootCol]
+					if li < len(cellLines) {
+						text = cellLines[li]
+					}
+
+					padded := padText(text, totalWidth, cell.align)
+
+					if cell.isHead && r == cell.rootRow {
+						sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
+					} else {
+						sb.WriteString(" " + padded + " │")
+					}
+
+					// Skip spanned columns
+					c += cell.colSpan - 1
+				}
 			}
 		}
 
@@ -7734,15 +7869,38 @@ func isExcluded(folder MailFolder, excluded []string) bool {
 }
 
 func wrapText(text string, width int) string {
+	wrapRegularText := func(t string, w int) string {
+		if t == "" {
+			return ""
+		}
+		wrapped := lipgloss.NewStyle().Width(w).Render(t)
+		lines := strings.Split(wrapped, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimRight(line, " ")
+		}
+		return strings.Join(lines, "\n")
+	}
+
 	if width <= 0 {
-		return text
+		return strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(text)
 	}
-	wrapped := lipgloss.NewStyle().Width(width).Render(text)
-	lines := strings.Split(wrapped, "\n")
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " ")
+
+	var result []string
+	parts := strings.Split(text, "__OUTLOOK_TUI_TABLE_START__")
+	for i, part := range parts {
+		if i == 0 {
+			result = append(result, wrapRegularText(part, width))
+		} else {
+			subparts := strings.Split(part, "__OUTLOOK_TUI_TABLE_END__")
+			result = append(result, subparts[0])
+			result = append(result, "\n")
+			if len(subparts) > 1 {
+				result = append(result, wrapRegularText(subparts[1], width))
+			}
+		}
 	}
-	return strings.Join(lines, "\n")
+
+	return strings.Join(result, "")
 }
 
 func applyPaneTitle(rendered string, title string, active bool) string {

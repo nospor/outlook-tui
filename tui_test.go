@@ -275,10 +275,23 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    `<table class="code diff-table"><tr><td>21</td><td>23</td><td><pre> ) { </pre></td></tr><tr><td>26</td><td></td><td><pre>+ /**</pre></td></tr></table>`,
 			expected: "\x1b[38;2;203;166;247m 21 23  ) { \x1b[39m\n\x1b[38;2;166;227;161m 26  + /**\x1b[39m",
 		},
+		{
+			input:    "<table><tr><td>Col1<br>Sub1</td><td>Col2</td></tr></table>",
+			expected: "┌──────┬──────┐\n│ Col1 │ Col2 │\n│ Sub1 │      │\n└──────┴──────┘\n",
+		},
+		{
+			input:    "<table><tr><td>1</td><td>2</td><td>3</td><td>4</td><td>This is a very long text that wraps</td></tr></table>",
+			expected: "┌───┬───┬───┬───┬────────────────────────────────┐\n│ 1 │ 2 │ 3 │ 4 │ This is a very long text that  │\n│   │   │   │   │ wraps                          │\n└───┴───┴───┴───┴────────────────────────────────┘\n",
+		},
+		{
+			input:    "<table><tr><td align=\"right\">Col 1 Header</td><td style=\"text-align: center\">Col 2 Header</td><td>Col 3 Header</td></tr><tr><td align=\"right\">123</td><td style=\"text-align: center\">ABC</td><td>xyz</td></tr></table>",
+			expected: "┌──────────────┬──────────────┬──────────────┐\n│ Col 1 Header │ Col 2 Header │ Col 3 Header │\n├──────────────┼──────────────┼──────────────┤\n│          123 │     ABC      │ xyz          │\n└──────────────┴──────────────┴──────────────┘\n",
+		},
 	}
 
 	for _, tt := range tests {
 		actual := formatBodyContent(tt.input)
+		actual = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(actual)
 		if actual != tt.expected {
 			t.Errorf("formatBodyContent(%q) = %q; expected %q", tt.input, actual, tt.expected)
 		}
