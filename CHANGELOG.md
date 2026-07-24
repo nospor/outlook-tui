@@ -1,4 +1,14 @@
 
+## [0.7.2] - 2026-07-24
+
+### Features
+
+- Support cell background and foreground color styling in HTML table rendering ([eadfc75](https://github.com/nospor/outlook-tui/commit/eadfc75afe391979a310c970702510005c281727))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.1 [skip ci] ([e877e42](https://github.com/nospor/outlook-tui/commit/e877e42183ec1fd203d4f3a2288204343605efb7))
+
 ## [0.7.1] - 2026-07-24
 
 ### Bug Fixes
