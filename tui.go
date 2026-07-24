@@ -6753,6 +6753,12 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
 
+	// Strip head, style, script, and HTML comments entirely before any processing
+	htmlContent = regexp.MustCompile(`(?is)<head(?:\s+[^>]*)?>.*?</head>`).ReplaceAllString(htmlContent, "")
+	htmlContent = regexp.MustCompile(`(?is)<style(?:\s+[^>]*)?>.*?</style>`).ReplaceAllString(htmlContent, "")
+	htmlContent = regexp.MustCompile(`(?is)<script(?:\s+[^>]*)?>.*?</script>`).ReplaceAllString(htmlContent, "")
+	htmlContent = regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(htmlContent, "")
+
 	// Replace pre and code tags with state markers before any tag stripping
 	res := regexp.MustCompile(`(?i)<pre(?:\s+[^>]*)?>`).ReplaceAllString(htmlContent, "\x01PRE_START\x01")
 	res = regexp.MustCompile(`(?i)</pre>`).ReplaceAllString(res, "\x01PRE_END\x01")

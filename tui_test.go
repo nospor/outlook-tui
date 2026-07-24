@@ -287,6 +287,22 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "<table><tr><td align=\"right\">Col 1 Header</td><td style=\"text-align: center\">Col 2 Header</td><td>Col 3 Header</td></tr><tr><td align=\"right\">123</td><td style=\"text-align: center\">ABC</td><td>xyz</td></tr></table>",
 			expected: "┌──────────────┬──────────────┬──────────────┐\n│ Col 1 Header │ Col 2 Header │ Col 3 Header │\n├──────────────┼──────────────┼──────────────┤\n│          123 │     ABC      │ xyz          │\n└──────────────┴──────────────┴──────────────┘\n",
 		},
+		{
+			input:    "<html><head><title>Test</title><style>body {color:red;}</style></head><body>Hello World</body></html>",
+			expected: "Hello World",
+		},
+		{
+			input:    "Hello <style type=\"text/css\">\n table\n\t{float:left}\n.button_alignment > table\n\t{float:none}\n</style>World",
+			expected: "Hello World",
+		},
+		{
+			input:    "Some text <script type=\"text/javascript\">alert('hello');</script> here",
+			expected: "Some text  here",
+		},
+		{
+			input:    "Start <!-- comment with > symbol inside --> End",
+			expected: "Start  End",
+		},
 	}
 
 	for _, tt := range tests {
