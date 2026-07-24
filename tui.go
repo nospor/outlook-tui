@@ -7073,6 +7073,10 @@ func renderHTMLTable(tableHTML string) string {
 		isHead bool
 		attrs  string
 		align  string
+		hasFg  bool
+		fgR, fgG, fgB int
+		hasBg  bool
+		bgR, bgG, bgB int
 	}
 	type htmlRow struct {
 		cells []htmlCell
@@ -7080,11 +7084,34 @@ func renderHTMLTable(tableHTML string) string {
 
 	// Parse cells sequentially in each row to preserve order
 	var htmlRows []htmlRow
-	trRe := regexp.MustCompile(`(?is)<tr(?:\s+[^>]*)?>(.+?)</tr>`)
+	trRe := regexp.MustCompile(`(?is)<tr(?:\s+([^>]*))?>(.+?)</tr>`)
 	cellRe := regexp.MustCompile(`(?is)<(th|td)(?:\s+([^>]*))?>(.*?)</(?:th|td)>`)
+	styleRx := regexp.MustCompile(`(?i)\bstyle\s*=\s*['"]([^'"]+)['"]`)
+	bgcolorRx := regexp.MustCompile(`(?i)\bbgcolor\s*=\s*['"]([^'"]+)['"]`)
 
 	for _, trMatch := range trRe.FindAllStringSubmatch(tableHTML, -1) {
-		trContent := trMatch[1]
+		var trAttrs, trContent string
+		if len(trMatch) >= 3 {
+			trAttrs = trMatch[1]
+			trContent = trMatch[2]
+		} else if len(trMatch) == 2 {
+			trContent = trMatch[1]
+		}
+
+		var rowFg, rowBg string
+		if trAttrs != "" {
+			trStyleMatches := styleRx.FindStringSubmatch(trAttrs)
+			if len(trStyleMatches) > 1 {
+				rowFg, rowBg = parseStyleAttr(trStyleMatches[1])
+			}
+			if rowBg == "" {
+				bgcolorMatches := bgcolorRx.FindStringSubmatch(trAttrs)
+				if len(bgcolorMatches) > 1 {
+					rowBg = bgcolorMatches[1]
+				}
+			}
+		}
+
 		var r htmlRow
 		cellMatches := cellRe.FindAllStringSubmatch(trContent, -1)
 		for _, cellMatch := range cellMatches {
@@ -7108,11 +7135,130 @@ func renderHTMLTable(tableHTML string) string {
 				regexp.MustCompile(`(?i)<b\b`).MatchString(content) || 
 				regexp.MustCompile(`(?i)<strong\b`).MatchString(content)
 
+			cellFg, cellBg := rowFg, rowBg
+			if attrs != "" {
+				cellStyleMatches := styleRx.FindStringSubmatch(attrs)
+				var cfg, cbg string
+				if len(cellStyleMatches) > 1 {
+					cfg, cbg = parseStyleAttr(cellStyleMatches[1])
+				}
+				if cbg == "" {
+					bgcolorMatches := bgcolorRx.FindStringSubmatch(attrs)
+					if len(bgcolorMatches) > 1 {
+						cbg = bgcolorMatches[1]
+					}
+				}
+				if cfg != "" {
+					cellFg = cfg
+				}
+				if cbg != "" {
+					cellBg = cbg
+				}
+			}
+
+			if cellFg == "" || cellBg == "" {
+				innerStyleMatches := styleRx.FindAllStringSubmatch(content, -1)
+				for _, m := range innerStyleMatches {
+					cfg, cbg := parseStyleAttr(m[1])
+					if cellFg == "" && cfg != "" {
+						cellFg = cfg
+					}
+					if cellBg == "" && cbg != "" {
+						cellBg = cbg
+					}
+				}
+				if cellBg == "" {
+					innerBgcolorMatches := bgcolorRx.FindAllStringSubmatch(content, -1)
+					if len(innerBgcolorMatches) > 0 && innerBgcolorMatches[0][1] != "" {
+						cellBg = innerBgcolorMatches[0][1]
+					}
+				}
+				if cellFg == "" {
+					colorRx := regexp.MustCompile(`(?i)\bcolor\s*=\s*['"]([^'"]+)['"]`)
+					innerColorMatches := colorRx.FindAllStringSubmatch(content, -1)
+					if len(innerColorMatches) > 0 && innerColorMatches[0][1] != "" {
+						cellFg = innerColorMatches[0][1]
+					}
+				}
+			}
+
+			var fgR, fgG, fgB int
+			var hasFg bool
+			if cellFg != "" {
+				fgR, fgG, fgB, hasFg = cssColorToRGB(cellFg)
+			}
+			
+			if cellFg == "" && !hasFg {
+				ansiColorRx := regexp.MustCompile(`\x1b\[38;2;(\d+);(\d+);(\d+)m`)
+				ansiMatches := ansiColorRx.FindStringSubmatch(content)
+				if len(ansiMatches) >= 4 {
+					rVal, _ := strconv.Atoi(ansiMatches[1])
+					gVal, _ := strconv.Atoi(ansiMatches[2])
+					bVal, _ := strconv.Atoi(ansiMatches[3])
+					fgR, fgG, fgB = rVal, gVal, bVal
+					hasFg = true
+				}
+			}
+
+			var bgR, bgG, bgB int
+			var hasBg bool
+			if cellBg != "" {
+				bgR, bgG, bgB, hasBg = cssColorToRGB(cellBg)
+			}
+
+			if hasBg {
+				bgLum := 0.299*float64(bgR) + 0.587*float64(bgG) + 0.114*float64(bgB)
+				if !hasFg {
+					hasFg = true
+					if bgLum > 128 {
+						fgR, fgG, fgB = 0, 0, 0
+					} else {
+						fgR, fgG, fgB = 255, 255, 255
+					}
+				} else {
+					fgLum := 0.299*float64(fgR) + 0.587*float64(fgG) + 0.114*float64(fgB)
+					diff := fgLum - bgLum
+					if diff < 0 {
+						diff = -diff
+					}
+					if diff < 50 {
+						if bgLum > 128 {
+							fgR, fgG, fgB = 0, 0, 0
+						} else {
+							fgR, fgG, fgB = 255, 255, 255
+						}
+					}
+				}
+			} else if hasFg {
+				darkTheme := isThemeDark()
+				keepColor := true
+				if darkTheme {
+					if fgR < 110 && fgG < 110 && fgB < 110 {
+						keepColor = false
+					}
+				} else {
+					if fgR > 150 && fgG > 150 && fgB > 150 {
+						keepColor = false
+					}
+				}
+				if !keepColor {
+					hasFg = false
+				}
+			}
+
 			r.cells = append(r.cells, htmlCell{
 				text:   stripTags(content),
 				isHead: isHead,
 				attrs:  attrs,
 				align:  align,
+				hasFg:  hasFg,
+				fgR:    fgR,
+				fgG:    fgG,
+				fgB:    fgB,
+				hasBg:  hasBg,
+				bgR:    bgR,
+				bgG:    bgG,
+				bgB:    bgB,
 			})
 		}
 		if len(r.cells) > 0 {
@@ -7145,6 +7291,10 @@ func renderHTMLTable(tableHTML string) string {
 		rootRow   int
 		rootCol   int
 		align     string
+		hasFg     bool
+		fgR, fgG, fgB int
+		hasBg     bool
+		bgR, bgG, bgB int
 	}
 
 	var grid [][]*gridCell
@@ -7186,6 +7336,14 @@ func renderHTMLTable(tableHTML string) string {
 				rootRow: ri,
 				rootCol: colIdx,
 				align:   hCell.align,
+				hasFg:   hCell.hasFg,
+				fgR:     hCell.fgR,
+				fgG:     hCell.fgG,
+				fgB:     hCell.fgB,
+				hasBg:   hCell.hasBg,
+				bgR:     hCell.bgR,
+				bgG:     hCell.bgG,
+				bgB:     hCell.bgB,
 			}
 
 			// Fill all slots covered by this span
@@ -7206,6 +7364,14 @@ func renderHTMLTable(tableHTML string) string {
 							rootRow:   ri,
 							rootCol:   colIdx,
 							align:     hCell.align,
+							hasFg:     hCell.hasFg,
+							fgR:       hCell.fgR,
+							fgG:       hCell.fgG,
+							fgB:       hCell.fgB,
+							hasBg:     hCell.hasBg,
+							bgR:       hCell.bgR,
+							bgG:       hCell.bgG,
+							bgB:       hCell.bgB,
 						}
 					}
 				}
@@ -7470,11 +7636,30 @@ func renderHTMLTable(tableHTML string) string {
 
 					padded := padText(text, totalWidth, cell.align)
 
+					contentStr := padded
 					if cell.isHead && r == cell.rootRow {
-						sb.WriteString(" \x1b[1m" + padded + "\x1b[22m │")
-					} else {
-						sb.WriteString(" " + padded + " │")
+						contentStr = "\x1b[1m" + contentStr + "\x1b[22m"
 					}
+
+					cellContent := " " + contentStr + " "
+
+					var styleStart, styleEnd string
+					if cell.hasFg {
+						styleStart += fmt.Sprintf("\x1b[38;2;%d;%d;%dm", cell.fgR, cell.fgG, cell.fgB)
+					}
+					if cell.hasBg {
+						styleStart += fmt.Sprintf("\x1b[48;2;%d;%d;%dm", cell.bgR, cell.bgG, cell.bgB)
+					}
+					if styleStart != "" {
+						if cell.hasFg {
+							styleEnd += "\x1b[39m"
+						}
+						if cell.hasBg {
+							styleEnd += "\x1b[49m"
+						}
+					}
+
+					sb.WriteString(styleStart + cellContent + styleEnd + "│")
 
 					// Skip spanned columns
 					c += cell.colSpan - 1

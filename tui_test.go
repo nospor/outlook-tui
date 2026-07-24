@@ -303,6 +303,10 @@ func TestFormatBodyContent(t *testing.T) {
 			input:    "Start <!-- comment with > symbol inside --> End",
 			expected: "Start  End",
 		},
+		{
+			input:    "<table><tr><td style=\"background-color: yellow; color: black\">Warning</td></tr></table>",
+			expected: "┌─────────┐\n│\x1b[38;2;0;0;0m\x1b[48;2;255;255;0m Warning \x1b[39m\x1b[49m│\n└─────────┘\n",
+		},
 	}
 
 	for _, tt := range tests {
