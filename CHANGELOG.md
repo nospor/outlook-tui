@@ -1,4 +1,14 @@
 
+## [0.7.1] - 2026-07-24
+
+### Bug Fixes
+
+- Strip style, script, head, and comment blocks from email body content ([1d24f51](https://github.com/nospor/outlook-tui/commit/1d24f51de7eab92e01e90146723a925732542e5b))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.0 [skip ci] ([ce93f70](https://github.com/nospor/outlook-tui/commit/ce93f701e7fd2705912d47d451809cbc20a94afd))
+
 ## [0.7.0] - 2026-07-22
 
 ### Bug Fixes
