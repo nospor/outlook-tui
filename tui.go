@@ -587,9 +587,14 @@ func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, reply
 	}
 }
 
-func deleteMailCmd(gc *GraphClient, msgID string) tea.Cmd {
+func deleteMailCmd(gc *GraphClient, msgID string, hardDelete bool) tea.Cmd {
 	return func() tea.Msg {
-		err := gc.DeleteMessage(msgID)
+		var err error
+		if hardDelete {
+			err = gc.HardDeleteMessage(msgID)
+		} else {
+			err = gc.DeleteMessage(msgID)
+		}
 		if err != nil {
 			return errMsg(err)
 		}
@@ -597,7 +602,7 @@ func deleteMailCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string) tea.Cmd {
+func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string, hardDelete bool) tea.Cmd {
 	return func() tea.Msg {
 		var wg sync.WaitGroup
 		errs := make([]error, len(msgIDs))
@@ -605,7 +610,11 @@ func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string) tea.Cmd {
 			wg.Add(1)
 			go func(idx int, msgID string) {
 				defer wg.Done()
-				errs[idx] = gc.DeleteMessage(msgID)
+				if hardDelete {
+					errs[idx] = gc.HardDeleteMessage(msgID)
+				} else {
+					errs[idx] = gc.DeleteMessage(msgID)
+				}
 			}(i, id)
 		}
 		wg.Wait()
@@ -1346,6 +1355,17 @@ func (m mainModel) activeMessage() *Message {
 		return &tg.Members[0]
 	}
 	return &tg.Members[item.MemberIdx]
+}
+
+// isInDeletedItems reports whether the currently selected folder is the
+// well-known Deleted Items folder. Used to decide between moving a message to
+// Deleted Items (soft delete) and permanently removing it (hard delete).
+func (m mainModel) isInDeletedItems() bool {
+	if len(m.folders) == 0 {
+		return false
+	}
+	f := m.folders[m.selectedFolder]
+	return f.WellKnownName == "deleteditems"
 }
 
 // loadCachedFolderMessages loads cached messages from SQLite for the currently
@@ -2755,7 +2775,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// for instant UI feedback; background API call syncs with server.
 			if am := m.activeMessage(); am != nil {
 				msgID := am.ID
-				m.statusMsg = "Moving message to Deleted Items..."
+				hardDelete := m.isInDeletedItems()
+				if hardDelete {
+					m.statusMsg = "Permanently deleting message..."
+				} else {
+					m.statusMsg = "Moving message to Deleted Items..."
+				}
 				m.removeMessagesFromLocalState([]string{msgID})
 				// Refresh detail pane for the newly selected message
 				var detailCmd tea.Cmd
@@ -2763,7 +2788,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if detailCmd != nil {
 					cmds = append(cmds, detailCmd)
 				}
-				cmds = append(cmds, deleteMailCmd(m.graphClient, msgID))
+				cmds = append(cmds, deleteMailCmd(m.graphClient, msgID, hardDelete))
 			}
 		case "D":
 			// Delete current thread with confirmation
@@ -3681,7 +3706,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			m.state = stateMain
 			if len(m.deleteThreadMsgIDs) > 0 {
-				m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+				hardDelete := m.isInDeletedItems()
+				if hardDelete {
+					m.statusMsg = fmt.Sprintf("Permanently deleting %d message(s) in thread...", len(m.deleteThreadMsgIDs))
+				} else {
+					m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+				}
 				// Optimistically remove all thread messages from local state for
 				// instant UI feedback; background API calls sync with server.
 				m.removeMessagesFromLocalState(m.deleteThreadMsgIDs)
@@ -3690,7 +3720,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if detailCmd != nil {
 					cmds = append(cmds, detailCmd)
 				}
-				cmds = append(cmds, deleteMultipleMailsCmd(m.graphClient, m.deleteThreadMsgIDs))
+				cmds = append(cmds, deleteMultipleMailsCmd(m.graphClient, m.deleteThreadMsgIDs, hardDelete))
 			}
 			m.deleteThreadMsgIDs = nil
 			m.deleteThreadSubject = ""

@@ -507,6 +507,27 @@ func (gc *GraphClient) DeleteMessage(messageID string) error {
 	return gc.MoveMessage(messageID, "deleteditems")
 }
 
+// HardDeleteMessage permanently deletes a message via the Graph API
+// (HTTP DELETE). This should be used when the message is already in the
+// Deleted Items folder so that it is fully removed rather than moved again.
+func (gc *GraphClient) HardDeleteMessage(messageID string) error {
+	reqURL := fmt.Sprintf("%s/me/messages/%s", graphBaseURL, url.PathEscape(messageID))
+	req, err := http.NewRequest("DELETE", reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := gc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to permanently delete message: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
 func (gc *GraphClient) MarkAsRead(messageID string, isRead bool) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s", graphBaseURL, url.PathEscape(messageID))
 
