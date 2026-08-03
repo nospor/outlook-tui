@@ -1,4 +1,24 @@
 
+## [0.7.3] - 2026-08-03
+
+### Bug Fixes
+
+- Clear pendingDeleteIDs in messagesFetchedMsg to prevent flash-back on rapid deletes ([3e55857](https://github.com/nospor/outlook-tui/commit/3e5585795016eaf57052dbf44e263729bfe97bc0))
+
+            Previously IDs were removed from pendingDeleteIDs as soon as the Graph API
+            delete call returned. If a background fetchMessagesCmd response arrived after
+            that point (but before the server propagated the deletion), the message would
+            flash back into the list momentarily.
+- Permanently delete messages when already in Deleted Items folder ([1d7f857](https://github.com/nospor/outlook-tui/commit/1d7f85793e0f6a68d90d5e17c284066537d1f135))
+
+### Performance
+
+- Optimistic UI removal on message delete with pending-delete guard ([451de3c](https://github.com/nospor/outlook-tui/commit/451de3cd179b4787e59f640ded8b98e8d80a43a2))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.2 [skip ci] ([7c30e48](https://github.com/nospor/outlook-tui/commit/7c30e4886079050e5ab3dffdbdceeb051a9713f0))
+
 ## [0.7.2] - 2026-07-24
 
 ### Features
