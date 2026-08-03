@@ -1834,16 +1834,32 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			currentID = am.ID
 		}
 		// Filter out any messages that were optimistically removed locally but
-		// whose server-side delete hasn't been confirmed yet, preventing them
+		// haven't disappeared from the server response yet, preventing them
 		// from flashing back into the list during rapid successive deletes.
+		// Also evict IDs from the pending set once the server no longer returns
+		// them (i.e. the deletion has been fully propagated server-side).
 		if len(m.pendingDeleteIDs) > 0 {
-			filtered := msg.Messages[:0]
+			// Build a set of IDs present in this server response.
+			serverIDs := make(map[string]bool, len(msg.Messages))
 			for _, fm := range msg.Messages {
-				if !m.pendingDeleteIDs[fm.ID] {
-					filtered = append(filtered, fm)
+				serverIDs[fm.ID] = true
+			}
+			// Evict IDs that the server no longer returns.
+			for id := range m.pendingDeleteIDs {
+				if !serverIDs[id] {
+					delete(m.pendingDeleteIDs, id)
 				}
 			}
-			msg.Messages = filtered
+			// Still filter out any pending IDs that the server is still returning.
+			if len(m.pendingDeleteIDs) > 0 {
+				filtered := msg.Messages[:0]
+				for _, fm := range msg.Messages {
+					if !m.pendingDeleteIDs[fm.ID] {
+						filtered = append(filtered, fm)
+					}
+				}
+				msg.Messages = filtered
+			}
 		}
 		m.messages = msg.Messages
 		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
@@ -2133,8 +2149,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.db.DeleteMessage(msg.MessageID)
 			_ = m.db.RemoveFromFavorites(msg.MessageID)
 		}
-		// Server confirmed the delete — remove from the pending set.
-		delete(m.pendingDeleteIDs, msg.MessageID)
+		// Note: msg.MessageID stays in m.pendingDeleteIDs until the next
+		// messagesFetchedMsg confirms the server no longer lists it, preventing
+		// flash-back if a background fetch races with slow server propagation.
 		// Update folder unread count in memory
 		if wasUnread && len(m.folders) > 0 {
 			fID := deletedMsgFolderID
@@ -2206,8 +2223,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.db.DeleteMessage(targetID)
 				_ = m.db.RemoveFromFavorites(targetID)
 			}
-			// Server confirmed the delete — remove from the pending set.
-			delete(m.pendingDeleteIDs, targetID)
+			// Note: targetID stays in m.pendingDeleteIDs until the next
+			// messagesFetchedMsg confirms the server no longer lists it.
 		}
 
 		// Update folder unread count in memory
