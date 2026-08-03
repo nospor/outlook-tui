@@ -208,6 +208,11 @@ type mainModel struct {
 	deleteThreadMsgIDs  []string
 	deleteThreadSubject string
 
+	// IDs of messages that have been optimistically removed locally but whose
+	// Graph API delete call has not yet returned. These are filtered out of any
+	// incoming messagesFetchedMsg to prevent them flashing back into the list.
+	pendingDeleteIDs map[string]bool
+
 	// Calendar decline confirm state
 	calendarDeclineEventID string
 	calendarDeclineSubject string
@@ -1300,6 +1305,35 @@ func (m *mainModel) buildVirtualList() {
 	m.virtualList = items
 }
 
+// removeMessagesFromLocalState optimistically removes messages with the given IDs
+// from m.messages, then rebuilds thread groups and the virtual list so the UI
+// updates immediately — before the Graph API call returns. virtualSelected is
+// clamped to stay in-bounds after the removal. The IDs are also added to
+// m.pendingDeleteIDs so that any stale server fetch response does not flash them
+// back into the list before the server-side move is confirmed.
+func (m *mainModel) removeMessagesFromLocalState(ids []string) {
+	if m.pendingDeleteIDs == nil {
+		m.pendingDeleteIDs = make(map[string]bool)
+	}
+	idSet := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idSet[id] = true
+		m.pendingDeleteIDs[id] = true
+	}
+	filtered := m.messages[:0]
+	for _, msg := range m.messages {
+		if !idSet[msg.ID] {
+			filtered = append(filtered, msg)
+		}
+	}
+	m.messages = filtered
+	m.buildThreadGroups()
+	if m.virtualSelected >= len(m.virtualList) {
+		m.virtualSelected = max(0, len(m.virtualList)-1)
+	}
+}
+
+
 // activeMessage returns the Message currently indicated by virtualSelected,
 // or nil if list is empty.
 func (m mainModel) activeMessage() *Message {
@@ -1799,6 +1833,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if am := m.activeMessage(); am != nil {
 			currentID = am.ID
 		}
+		// Filter out any messages that were optimistically removed locally but
+		// whose server-side delete hasn't been confirmed yet, preventing them
+		// from flashing back into the list during rapid successive deletes.
+		if len(m.pendingDeleteIDs) > 0 {
+			filtered := msg.Messages[:0]
+			for _, fm := range msg.Messages {
+				if !m.pendingDeleteIDs[fm.ID] {
+					filtered = append(filtered, fm)
+				}
+			}
+			msg.Messages = filtered
+		}
 		m.messages = msg.Messages
 		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
 
@@ -2087,6 +2133,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.db.DeleteMessage(msg.MessageID)
 			_ = m.db.RemoveFromFavorites(msg.MessageID)
 		}
+		// Server confirmed the delete — remove from the pending set.
+		delete(m.pendingDeleteIDs, msg.MessageID)
 		// Update folder unread count in memory
 		if wasUnread && len(m.folders) > 0 {
 			fID := deletedMsgFolderID
@@ -2105,17 +2153,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		// Reload messages
+		// Background refresh to sync with server (message already removed
+		// from local state optimistically at key-press time).
 		if len(m.folders) > 0 {
 			if m.folders[m.selectedFolder].ID == "favorites" {
 				m, _ = m.loadCachedFolderMessages()
 				m.updateFavoritesFolderCounts()
 				return m, nil
 			}
-			return m, tea.Batch(
-				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
-				fetchFoldersCmd(m.graphClient),
-			)
+			// Only refresh the message list; folder unread counts were
+			// already updated locally so a separate fetchFoldersCmd is not needed.
+			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
 	case multipleMailsDeletedMsg:
@@ -2158,6 +2206,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.db.DeleteMessage(targetID)
 				_ = m.db.RemoveFromFavorites(targetID)
 			}
+			// Server confirmed the delete — remove from the pending set.
+			delete(m.pendingDeleteIDs, targetID)
 		}
 
 		// Update folder unread count in memory
@@ -2182,17 +2232,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Reload messages
+		// Background refresh to sync with server (messages already removed
+		// from local state optimistically at confirmation time).
 		if len(m.folders) > 0 {
 			if m.folders[m.selectedFolder].ID == "favorites" {
 				m, _ = m.loadCachedFolderMessages()
 				m.updateFavoritesFolderCounts()
 				return m, nil
 			}
-			return m, tea.Batch(
-				fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID),
-				fetchFoldersCmd(m.graphClient),
-			)
+			// Only refresh the message list; folder unread counts were
+			// already updated locally so a separate fetchFoldersCmd is not needed.
+			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
 	case mailRestoredMsg:
@@ -2684,10 +2734,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.composeBody.SetHeight(h)
 		case "d", "delete":
-			// Delete current message
+			// Delete current message — optimistically remove from local state
+			// for instant UI feedback; background API call syncs with server.
 			if am := m.activeMessage(); am != nil {
+				msgID := am.ID
 				m.statusMsg = "Moving message to Deleted Items..."
-				cmds = append(cmds, deleteMailCmd(m.graphClient, am.ID))
+				m.removeMessagesFromLocalState([]string{msgID})
+				// Refresh detail pane for the newly selected message
+				var detailCmd tea.Cmd
+				m, detailCmd = m.loadMessageDetail(m.activeMessage())
+				if detailCmd != nil {
+					cmds = append(cmds, detailCmd)
+				}
+				cmds = append(cmds, deleteMailCmd(m.graphClient, msgID))
 			}
 		case "D":
 			// Delete current thread with confirmation
@@ -3606,6 +3665,14 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateMain
 			if len(m.deleteThreadMsgIDs) > 0 {
 				m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+				// Optimistically remove all thread messages from local state for
+				// instant UI feedback; background API calls sync with server.
+				m.removeMessagesFromLocalState(m.deleteThreadMsgIDs)
+				var detailCmd tea.Cmd
+				m, detailCmd = m.loadMessageDetail(m.activeMessage())
+				if detailCmd != nil {
+					cmds = append(cmds, detailCmd)
+				}
 				cmds = append(cmds, deleteMultipleMailsCmd(m.graphClient, m.deleteThreadMsgIDs))
 			}
 			m.deleteThreadMsgIDs = nil
