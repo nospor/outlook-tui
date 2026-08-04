@@ -1,4 +1,14 @@
 
+## [0.7.4] - 2026-08-04
+
+### Bug Fixes
+
+- Update folder unread count immediately when deleting unread messages ([8fc7940](https://github.com/nospor/outlook-tui/commit/8fc79406b9d08c2bc04e9a2471131a4a745db2b3))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.3 [skip ci] ([f70da4f](https://github.com/nospor/outlook-tui/commit/f70da4f093af3b4c3045f7a1c192274b23c55288))
+
 ## [0.7.3] - 2026-08-03
 
 ### Bug Fixes
