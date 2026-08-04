@@ -2776,12 +2776,37 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if am := m.activeMessage(); am != nil {
 				msgID := am.ID
 				hardDelete := m.isInDeletedItems()
+				// Capture unread status BEFORE removing from local state, because
+				// removeMessagesFromLocalState clears m.messages and m.threadGroups
+				// so the mailDeletedMsg handler can no longer find the message.
+				wasUnread := !am.IsRead
 				if hardDelete {
 					m.statusMsg = "Permanently deleting message..."
 				} else {
 					m.statusMsg = "Moving message to Deleted Items..."
 				}
 				m.removeMessagesFromLocalState([]string{msgID})
+				// Immediately adjust the folder unread count so the badge updates
+				// without waiting for the async API response.
+				if wasUnread && len(m.folders) > 0 {
+					folderID := m.folders[m.selectedFolder].ID
+					if folderID == "favorites" && m.db != nil {
+						if fID, err := m.db.GetMessageFolderID(msgID); err == nil && fID != "" {
+							folderID = fID
+						}
+					}
+					if folderID != "favorites" {
+						for i := range m.folders {
+							if m.folders[i].ID == folderID {
+								m.folders[i].UnreadItemCount--
+								if m.folders[i].UnreadItemCount < 0 {
+									m.folders[i].UnreadItemCount = 0
+								}
+								break
+							}
+						}
+					}
+				}
 				// Refresh detail pane for the newly selected message
 				var detailCmd tea.Cmd
 				m, detailCmd = m.loadMessageDetail(m.activeMessage())
@@ -3711,6 +3736,37 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = fmt.Sprintf("Permanently deleting %d message(s) in thread...", len(m.deleteThreadMsgIDs))
 				} else {
 					m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+				}
+				// Capture unread counts BEFORE removing from local state, because
+				// removeMessagesFromLocalState clears m.messages and m.threadGroups
+				// so the multipleMailsDeletedMsg handler can no longer find them.
+				if len(m.folders) > 0 {
+					folderID := m.folders[m.selectedFolder].ID
+					if folderID != "favorites" {
+						threadUnreadCount := 0
+						delIDSet := make(map[string]bool, len(m.deleteThreadMsgIDs))
+						for _, id := range m.deleteThreadMsgIDs {
+							delIDSet[id] = true
+						}
+						for _, msg := range m.messages {
+							if delIDSet[msg.ID] && !msg.IsRead {
+								threadUnreadCount++
+							}
+						}
+						// Note: m.threadGroups is built from m.messages, so no need
+						// to scan it separately — m.messages is already authoritative.
+						if threadUnreadCount > 0 {
+							for i := range m.folders {
+								if m.folders[i].ID == folderID {
+									m.folders[i].UnreadItemCount -= threadUnreadCount
+									if m.folders[i].UnreadItemCount < 0 {
+										m.folders[i].UnreadItemCount = 0
+									}
+									break
+								}
+							}
+						}
+					}
 				}
 				// Optimistically remove all thread messages from local state for
 				// instant UI feedback; background API calls sync with server.
