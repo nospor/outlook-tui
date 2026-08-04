@@ -1,4 +1,14 @@
 
+## [0.7.5] - 2026-08-04
+
+### Bug Fixes
+
+- Ensure HTML table top border always starts on a new line ([aafeb28](https://github.com/nospor/outlook-tui/commit/aafeb282b7d2e2b1ac8f05c7eca151f6a021aebd))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.4 [skip ci] ([7e8ed6b](https://github.com/nospor/outlook-tui/commit/7e8ed6b09fdefc4b8f236aa268f519800b705e29))
+
 ## [0.7.4] - 2026-08-04
 
 ### Bug Fixes
