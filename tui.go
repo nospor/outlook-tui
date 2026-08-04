@@ -8253,7 +8253,12 @@ func wrapText(text string, width int) string {
 			result = append(result, wrapRegularText(part, width))
 		} else {
 			subparts := strings.Split(part, "__OUTLOOK_TUI_TABLE_END__")
-			result = append(result, subparts[0])
+			// Always start the table on its own line. The preceding text chunk
+			// may have had its trailing newline stripped by the whitespace
+			// collapser, so we guarantee a newline separator here.
+			tableBlock := strings.TrimLeft(subparts[0], "\n")
+			result = append(result, "\n")
+			result = append(result, tableBlock)
 			result = append(result, "\n")
 			if len(subparts) > 1 {
 				result = append(result, wrapRegularText(subparts[1], width))
