@@ -3180,15 +3180,6 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Send!
 			m.statusMsg = "Sending email..."
 			bodyToSend := m.composeBody.Value()
-			// When replying, the compose body is pre-filled with a quoted original
-			// message for reference. The Graph API reply endpoint appends its own
-			// quoted thread automatically, so we must strip our local quote before
-			// sending to avoid the recipient seeing a doubled quotation.
-			if m.composeReplyToID != "" {
-				if idx := strings.Index(bodyToSend, "\n\nOn "); idx >= 0 {
-					bodyToSend = bodyToSend[:idx]
-				}
-			}
 			cmds = append(cmds, sendMailCmd(
 				m.graphClient,
 				m.composeTo.Value(),

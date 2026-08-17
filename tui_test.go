@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -1533,6 +1535,71 @@ func TestReplyKeyShowConfirm(t *testing.T) {
 	// it should prompt the user (stateReplyConfirm).
 	if updated.state != stateReplyConfirm {
 		t.Errorf("expected state to be stateReplyConfirm, got %v", updated.state)
+	}
+}
+
+type recordingRoundTripper struct {
+	body []byte
+}
+
+func (rt *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		rt.body, _ = io.ReadAll(req.Body)
+	}
+	return &http.Response{
+		StatusCode: http.StatusAccepted,
+		Status:     "202 Accepted",
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+func TestReplySendKeepsQuotedOriginalMessage(t *testing.T) {
+	rt := &recordingRoundTripper{}
+	gc := NewGraphClient(&http.Client{Transport: rt})
+
+	composeBody := textarea.New()
+	quoted := "My reply here\n\nOn Mon, Aug 17, 2026 at 10:00, Sender Person <sender@example.com> wrote:\n> Original message line\n> Another original line"
+	composeBody.SetValue(quoted)
+
+	m := mainModel{
+		state:             stateCompose,
+		composeStep:       3,
+		composeReplyToID:  "msg1",
+		composeIsReplyAll: false,
+		graphClient:       gc,
+		composeTo:         textinput.New(),
+		composeCc:         textinput.New(),
+		composeSubject:    textinput.New(),
+		composeBody:       composeBody,
+	}
+	m.composeTo.SetValue("sender@example.com")
+	m.composeSubject.SetValue("Re: Hello")
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("expected a command to be returned when sending a reply")
+	}
+	if msg := cmd(); msg != nil {
+		if errMsg, ok := msg.(errMsg); ok {
+			t.Fatalf("reply failed to send: %v", errMsg)
+		}
+	}
+
+	if len(rt.body) == 0 {
+		t.Fatal("expected an HTTP request body to be recorded")
+	}
+
+	body := string(rt.body)
+	if !strings.Contains(body, "My reply here") {
+		t.Errorf("expected reply body to contain the user's reply text, got: %s", body)
+	}
+	if !strings.Contains(body, "Original message line") {
+		t.Errorf("expected reply body to contain the quoted original message, got: %s", body)
+	}
+	if !strings.Contains(body, "Another original line") {
+		t.Errorf("expected reply body to contain the full quoted original message, got: %s", body)
 	}
 }
 
