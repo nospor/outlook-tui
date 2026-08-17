@@ -1,4 +1,15 @@
 
+## [0.7.6] - 2026-08-17
+
+### Bug Fixes
+
+- Allow newlines in long reply bodies ([58d6f76](https://github.com/nospor/outlook-tui/commit/58d6f76b58333a6f2b24067b21452986ba662b63))
+- Keep quoted original message when sending replies ([bb0d5e3](https://github.com/nospor/outlook-tui/commit/bb0d5e39d2e4e342a40baa8c70b4f3dc6e797d19))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.5 [skip ci] ([e39bb34](https://github.com/nospor/outlook-tui/commit/e39bb34e77d12275b77cb79cc6b609e25c33aff4))
+
 ## [0.7.5] - 2026-08-04
 
 ### Bug Fixes
