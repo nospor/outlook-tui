@@ -2761,15 +2761,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeSubject.Placeholder = "Email subject..."
 			m.composeSubject.Width = m.width - 20
 
-			m.composeBody = textarea.New()
-			m.composeBody.ShowLineNumbers = false
-			m.composeBody.Placeholder = "Type email body here..."
-			m.composeBody.SetWidth(m.width - 20)
-			h := m.height - 18
-			if h < 3 {
-				h = 3
-			}
-			m.composeBody.SetHeight(h)
+			m.composeBody = m.newComposeBody()
 		case "d", "delete":
 			// Delete current message — optimistically remove from local state
 			// for instant UI feedback; background API call syncs with server.
@@ -3993,15 +3985,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeSubject.SetValue(subject)
 	m.composeSubject.Width = m.width - 20
 
-	m.composeBody = textarea.New()
-	m.composeBody.ShowLineNumbers = false
-	m.composeBody.Placeholder = "Type email body here..."
-	m.composeBody.SetWidth(m.width - 20)
-	h := m.height - 18
-	if h < 3 {
-		h = 3
-	}
-	m.composeBody.SetHeight(h)
+	m.composeBody = m.newComposeBody()
 
 	var quotedBody strings.Builder
 	quotedBody.WriteString("\n\n")
@@ -4025,6 +4009,24 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	}
 	m.composeBody.CursorStart()
 	m.updateComposeFocus()
+}
+
+// newComposeBody creates a fresh compose body textarea sized to the current
+// window. MaxHeight is disabled because bubbles defaults it to 99 lines, which
+// silently turns Enter into a no-op once the body reaches 99 lines (e.g. when
+// replying to a long thread whose quoted message exceeds that limit).
+func (m *mainModel) newComposeBody() textarea.Model {
+	ta := textarea.New()
+	ta.ShowLineNumbers = false
+	ta.Placeholder = "Type email body here..."
+	ta.SetWidth(m.width - 20)
+	ta.MaxHeight = 0
+	h := m.height - 18
+	if h < 3 {
+		h = 3
+	}
+	ta.SetHeight(h)
+	return ta
 }
 
 func (m *mainModel) updateComposeFocus() {
