@@ -7195,6 +7195,15 @@ func renderHTMLTable(tableHTML string) string {
 	stripTags := func(s string) string {
 		// Replace <br> with \n
 		s = regexp.MustCompile(`(?i)<br\s*/?>`).ReplaceAllString(s, "\n")
+		// Block-level tags become newlines (mirroring formatBodyContent) so that
+		// separate blocks inside a cell render on their own lines.
+		s = regexp.MustCompile(`(?i)<p(?:\s+[^>]*)?>`).ReplaceAllString(s, "\n\n")
+		s = strings.ReplaceAll(s, "</p>", "\n\n")
+		s = regexp.MustCompile(`(?i)<div(?:\s+[^>]*)?>`).ReplaceAllString(s, "\n")
+		s = strings.ReplaceAll(s, "</div>", "\n")
+		s = regexp.MustCompile(`(?i)<li(?:\s+[^>]*)?>`).ReplaceAllString(s, "\n• ")
+		s = regexp.MustCompile(`(?i)<h[1-6](?:\s+[^>]*)?>`).ReplaceAllString(s, "\n\n")
+		s = regexp.MustCompile(`(?i)</h[1-6]>`).ReplaceAllString(s, "\n\n")
 		// Strip state markers if present
 		s = strings.ReplaceAll(s, "\x01PRE_START\x01", "")
 		s = strings.ReplaceAll(s, "\x01PRE_END\x01", "")
@@ -7224,9 +7233,13 @@ func renderHTMLTable(tableHTML string) string {
 			// Collapse runs of spaces
 			line = regexp.MustCompile(` {2,}`).ReplaceAllString(line, " ")
 			line = strings.TrimSpace(line)
-			if line != "" || len(lines) == 1 { // keep empty line only if it's the only line
+			if line != "" || (len(cleanLines) > 0 && cleanLines[len(cleanLines)-1] != "") { // keep one blank line between blocks
 				cleanLines = append(cleanLines, line)
 			}
+		}
+		// Trim trailing blank lines left by closing block tags (e.g. </div>)
+		for len(cleanLines) > 0 && cleanLines[len(cleanLines)-1] == "" {
+			cleanLines = cleanLines[:len(cleanLines)-1]
 		}
 		return strings.Join(cleanLines, "\n")
 	}

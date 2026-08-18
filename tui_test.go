@@ -282,6 +282,10 @@ func TestFormatBodyContent(t *testing.T) {
 			expected: "┌──────┬──────┐\n│ Col1 │ Col2 │\n│ Sub1 │      │\n└──────┴──────┘\n",
 		},
 		{
+			input:    `<table><tr><td><div>Comment text</div><div><a href="https://example.com/reply">View Reply</a></div></td></tr></table>`,
+			expected: "┌──────────────┐\n│ Comment text │\n│              │\n│ View Reply   │\n└──────────────┘\n",
+		},
+		{
 			input:    "<table><tr><td>1</td><td>2</td><td>3</td><td>4</td><td>This is a very long text that wraps</td></tr></table>",
 			expected: "┌───┬───┬───┬───┬────────────────────────────────┐\n│ 1 │ 2 │ 3 │ 4 │ This is a very long text that  │\n│   │   │   │   │ wraps                          │\n└───┴───┴───┴───┴────────────────────────────────┘\n",
 		},
