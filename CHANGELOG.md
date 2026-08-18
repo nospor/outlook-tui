@@ -1,4 +1,14 @@
 
+## [0.7.7] - 2026-08-18
+
+### Bug Fixes
+
+- Render block-level tags inside table cells as line breaks ([75d3ae4](https://github.com/nospor/outlook-tui/commit/75d3ae4d0de15b09a41fb3e06228a80529729da5))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.6 [skip ci] ([40a2255](https://github.com/nospor/outlook-tui/commit/40a22558429835fc4b6cd456b8b26c05854e83e5))
+
 ## [0.7.6] - 2026-08-17
 
 ### Bug Fixes
