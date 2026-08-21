@@ -200,6 +200,7 @@ Press **`c`** from the main view to open the calendar popup.
 | `a`                  | **Accept** the selected meeting invitation        |
 | `t`                  | **Tentatively accept** the selected invitation    |
 | `d`                  | **Decline** the selected invitation               |
+| `g`                  | **Join** the online meeting (opens join URL in browser via `browser_command`) |
 | `n`                  | Navigate to the **Next Week** (only in Week View) |
 | `p`                  | Navigate to the **Previous Week** (only in Week View) |
 | `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |

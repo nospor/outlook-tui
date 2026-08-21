@@ -3661,6 +3661,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = "This event does not require a response"
 				}
 			}
+		case "g", "G":
+			// Open the online meeting join URL in the browser
+			if len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				joinURL := calendarEventJoinURL(ev)
+				if joinURL != "" {
+					m.statusMsg = "Opening meeting in browser..."
+					return m, m.openBrowserCmd(joinURL)
+				}
+				m.statusMsg = "No online meeting link for this event"
+			}
 		}
 
 	case stateFileBrowse:
@@ -4568,9 +4579,9 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [g] Join [a] Accept [t] Tentative [d] Decline"
 			} else {
-				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | [g] Join [a] Accept [t] Tentative [d] Decline"
 			}
 		} else {
 			if m.width >= 160 {
@@ -5469,8 +5480,12 @@ func (m mainModel) renderCalendarView() string {
 		}
 
 		// Online meeting
-		if ev.IsOnlineMeeting {
+		joinURL := calendarEventJoinURL(ev)
+		if ev.IsOnlineMeeting || joinURL != "" {
 			detailBuf.WriteString(dim.Render("Type:     ") + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Render("Online meeting") + "\n")
+			if joinURL != "" {
+				detailBuf.WriteString(dim.Render("          ") + dim.Render("[g] Join meeting") + "\n")
+			}
 		}
 
 		// Organizer
@@ -5546,8 +5561,15 @@ func (m mainModel) renderCalendarView() string {
 		}
 
 		// Response hints
+		if joinURL != "" && !ev.ResponseRequested {
+			detailBuf.WriteString("\n" + dim.Render("[g] Join meeting") + "\n")
+		}
 		if ev.ResponseRequested && !ev.IsCancelled {
-			detailBuf.WriteString("\n" + dim.Render("[a] Accept  [t] Tentative  [d] Decline") + "\n")
+			hint := "[a] Accept  [t] Tentative  [d] Decline"
+			if joinURL != "" {
+				hint = "[g] Join meeting  " + hint
+			}
+			detailBuf.WriteString("\n" + dim.Render(hint) + "\n")
 		}
 		if ev.IsCancelled {
 			detailBuf.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Render("⚠ This event has been cancelled") + "\n")
@@ -8734,6 +8756,23 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)
+}
+
+// calendarEventJoinURL returns the online meeting join URL for a calendar event,
+// preferring onlineMeeting.joinUrl from Graph and falling back to URLs in body preview.
+func calendarEventJoinURL(ev CalendarEvent) string {
+	if ev.OnlineMeeting != nil && ev.OnlineMeeting.JoinURL != "" {
+		return ev.OnlineMeeting.JoinURL
+	}
+	for _, u := range extractURLs(ev.BodyPreview, true) {
+		if strings.Contains(u, "teams.microsoft.com") ||
+			strings.Contains(u, "teams.live.com") ||
+			strings.Contains(u, "zoom.us") ||
+			strings.Contains(u, "meet.google.com") {
+			return u
+		}
+	}
+	return ""
 }
 
 func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedURLs []string) *CalendarEvent {

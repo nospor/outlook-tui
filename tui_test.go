@@ -1073,6 +1073,36 @@ func TestFindMatchingCalendarEvent(t *testing.T) {
 	}
 }
 
+func TestCalendarEventJoinURL(t *testing.T) {
+	teamsURL := "https://teams.microsoft.com/meet/342002411780331?p=KRv4BfbESnCa"
+
+	evWithJoin := CalendarEvent{
+		OnlineMeeting: &struct {
+			JoinURL string `json:"joinUrl"`
+		}{
+			JoinURL: teamsURL,
+		},
+	}
+	if got := calendarEventJoinURL(evWithJoin); got != teamsURL {
+		t.Errorf("expected join URL %q, got %q", teamsURL, got)
+	}
+
+	evFromPreview := CalendarEvent{
+		BodyPreview: "Join: " + teamsURL,
+	}
+	if got := calendarEventJoinURL(evFromPreview); got != teamsURL {
+		t.Errorf("expected join URL from body preview %q, got %q", teamsURL, got)
+	}
+
+	evNoMeeting := CalendarEvent{
+		Subject:     "Lunch",
+		BodyPreview: "See you at the cafe",
+	}
+	if got := calendarEventJoinURL(evNoMeeting); got != "" {
+		t.Errorf("expected empty join URL, got %q", got)
+	}
+}
+
 func TestExtractYouTrackURLs(t *testing.T) {
 	tests := []struct {
 		name     string
