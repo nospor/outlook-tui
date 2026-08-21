@@ -1,4 +1,14 @@
 
+## [0.7.8] - 2026-08-21
+
+### Features
+
+- Add g key to join online meetings from calendar view ([039ebd4](https://github.com/nospor/outlook-tui/commit/039ebd494666ee22a6d54131e6d95b0226f95264))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.7 [skip ci] ([b681226](https://github.com/nospor/outlook-tui/commit/b681226009fe65fdee0950e07bf1bcf95cc4893b))
+
 ## [0.7.7] - 2026-08-18
 
 ### Bug Fixes
