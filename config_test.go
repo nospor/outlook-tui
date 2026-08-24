@@ -48,6 +48,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.BrowserCommand != "xdg-open" {
 		t.Errorf("expected default BrowserCommand to be 'xdg-open', got %q", cfg.BrowserCommand)
 	}
+	if cfg.CalendarOpenMode != "join" {
+		t.Errorf("expected default CalendarOpenMode to be 'join', got %q", cfg.CalendarOpenMode)
+	}
 	expectedDefaultDir := filepath.Join(tempDir, "Downloads")
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected default AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)
@@ -194,5 +197,69 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.BrowserCommand != "google-chrome" {
 		t.Errorf("expected custom BrowserCommand to be 'google-chrome', got %q", cfg.BrowserCommand)
+	}
+}
+
+func TestCalendarOpenMode(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+
+	// Case 1: valid "owa" value is preserved
+	if err := os.WriteFile(configPath, []byte(`{"calendar_open_mode": "owa"}`), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if cfg.CalendarOpenMode != "owa" {
+		t.Errorf("expected CalendarOpenMode 'owa', got %q", cfg.CalendarOpenMode)
+	}
+
+	// Case 2: invalid value is normalized back to "join"
+	if err := os.WriteFile(configPath, []byte(`{"calendar_open_mode": "bogus"}`), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if cfg.CalendarOpenMode != "join" {
+		t.Errorf("expected invalid CalendarOpenMode to normalize to 'join', got %q", cfg.CalendarOpenMode)
+	}
+
+	// Case 3: missing value defaults to "join"
+	if err := os.WriteFile(configPath, []byte(`{"client_id": "abc"}`), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if cfg.CalendarOpenMode != "join" {
+		t.Errorf("expected missing CalendarOpenMode to default to 'join', got %q", cfg.CalendarOpenMode)
+	}
+
+	// Case 4: round-trip through SaveConfig keeps the value
+	cfg.CalendarOpenMode = "owa"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read saved config: %v", err)
+	}
+	var saved map[string]interface{}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("failed to unmarshal saved config: %v", err)
+	}
+	if saved["calendar_open_mode"] != "owa" {
+		t.Errorf("expected saved calendar_open_mode 'owa', got %v", saved["calendar_open_mode"])
 	}
 }

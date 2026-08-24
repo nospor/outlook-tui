@@ -590,6 +590,7 @@ type CalendarEvent struct {
 	} `json:"onlineMeeting"`
 	ShowAs           string                  `json:"showAs"` // free, tentative, busy, oof, workingElsewhere, unknown
 	ResponseRequested bool                   `json:"responseRequested"`
+	WebLink          string                  `json:"webLink"` // Outlook Web (OWA) deep link to the event; opens authenticated in browser
 	ResponseStatus   struct {
 		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
 	} `json:"responseStatus"`
@@ -631,7 +632,7 @@ func (gc *GraphClient) GetCalendarEventsForRange(start time.Time, end time.Time)
 	endStr := end.Format("2006-01-02T15:04:05Z")
 
 	reqURL := fmt.Sprintf(
-		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,onlineMeeting,showAs,responseRequested,responseStatus,bodyPreview&$orderby=start/dateTime&$top=100",
+		"%s/me/calendarView?startDateTime=%s&endDateTime=%s&$select=id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,onlineMeeting,showAs,responseRequested,responseStatus,bodyPreview,webLink&$orderby=start/dateTime&$top=100",
 		graphBaseURL, url.QueryEscape(startStr), url.QueryEscape(endStr),
 	)
 

@@ -23,6 +23,7 @@ type Config struct {
 	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
 	CalendarEnabled   bool     `json:"calendar_enabled"` // false (default) — enables calendar view (c) and event responses; requires Calendars.ReadWrite re-auth
 	CalendarView      string   `json:"calendar_view"`    // "list" (default) or "week"
+	CalendarOpenMode  string   `json:"calendar_open_mode"` // "join" (default) = raw meeting URL, or "owa" = open event in Outlook Web (logged-in session)
 	EventsReminderMin []int    `json:"events_reminder_min"`
 }
 
@@ -64,6 +65,7 @@ func LoadConfig() (Config, error) {
 			BrowserCommand:  "xdg-open",
 			CalendarEnabled:   false,
 			CalendarView:      "list",
+			CalendarOpenMode:  "join",
 			EventsReminderMin: []int{30, 15, 1},
 		}
 		_ = SaveConfig(cfg)
@@ -112,6 +114,15 @@ func LoadConfig() (Config, error) {
 		_ = SaveConfig(cfg)
 	}
 
+	cfg.CalendarOpenMode = strings.ToLower(strings.TrimSpace(cfg.CalendarOpenMode))
+	if cfg.CalendarOpenMode == "" {
+		cfg.CalendarOpenMode = "join"
+	}
+	if cfg.CalendarOpenMode != "join" && cfg.CalendarOpenMode != "owa" {
+		cfg.CalendarOpenMode = "join"
+		_ = SaveConfig(cfg)
+	}
+
 	if cfg.ScrollLines <= 0 {
 		cfg.ScrollLines = 1
 		_ = SaveConfig(cfg)
@@ -140,7 +151,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "events_reminder_min") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "calendar_open_mode") || !strings.Contains(string(data), "events_reminder_min") {
 		_ = SaveConfig(cfg)
 	}
 
@@ -156,6 +167,9 @@ func SaveConfig(cfg Config) error {
 	}
 	if cfg.BrowserCommand == "" {
 		cfg.BrowserCommand = "xdg-open"
+	}
+	if cfg.CalendarOpenMode == "" {
+		cfg.CalendarOpenMode = "join"
 	}
 	dir, err := GetConfigDir()
 	if err != nil {

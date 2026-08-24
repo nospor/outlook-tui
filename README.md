@@ -114,6 +114,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `calendar_view`: The default layout for the calendar (defaults to `"list"`).
   - **`"list"` (default)** — Shows a list of upcoming events for the next 30 days.
   - **`"week"`** — Shows a grid view of the active week's events (Monday to Friday).
+* `calendar_open_mode`: Controls what happens when pressing `g` on an event in the calendar (defaults to `"join"`).
+  - **`"join"` (default)** — Opens the raw online meeting join URL in the browser. Note that Teams may prompt for login, since a cold-opened join link has no authenticated session context.
+  - **`"owa"`** — Opens the event itself in Outlook Web (`webLink` from Graph), where your existing browser session is already authenticated and you can click "Join Teams meeting" via SSO — no login prompt. Falls back to an OWA link constructed from the event ID when `webLink` is not cached yet, and finally to the raw join URL when neither exists.
 * `events_reminder_min`: An array of integers specifying the minutes before a calendar event to send a desktop notification reminder (defaults to `[30, 15, 1]`). Only triggers desktop notifications if `use_sqlite` is set to `1` (which caches events in the SQLite database).
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
@@ -132,6 +135,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "theme": "teams",
   "browser_command": "xdg-open",
   "calendar_view": "list",
+  "calendar_open_mode": "join",
   "events_reminder_min": [30, 15, 1]
 }
 ```
@@ -200,7 +204,7 @@ Press **`c`** from the main view to open the calendar popup.
 | `a`                  | **Accept** the selected meeting invitation        |
 | `t`                  | **Tentatively accept** the selected invitation    |
 | `d`                  | **Decline** the selected invitation               |
-| `g`                  | **Join** the online meeting (opens join URL in browser via `browser_command`) |
+| `g`                  | **Join** the online meeting (opens join URL in browser via `browser_command`; with `calendar_open_mode: "owa"` opens the event in Outlook Web instead, using your logged-in browser session) |
 | `n`                  | Navigate to the **Next Week** (only in Week View) |
 | `p`                  | Navigate to the **Previous Week** (only in Week View) |
 | `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |

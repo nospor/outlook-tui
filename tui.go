@@ -3662,13 +3662,14 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "g", "G":
-			// Open the online meeting join URL in the browser
+			// Open the online meeting join URL in the browser (or the event in
+			// Outlook Web when calendar_open_mode is "owa")
 			if len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
 				ev := m.calendarEvents[m.calendarSelected]
-				joinURL := calendarEventJoinURL(ev)
-				if joinURL != "" {
+				openURL := calendarEventOpenURL(ev, m.config.CalendarOpenMode)
+				if openURL != "" {
 					m.statusMsg = "Opening meeting in browser..."
-					return m, m.openBrowserCmd(joinURL)
+					return m, m.openBrowserCmd(openURL)
 				}
 				m.statusMsg = "No online meeting link for this event"
 			}
@@ -4579,9 +4580,9 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | [g] Join [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			} else {
-				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | [g] Join [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			}
 		} else {
 			if m.width >= 160 {
@@ -5481,10 +5482,10 @@ func (m mainModel) renderCalendarView() string {
 
 		// Online meeting
 		joinURL := calendarEventJoinURL(ev)
-		if ev.IsOnlineMeeting || joinURL != "" {
+		if ev.IsOnlineMeeting || joinURL != "" || m.config.CalendarOpenMode == "owa" {
 			detailBuf.WriteString(dim.Render("Type:     ") + lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Render("Online meeting") + "\n")
-			if joinURL != "" {
-				detailBuf.WriteString(dim.Render("          ") + dim.Render("[g] Join meeting") + "\n")
+			if joinURL != "" || m.config.CalendarOpenMode == "owa" {
+				detailBuf.WriteString(dim.Render("          ") + dim.Render(m.calendarGHint()) + "\n")
 			}
 		}
 
@@ -5562,12 +5563,12 @@ func (m mainModel) renderCalendarView() string {
 
 		// Response hints
 		if joinURL != "" && !ev.ResponseRequested {
-			detailBuf.WriteString("\n" + dim.Render("[g] Join meeting") + "\n")
+			detailBuf.WriteString("\n" + dim.Render(m.calendarGHint()) + "\n")
 		}
 		if ev.ResponseRequested && !ev.IsCancelled {
 			hint := "[a] Accept  [t] Tentative  [d] Decline"
-			if joinURL != "" {
-				hint = "[g] Join meeting  " + hint
+			if joinURL != "" || m.config.CalendarOpenMode == "owa" {
+				hint = m.calendarGHint() + "  " + hint
 			}
 			detailBuf.WriteString("\n" + dim.Render(hint) + "\n")
 		}
@@ -8773,6 +8774,32 @@ func calendarEventJoinURL(ev CalendarEvent) string {
 		}
 	}
 	return ""
+}
+
+// calendarEventOpenURL returns the URL to open for a calendar event according to
+// config.CalendarOpenMode: "join" uses the raw online meeting join URL (default),
+// "owa" opens the event in Outlook Web where the browser session is already
+// authenticated (falling back to a webLink constructed from the event ID, then to
+// the raw join URL when no meeting link exists).
+func calendarEventOpenURL(ev CalendarEvent, openMode string) string {
+	if strings.EqualFold(openMode, "owa") {
+		if ev.WebLink != "" {
+			return ev.WebLink
+		}
+		if ev.ID != "" {
+			return "https://outlook.office.com/owa/?itemid=" + url.QueryEscape(ev.ID)
+		}
+	}
+	return calendarEventJoinURL(ev)
+}
+
+// calendarGHint returns the label shown for the [g] key in the calendar UI,
+// depending on calendar_open_mode ("owa" opens the event in Outlook Web).
+func (m mainModel) calendarGHint() string {
+	if strings.EqualFold(m.config.CalendarOpenMode, "owa") {
+		return "[g] Open in Outlook Web"
+	}
+	return "[g] Join meeting"
 }
 
 func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedURLs []string) *CalendarEvent {

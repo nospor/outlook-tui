@@ -142,6 +142,9 @@ func (d *DB) migrate() error {
 	// Add attachments column if it doesn't exist for existing databases
 	_, _ = d.db.Exec(`ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`)
 
+	// Add weblink column (OWA deep link) if it doesn't exist for existing databases
+	_, _ = d.db.Exec(`ALTER TABLE calendar_events ADD COLUMN weblink TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 
@@ -632,8 +635,8 @@ func (d *DB) UpsertCalendarEvents(events []CalendarEvent, startRange, endRange t
 			id, subject, start_utc, end_utc, start_original, start_timezone, end_original, end_timezone,
 			location, organizer_name, organizer_address, attendees,
 			is_all_day, is_cancelled, is_online_meeting, online_meeting_url,
-			show_as, response_requested, response_status, body_preview, fetched_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			show_as, response_requested, response_status, body_preview, weblink, fetched_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject = excluded.subject,
 			start_utc = excluded.start_utc,
@@ -654,6 +657,7 @@ func (d *DB) UpsertCalendarEvents(events []CalendarEvent, startRange, endRange t
 			response_requested = excluded.response_requested,
 			response_status = excluded.response_status,
 			body_preview = excluded.body_preview,
+			weblink = excluded.weblink,
 			fetched_at = excluded.fetched_at
 	`)
 	if err != nil {
@@ -689,6 +693,7 @@ func (d *DB) UpsertCalendarEvents(events []CalendarEvent, startRange, endRange t
 			boolToInt(ev.ResponseRequested),
 			ev.ResponseStatus.Response,
 			ev.BodyPreview,
+			ev.WebLink,
 			now,
 		)
 		if err != nil {
@@ -729,7 +734,7 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 		SELECT id, subject, start_original, start_timezone, end_original, end_timezone,
 		       location, organizer_name, organizer_address, attendees,
 		       is_all_day, is_cancelled, is_online_meeting, online_meeting_url,
-		       show_as, response_requested, response_status, body_preview
+		       show_as, response_requested, response_status, body_preview, weblink
 		FROM calendar_events
 		WHERE start_utc >= ? AND start_utc <= ?
 		ORDER BY start_utc ASC`, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
@@ -744,12 +749,13 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 		var isAllDay, isCancelled, isOnlineMeeting, responseRequested int
 		var attendeesStr string
 		var joinURL string
+		var weblink string
 
 		err := rows.Scan(
 			&ev.ID, &ev.Subject, &ev.Start.DateTime, &ev.Start.TimeZone, &ev.End.DateTime, &ev.End.TimeZone,
 			&ev.Location.DisplayName, &ev.Organizer.EmailAddress.Name, &ev.Organizer.EmailAddress.Address, &attendeesStr,
 			&isAllDay, &isCancelled, &isOnlineMeeting, &joinURL,
-			&ev.ShowAs, &responseRequested, &ev.ResponseStatus.Response, &ev.BodyPreview,
+			&ev.ShowAs, &responseRequested, &ev.ResponseStatus.Response, &ev.BodyPreview, &weblink,
 		)
 		if err != nil {
 			return nil, err
@@ -764,6 +770,7 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 			}{JoinURL: joinURL}
 		}
 		ev.ResponseRequested = responseRequested != 0
+		ev.WebLink = weblink
 		ev.Attendees = parseAttendees(attendeesStr)
 
 		events = append(events, ev)

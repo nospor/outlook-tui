@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -1100,6 +1101,49 @@ func TestCalendarEventJoinURL(t *testing.T) {
 	}
 	if got := calendarEventJoinURL(evNoMeeting); got != "" {
 		t.Errorf("expected empty join URL, got %q", got)
+	}
+}
+
+func TestCalendarEventOpenURL(t *testing.T) {
+	teamsURL := "https://teams.microsoft.com/meet/342002411780331?p=KRv4BfbESnCa"
+	evID := "AAMkAGI2NGVhZTQzLWJjMGItNDQ1Yi04YTgwLWExYjFhOGJhN2RmOABGAAAAAAAv"
+
+	evWithAll := CalendarEvent{
+		ID: evID,
+		OnlineMeeting: &struct {
+			JoinURL string `json:"joinUrl"`
+		}{
+			JoinURL: teamsURL,
+		},
+		WebLink: "https://outlook.office365.com/owa/?itemid=abc123",
+	}
+
+	// Join mode (default): always the raw meeting join URL
+	if got := calendarEventOpenURL(evWithAll, "join"); got != teamsURL {
+		t.Errorf("join mode: expected %q, got %q", teamsURL, got)
+	}
+	if got := calendarEventOpenURL(evWithAll, ""); got != teamsURL {
+		t.Errorf("empty mode: expected %q, got %q", teamsURL, got)
+	}
+
+	// OWA mode with stored webLink
+	if got := calendarEventOpenURL(evWithAll, "owa"); got != evWithAll.WebLink {
+		t.Errorf("owa mode: expected webLink %q, got %q", evWithAll.WebLink, got)
+	}
+
+	// OWA mode without stored webLink falls back to a link constructed from the event ID
+	evNoWebLink := CalendarEvent{
+		ID:            evID,
+		OnlineMeeting: evWithAll.OnlineMeeting,
+	}
+	wantConstructed := "https://outlook.office.com/owa/?itemid=" + url.QueryEscape(evID)
+	if got := calendarEventOpenURL(evNoWebLink, "owa"); got != wantConstructed {
+		t.Errorf("owa mode fallback: expected %q, got %q", wantConstructed, got)
+	}
+
+	// OWA mode with no ID at all falls back to the join URL chain
+	if got := calendarEventOpenURL(CalendarEvent{OnlineMeeting: evWithAll.OnlineMeeting}, "owa"); got != teamsURL {
+		t.Errorf("owa mode no-ID fallback: expected %q, got %q", teamsURL, got)
 	}
 }
 

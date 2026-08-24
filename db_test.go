@@ -424,6 +424,7 @@ func TestDBCalendar(t *testing.T) {
 		}{JoinURL: "https://teams.microsoft.com/join/1"},
 		ShowAs:            "busy",
 		ResponseRequested: true,
+		WebLink:           "https://outlook.office365.com/owa/?itemid=ev-1",
 	}
 	ev1.ResponseStatus.Response = "none"
 
@@ -471,6 +472,9 @@ func TestDBCalendar(t *testing.T) {
 	}
 	if !retrievedEv1.IsOnlineMeeting || retrievedEv1.OnlineMeeting == nil || retrievedEv1.OnlineMeeting.JoinURL != ev1.OnlineMeeting.JoinURL {
 		t.Errorf("expected online meeting join url %q, got %+v", ev1.OnlineMeeting.JoinURL, retrievedEv1.OnlineMeeting)
+	}
+	if retrievedEv1.WebLink != ev1.WebLink {
+		t.Errorf("expected webLink %q, got %q", ev1.WebLink, retrievedEv1.WebLink)
 	}
 	if len(retrievedEv1.Attendees) != 1 || retrievedEv1.Attendees[0].EmailAddress.Address != "att1@example.com" {
 		t.Errorf("expected attendee address att1@example.com, got %+v", retrievedEv1.Attendees)
