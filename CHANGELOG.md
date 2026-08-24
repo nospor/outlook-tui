@@ -1,4 +1,21 @@
 
+## [0.7.9] - 2026-08-24
+
+### Features
+
+- *(calendar)* Add calendar_open_mode option to open events in Outlook Web ([ae5d76d](https://github.com/nospor/outlook-tui/commit/ae5d76d0550fdd10a6902aa5ad40e927f3b0154c))
+
+            Add "calendar_open_mode" config ("join" default | "owa"). With "owa",
+            pressing g opens the event via its Graph webLink in Outlook Web so an
+            already-authenticated browser session can join Teams meetings via SSO,
+            falling back to an OWA link built from the event ID, then to the raw
+            join URL. webLink is now fetched from Graph and cached in a new
+            calendar_events.weblink column.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.8 [skip ci] ([47a041d](https://github.com/nospor/outlook-tui/commit/47a041d2270db79db391c2a48cd679dbc3dbe13f))
+
 ## [0.7.8] - 2026-08-21
 
 ### Features
