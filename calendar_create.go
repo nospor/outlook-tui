@@ -183,6 +183,7 @@ func (m *mainModel) initEventCreateForm(prefillDay time.Time) {
 
 	m.eventCreateEditingID = ""
 	m.loadContacts()
+	m.loadAttendeeLists()
 	m.updateEventCreateFocus()
 }
 
@@ -433,32 +434,36 @@ func (m *mainModel) updateEventCreateFocus() {
 	}
 }
 
-func (m *mainModel) updateEventCreateFilteredContacts() {
-	if m.config.UseSQLite == 0 || len(m.contacts) == 0 || m.eventCreateStep != eventCreateStepAttendees {
-		m.filteredContacts = nil
-		m.contactsSelected = 0
+func (m *mainModel) updateEventCreateFilteredSuggestions() {
+	if m.eventCreateStep != eventCreateStepAttendees {
+		m.clearAttendeeSuggestions()
 		return
 	}
+
 	val := m.activeEventCreateAttendeeInput().Value()
-	parts := strings.Split(val, ",")
-	if len(parts) == 0 {
-		m.filteredContacts = nil
-		return
-	}
-	query := strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
+	query := m.attendeeSuggestionQueryFromInput(val)
 	if query == "" {
-		m.filteredContacts = nil
+		m.clearAttendeeSuggestions()
 		return
 	}
-	var filtered []Contact
-	for _, c := range m.contacts {
-		if strings.Contains(strings.ToLower(c.Name), query) || strings.Contains(strings.ToLower(c.Address), query) {
-			filtered = append(filtered, c)
-		}
+
+	var contacts []Contact
+	if m.config.UseSQLite != 0 && len(m.contacts) > 0 {
+		contacts = m.contacts
 	}
-	m.filteredContacts = filtered
-	if m.contactsSelected >= len(m.filteredContacts) {
-		m.contactsSelected = 0
+	var lists []AttendeeList
+	if m.db != nil && len(m.attendeeLists) > 0 {
+		lists = m.attendeeLists
+	}
+	if len(contacts) == 0 && len(lists) == 0 {
+		m.clearAttendeeSuggestions()
+		return
+	}
+
+	m.attendeeSuggestions = filterAttendeeSuggestions(query, contacts, lists, true)
+	if m.attendeeSuggestionsSelected >= len(m.attendeeSuggestions) {
+		m.attendeeSuggestionsSelected = 0
+		m.contactsStartIdx = 0
 	}
 }
 
@@ -764,39 +769,13 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleEventCreateRecurrenceUpdate(msg)
 		}
 
-		// Contact autocomplete for attendees field
-		if m.config.UseSQLite != 0 && m.eventCreateStep == eventCreateStepAttendees && len(m.filteredContacts) > 0 {
-			switch msg.String() {
-			case "up":
-				m.contactsSelected = (m.contactsSelected - 1 + len(m.filteredContacts)) % len(m.filteredContacts)
+		// Contact and attendee-list autocomplete for attendees field
+		if m.eventCreateStep == eventCreateStepAttendees && len(m.attendeeSuggestions) > 0 {
+			if m.handleAttendeeSuggestionKeys(msg) {
 				return m, nil
-			case "down":
-				m.contactsSelected = (m.contactsSelected + 1) % len(m.filteredContacts)
-				return m, nil
-			case "enter":
-				selected := m.filteredContacts[m.contactsSelected]
-				active := m.activeEventCreateAttendeeInput()
-				parts := strings.Split(active.Value(), ",")
-				if len(parts) > 0 {
-					var newAddress string
-					if selected.Name != "" {
-						newAddress = fmt.Sprintf("%s <%s>", selected.Name, selected.Address)
-					} else {
-						newAddress = selected.Address
-					}
-					parts[len(parts)-1] = " " + newAddress
-					newValue := strings.TrimLeft(strings.Join(parts, ","), " ")
-					active.SetValue(newValue + ", ")
-					active.SetCursor(len(active.Value()))
-				}
-				m.filteredContacts = nil
-				m.contactsSelected = 0
-				m.contactsStartIdx = 0
-				return m, nil
-			case "esc":
-				m.filteredContacts = nil
-				m.contactsSelected = 0
-				m.contactsStartIdx = 0
+			}
+			if msg.String() == "enter" {
+				m.applyAttendeeSuggestion(m.attendeeSuggestionsSelected, m.activeEventCreateAttendeeInput())
 				return m, nil
 			}
 		}
@@ -970,7 +949,7 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.eventCreateAttendees, cmd = m.eventCreateAttendees.Update(msg)
 			}
-			m.updateEventCreateFilteredContacts()
+			m.updateEventCreateFilteredSuggestions()
 		case eventCreateStepStart:
 			m.eventCreateStart, cmd = m.eventCreateStart.Update(msg)
 		case eventCreateStepEnd:
@@ -1238,8 +1217,8 @@ func (m mainModel) renderCalendarCreateView() string {
 				val = m.eventCreateSubject.View()
 			case eventCreateStepAttendees:
 				formLines = append(formLines, m.renderEventCreateAttendeeRows(activeLabel, inactiveLabel)...)
-				if m.config.UseSQLite != 0 && len(m.filteredContacts) > 0 {
-					formLines = append(formLines, m.renderContactsList(leftW-6))
+				if len(m.attendeeSuggestions) > 0 {
+					formLines = append(formLines, m.renderAttendeeSuggestionsList(leftW-6))
 				}
 				continue
 			case eventCreateStepStart:

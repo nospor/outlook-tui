@@ -587,3 +587,77 @@ func TestDBReminders(t *testing.T) {
 	}
 }
 
+func TestDBAttendeeLists(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	members := []Contact{
+		{Name: "Alice", Address: "alice@example.com"},
+		{Name: "Bob", Address: "bob@example.com"},
+	}
+
+	id, err := db.CreateAttendeeList("Weekly standup", members)
+	if err != nil {
+		t.Fatalf("CreateAttendeeList failed: %v", err)
+	}
+	if id == "" {
+		t.Fatal("expected non-empty list id")
+	}
+
+	lists, err := db.GetAttendeeLists()
+	if err != nil {
+		t.Fatalf("GetAttendeeLists failed: %v", err)
+	}
+	if len(lists) != 1 {
+		t.Fatalf("expected 1 list, got %d", len(lists))
+	}
+	if lists[0].Name != "Weekly standup" || len(lists[0].Members) != 2 {
+		t.Fatalf("unexpected list: %+v", lists[0])
+	}
+
+	got, err := db.GetAttendeeList(id)
+	if err != nil {
+		t.Fatalf("GetAttendeeList failed: %v", err)
+	}
+	if got == nil || got.Name != "Weekly standup" {
+		t.Fatalf("unexpected single list: %+v", got)
+	}
+
+	updated := []Contact{
+		{Name: "Charlie", Address: "charlie@example.com"},
+	}
+	if err := db.UpdateAttendeeList(id, "Project Alpha", updated); err != nil {
+		t.Fatalf("UpdateAttendeeList failed: %v", err)
+	}
+
+	got, err = db.GetAttendeeList(id)
+	if err != nil {
+		t.Fatalf("GetAttendeeList after update failed: %v", err)
+	}
+	if got.Name != "Project Alpha" || len(got.Members) != 1 || got.Members[0].Address != "charlie@example.com" {
+		t.Fatalf("unexpected updated list: %+v", got)
+	}
+
+	_, err = db.CreateAttendeeList("Project Alpha", members)
+	if err == nil {
+		t.Fatal("expected duplicate name error")
+	}
+
+	if err := db.DeleteAttendeeList(id); err != nil {
+		t.Fatalf("DeleteAttendeeList failed: %v", err)
+	}
+	lists, err = db.GetAttendeeLists()
+	if err != nil {
+		t.Fatalf("GetAttendeeLists after delete failed: %v", err)
+	}
+	if len(lists) != 0 {
+		t.Fatalf("expected 0 lists after delete, got %d", len(lists))
+	}
+}
+

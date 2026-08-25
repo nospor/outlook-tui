@@ -216,6 +216,7 @@ Press **`c`** from the main view to open the calendar popup.
 | `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |
 | `r`                  | Refresh calendar events from the server           |
 | `N`                  | **Create a new calendar event** (opens event creation form with attendee availability) |
+| `L`                  | **Manage attendee lists** (reusable groups for event creation) |
 | `e`                  | **Edit the selected calendar event** (opens the same form pre-filled with event details) |
 | `Ctrl+e`             | Open the unread event reminders popup             |
 | `Esc` / `q` / `c`   | Close the calendar popup                          |
@@ -241,7 +242,21 @@ The form is split into two columns:
 
 **Attendees step** has separate **Required** and **Optional** fields (Tab/Shift+Tab moves between them), like Outlook. Use `!room@domain.com` in either field for a resource (meeting room/equipment).
 
-When SQLite caching is enabled, contact autocomplete works in both attendee fields (same as email compose).
+When SQLite caching is enabled, contact autocomplete works in both attendee fields (same as email compose). **Attendee lists** (saved locally in `db.db`, always — like Favorites) also appear in autocomplete: typing a list name adds all members to the active Required or Optional field (duplicates skipped). Manage lists with **`L`** from the calendar popup.
+
+### Attendee Lists
+
+Press **`L`** (capital L) from the calendar popup to open the **Attendee Lists** manager:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` / `j` / `k` | Select a list |
+| `n` | Create a new list |
+| `e` | Edit the selected list |
+| `d` | Delete the selected list (with confirmation) |
+| `Esc` / `q` | Return to the calendar |
+
+Each list has a **name** and **members** added one at a time. In the list editor: type an email (or pick from autocomplete), press **Enter** to add a row; Tab to the member list to select a row and **`d`** or **Delete** to remove it. **Ctrl+s** saves, Esc cancels. Contact autocomplete works in the add field when `use_sqlite` is enabled.
 
 **Options step** key bindings (Tab/Shift+Tab moves between option rows; Tab again from the last row focuses suggested times):
 

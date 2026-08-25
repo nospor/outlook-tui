@@ -70,6 +70,9 @@ const (
 	stateCalendarRecurrence      // recurrence sub-popup for event creation
 	stateNotifiedEventsSelect
 	stateMoveFolderSelect
+	stateAttendeeLists
+	stateAttendeeListEdit
+	stateAttendeeListDeleteConfirm
 )
 
 // ThreadGroup holds a conversation thread: the most-recent message is the
@@ -287,6 +290,21 @@ type mainModel struct {
 	eventCreateRecurrenceDayInput      textinput.Model
 	eventCreateRecurrenceEndDateInput  textinput.Model
 	eventCreateRecurrenceCountInput    textinput.Model
+
+	// Attendee lists (calendar)
+	attendeeLists               []AttendeeList
+	attendeeListSelected        int
+	attendeeListEditID              string
+	attendeeListEditName            textinput.Model
+	attendeeListEditMembers         textinput.Model // add-member input
+	attendeeListEditMemberRows      []Contact
+	attendeeListEditMemberSelected  int
+	attendeeListEditMembersListFocus bool
+	attendeeListEditStep            int
+	attendeeListDeleteID        string
+	attendeeListDeleteName      string
+	attendeeSuggestions         []AttendeeSuggestion
+	attendeeSuggestionsSelected int
 }
 
 func initialModel() mainModel {
@@ -1802,6 +1820,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("SQLite warning: %v", err)
 			}
 		}
+		m.loadAttendeeLists()
 
 		m.authClient = NewAuthenticator(m.config.ClientID, m.config.TenantID, TokenCache(msg), m.config.CalendarEnabled)
 		m.graphClient = NewGraphClient(m.authClient.GetClient())
@@ -3857,10 +3876,22 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Loading event..."
 				return m, loadCalendarEventForEditCmd(m.graphClient, ev.ID)
 			}
+		case "L":
+			m.loadAttendeeLists()
+			m.prevState = stateCalendar
+			m.attendeeListSelected = 0
+			if len(m.attendeeLists) > 0 {
+				m.attendeeListSelected = 0
+			}
+			m.state = stateAttendeeLists
+			m.statusMsg = "Attendee lists — [n] new [e] edit [d] delete | Esc: back"
 		}
 
 	case stateCalendarCreate, stateCalendarCreateCancelConfirm, stateCalendarRecurrence:
 		return m.handleEventCreateUpdate(msg)
+
+	case stateAttendeeLists, stateAttendeeListEdit, stateAttendeeListDeleteConfirm:
+		return m.handleAttendeeListsUpdate(msg)
 
 	case stateFileBrowse:
 		key, ok := msg.(tea.KeyMsg)
@@ -4798,10 +4829,16 @@ func (m mainModel) View() string {
 
 	case stateCalendarRecurrence:
 		s.WriteString(m.renderCalendarCreateView())
+
+	case stateAttendeeLists, stateAttendeeListDeleteConfirm:
+		s.WriteString(m.renderAttendeeListsView())
+
+	case stateAttendeeListEdit:
+		s.WriteString(m.renderAttendeeListEditView())
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect || m.state == stateAttendeeLists || m.state == stateAttendeeListEdit || m.state == stateAttendeeListDeleteConfirm {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4825,9 +4862,9 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [N] New Event | [e] Edit Event | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			} else {
-				keysText = "  [Esc/q/c] Close | [N] New Event | [e] Edit Event | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			}
 		} else if m.state == stateCalendarCreate {
 			if m.eventCreateIsEditing() {
@@ -4839,6 +4876,12 @@ func (m mainModel) View() string {
 			keysText = "  [y] Yes, discard | [n/Esc] No, continue editing"
 		} else if m.state == stateCalendarRecurrence {
 			keysText = "  [Tab/Shift+Tab] Fields | [Space] Cycle pattern/range | Type interval/days/dates | [Esc] Save | [Backspace] Clear"
+		} else if m.state == stateAttendeeLists {
+			keysText = "  [Esc/q] Back to calendar | [n] New list | [e] Edit | [d] Delete | [j/k/Up/Down] Select"
+		} else if m.state == stateAttendeeListEdit {
+			keysText = "  [Tab/Shift+Tab] Fields | [Enter] Add member | [d/Delete] Remove (member list) | [Ctrl+s] Save | [Esc] Cancel"
+		} else if m.state == stateAttendeeListDeleteConfirm {
+			keysText = "  [y] Yes, delete list | [n/Esc] No, cancel"
 		} else {
 			for _, line := range wrapKeyHints(m.mainKeyHints(), m.width, 2) {
 				s.WriteString(dimStyle.Render(line) + "\n")
@@ -5182,6 +5225,25 @@ func (m mainModel) View() string {
 		}
 		modalHeight := 18
 		dropdownView := m.renderCalendarRecurrencePopup(modalWidth)
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateAttendeeListDeleteConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 11
+		dropdownView := m.renderAttendeeListDeleteConfirmPopup(modalWidth)
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
 		if x < 0 {
@@ -6022,14 +6084,42 @@ func (m mainModel) renderHelpContent() string {
 		"  [Esc]               Cancel composing / Close suggestions",
 	}
 
-	calendarTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR EVENT CREATION (N from calendar)")
+	calendarTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR POPUP (c from main)")
+	calendarPopupLines := []string{
+		calendarTitle,
+		"",
+		"  [N]                 Create new calendar event",
+		"  [L]                 Manage attendee lists",
+		"  [e]                 Edit selected event",
+		"  [a] / [t] / [d]     Accept / Tentative / Decline invitation",
+		"  [g]                 Join meeting or open in OWA",
+		"  [v]                 Toggle list/week layout",
+		"  [r]                 Refresh events",
+		"  [Ctrl+e]            Unread event reminders popup",
+		"  [Esc/q/c]           Close calendar",
+	}
+
+	attendeeListsTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("ATTENDEE LISTS (L from calendar)")
+	attendeeListsLines := []string{
+		attendeeListsTitle,
+		"",
+		"  [n]                 Create new list",
+		"  [e]                 Edit selected list",
+		"  [d]                 Delete selected list",
+		"  [Up/Down/j/k]       Select list",
+		"  Editor: Tab fields, Enter add member, d/Delete remove, Ctrl+s save, Esc cancel",
+		"  [Esc/q]             Back to calendar",
+	}
+
+	calendarCreateTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR EVENT CREATION (N from calendar)")
 	calendarEditTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR EVENT EDIT (e from calendar)")
 	calendarLines := []string{
-		calendarTitle,
+		calendarCreateTitle,
 		calendarEditTitle,
 		"",
 		"  [Tab] / [Shift+Tab] Navigate fields (Subject..Options)",
 		"  Attendees: Tab between Required and Optional rows",
+		"  Attendees: autocomplete contacts (use_sqlite) and list names",
 		"  [Ctrl+s] / [Ctrl+x] Create event",
 		"  [Ctrl+g]            Open body in external editor",
 		"  [s]                 Focus suggested times",
@@ -6079,6 +6169,14 @@ func (m mainModel) renderHelpContent() string {
 
 	// Compose section
 	for _, l := range composeLines {
+		s.WriteString(l + "\n")
+	}
+	s.WriteString("\n")
+	for _, l := range calendarPopupLines {
+		s.WriteString(l + "\n")
+	}
+	s.WriteString("\n")
+	for _, l := range attendeeListsLines {
 		s.WriteString(l + "\n")
 	}
 	s.WriteString("\n")

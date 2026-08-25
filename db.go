@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -133,6 +135,21 @@ func (d *DB) migrate() error {
 			reminder_min INTEGER,
 			sent_at      TEXT,
 			PRIMARY KEY (event_id, reminder_min)
+		);
+
+		CREATE TABLE IF NOT EXISTS attendee_lists (
+			id         TEXT PRIMARY KEY,
+			name       TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS attendee_list_members (
+			list_id     TEXT NOT NULL REFERENCES attendee_lists(id) ON DELETE CASCADE,
+			name        TEXT NOT NULL DEFAULT '',
+			address     TEXT NOT NULL,
+			sort_order  INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (list_id, address)
 		);
 	`)
 	if err != nil {
@@ -808,5 +825,198 @@ func (d *DB) MarkReminderAsSent(eventID string, reminderMin int) error {
 func (d *DB) PruneSentReminders() error {
 	cutoff := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
 	_, err := d.db.Exec(`DELETE FROM sent_reminders WHERE sent_at < ?`, cutoff)
+	return err
+}
+
+// AttendeeList is a named group of contacts for calendar event creation.
+type AttendeeList struct {
+	ID      string
+	Name    string
+	Members []Contact
+}
+
+func newAttendeeListID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// GetAttendeeLists returns all attendee lists with members, ordered by name.
+func (d *DB) GetAttendeeLists() ([]AttendeeList, error) {
+	rows, err := d.db.Query(`SELECT id, name FROM attendee_lists ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lists []AttendeeList
+	for rows.Next() {
+		var list AttendeeList
+		if err := rows.Scan(&list.ID, &list.Name); err != nil {
+			return nil, err
+		}
+		lists = append(lists, list)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range lists {
+		members, err := d.getAttendeeListMembers(lists[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		lists[i].Members = members
+	}
+	return lists, nil
+}
+
+// GetAttendeeList returns a single attendee list by ID.
+func (d *DB) GetAttendeeList(id string) (*AttendeeList, error) {
+	var list AttendeeList
+	err := d.db.QueryRow(`SELECT id, name FROM attendee_lists WHERE id = ?`, id).Scan(&list.ID, &list.Name)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	members, err := d.getAttendeeListMembers(id)
+	if err != nil {
+		return nil, err
+	}
+	list.Members = members
+	return &list, nil
+}
+
+func (d *DB) getAttendeeListMembers(listID string) ([]Contact, error) {
+	rows, err := d.db.Query(`
+		SELECT name, address FROM attendee_list_members
+		WHERE list_id = ?
+		ORDER BY sort_order ASC, address ASC
+	`, listID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []Contact
+	for rows.Next() {
+		var c Contact
+		if err := rows.Scan(&c.Name, &c.Address); err != nil {
+			return nil, err
+		}
+		members = append(members, c)
+	}
+	return members, rows.Err()
+}
+
+// CreateAttendeeList inserts a new attendee list with members.
+func (d *DB) CreateAttendeeList(name string, members []Contact) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("list name is required")
+	}
+	if len(members) == 0 {
+		return "", fmt.Errorf("at least one member is required")
+	}
+
+	id, err := newAttendeeListID()
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`INSERT INTO attendee_lists (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+		id, name, now, now)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return "", fmt.Errorf("a list with that name already exists")
+		}
+		return "", err
+	}
+
+	if err := insertAttendeeListMembers(tx, id, members); err != nil {
+		return "", err
+	}
+
+	return id, tx.Commit()
+}
+
+// UpdateAttendeeList updates list name and replaces all members.
+func (d *DB) UpdateAttendeeList(id, name string, members []Contact) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("list name is required")
+	}
+	if len(members) == 0 {
+		return fmt.Errorf("at least one member is required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`UPDATE attendee_lists SET name = ?, updated_at = ? WHERE id = ?`, name, now, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return fmt.Errorf("a list with that name already exists")
+		}
+		return err
+	}
+
+	_, err = tx.Exec(`DELETE FROM attendee_list_members WHERE list_id = ?`, id)
+	if err != nil {
+		return err
+	}
+
+	if err := insertAttendeeListMembers(tx, id, members); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func insertAttendeeListMembers(tx *sql.Tx, listID string, members []Contact) error {
+	seen := make(map[string]bool)
+	for i, m := range members {
+		addr := strings.TrimSpace(m.Address)
+		if addr == "" {
+			continue
+		}
+		key := strings.ToLower(addr)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		_, err := tx.Exec(`
+			INSERT INTO attendee_list_members (list_id, name, address, sort_order)
+			VALUES (?, ?, ?, ?)
+		`, listID, strings.TrimSpace(m.Name), addr, i)
+		if err != nil {
+			return err
+		}
+	}
+	if len(seen) == 0 {
+		return fmt.Errorf("at least one member is required")
+	}
+	return nil
+}
+
+// DeleteAttendeeList removes an attendee list and its members.
+func (d *DB) DeleteAttendeeList(id string) error {
+	_, err := d.db.Exec(`DELETE FROM attendee_lists WHERE id = ?`, id)
 	return err
 }
