@@ -26,6 +26,10 @@ type Config struct {
 	CalendarView      string   `json:"calendar_view"`    // "list" (default) or "week"
 	CalendarOpenMode  string   `json:"calendar_open_mode"` // "join" (default) = raw meeting URL, or "owa" = open event in Outlook Web (logged-in session)
 	EventsReminderMin []int    `json:"events_reminder_min"`
+	CalendarDefaultDurationMin int `json:"calendar_default_duration_min"` // default meeting length in minutes (default 60)
+	CalendarDefaultReminderMin int `json:"calendar_default_reminder_min"` // default reminder before event (default 15)
+	CalendarWorkStartHour      int `json:"calendar_work_start_hour"`      // busy timeline start hour (default 8)
+	CalendarWorkEndHour        int `json:"calendar_work_end_hour"`        // busy timeline end hour (default 18)
 }
 
 func GetConfigDir() (string, error) {
@@ -69,6 +73,10 @@ func LoadConfig() (Config, error) {
 			CalendarOpenMode:  "join",
 			EventsReminderMin: []int{30, 15, 1},
 			ProtectedFolders:  []string{"Inbox", "Sent Items"},
+			CalendarDefaultDurationMin: 60,
+			CalendarDefaultReminderMin: 15,
+			CalendarWorkStartHour:      8,
+			CalendarWorkEndHour:        18,
 		}
 		_ = SaveConfig(cfg)
 		return cfg, nil
@@ -127,6 +135,19 @@ func LoadConfig() (Config, error) {
 	if cfg.CalendarOpenMode != "join" && cfg.CalendarOpenMode != "owa" {
 		cfg.CalendarOpenMode = "join"
 		_ = SaveConfig(cfg)
+	}
+
+	if cfg.CalendarDefaultDurationMin <= 0 {
+		cfg.CalendarDefaultDurationMin = 60
+	}
+	if cfg.CalendarDefaultReminderMin <= 0 {
+		cfg.CalendarDefaultReminderMin = 15
+	}
+	if cfg.CalendarWorkStartHour <= 0 {
+		cfg.CalendarWorkStartHour = 8
+	}
+	if cfg.CalendarWorkEndHour <= 0 || cfg.CalendarWorkEndHour <= cfg.CalendarWorkStartHour {
+		cfg.CalendarWorkEndHour = 18
 	}
 
 	if cfg.ScrollLines <= 0 {

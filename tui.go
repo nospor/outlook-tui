@@ -65,6 +65,9 @@ const (
 	stateYankSelect
 	stateCalendar                // calendar popup (requires calendar_enabled = true)
 	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
+	stateCalendarCreate          // create new calendar event
+	stateCalendarCreateCancelConfirm
+	stateCalendarRecurrence      // recurrence sub-popup for event creation
 	stateNotifiedEventsSelect
 	stateMoveFolderSelect
 )
@@ -145,6 +148,8 @@ type (
 	}
 	calendarRemindersCheckedMsg struct{}
 )
+
+// Calendar create model fields are in mainModel below.
 
 type mainModel struct {
 	state         appState
@@ -247,6 +252,41 @@ type mainModel struct {
 	pendingCalendarSelectID  string          // pending calendar event ID to select after a fresh fetch
 	calendarAutoSelectToday bool            // when true, auto-position cursor on today's first event after load
 	pendingOpenMessageID     string          // message ID we are waiting to open URLs for after a fresh calendar fetch
+
+	// Calendar event creation
+	eventCreateSubject             textinput.Model
+	eventCreateAttendees           textinput.Model
+	eventCreateOptionalAttendees   textinput.Model
+	eventCreateAttendeesStep       int
+	eventCreateStart               textinput.Model
+	eventCreateEnd                 textinput.Model
+	eventCreateLocation            textinput.Model
+	eventCreateBody                textarea.Model
+	eventCreateStep                int
+	eventCreateEditingID           string
+	eventCreateAllDay              bool
+	eventCreateTeams               bool
+	eventCreateReminderOn          bool
+	eventCreateShowAs              string
+	eventCreateReminderMin         int
+	eventCreateRecurrence          RecurrenceSettings
+	eventCreateRecurrenceEnabled   bool
+	eventCreateRecurrenceStep      int
+	eventCreateSchedules           []ScheduleInformation
+	eventCreateSuggestions         []MeetingTimeSuggestion
+	eventCreateSuggestionsSelected int
+	eventCreateAvailLoading        bool
+	eventCreateConflictCount       int
+	eventCreateScheduleQueryStart  time.Time
+	eventCreateAvailDebounce       tea.Cmd
+	eventCreateFocusSuggestions    bool
+	eventCreateOptionsStep         int
+	eventCreateReminderMinInput    textinput.Model
+	eventCreateRecurrenceIntervalInput textinput.Model
+	eventCreateRecurrenceDaysInput     textinput.Model
+	eventCreateRecurrenceDayInput      textinput.Model
+	eventCreateRecurrenceEndDateInput  textinput.Model
+	eventCreateRecurrenceCountInput    textinput.Model
 }
 
 func initialModel() mainModel {
@@ -1718,6 +1758,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.txtInput.Focus()
 		}
 
+	case calendarEventLoadedForEditMsg:
+		if msg.Event == nil {
+			return m, nil
+		}
+		if msg.Event.IsCancelled {
+			m.statusMsg = "Cannot edit a cancelled event"
+			return m, nil
+		}
+		m.initEventEditForm(*msg.Event)
+		m.state = stateCalendarCreate
+		m.statusMsg = "Edit event — Tab: fields | Ctrl+s: save | Esc: cancel"
+		return m, nil
+
 	case deviceCodeMsg:
 		m.state = stateDeviceAuth
 		m.deviceCode = msg
@@ -2121,8 +2174,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case editorBodyLoadedMsg:
-		// External editor exited; load returned content into compose body
 		bodyStr := string(msg)
+		if m.state == stateCalendarCreate {
+			m.eventCreateBody.SetValue(bodyStr)
+			m.eventCreateStep = eventCreateStepBody
+			m.updateEventCreateFocus()
+			m.statusMsg = "Body loaded from editor"
+			return m, nil
+		}
+		// External editor exited; load returned content into compose body
 		m.composeBody.SetValue(bodyStr)
 
 		// Find where the reply ends and the quoted message starts.
@@ -3769,7 +3829,38 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.statusMsg = "No online meeting link for this event"
 			}
+		case "N":
+			// Create new calendar event
+			if m.graphClient != nil {
+				var prefill time.Time
+				now := time.Now()
+				currentWeekStart := getStartOfWeek(now)
+				viewingOtherWeek := m.config.CalendarView == "week" && !isSameDay(m.calendarWeekStart, currentWeekStart)
+				if viewingOtherWeek {
+					if len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+						prefill = m.calendarEvents[m.calendarSelected].Start.Time().Local()
+					} else {
+						prefill = m.calendarWeekStart
+					}
+				}
+				m.initEventCreateForm(prefill)
+				m.state = stateCalendarCreate
+				m.statusMsg = "Create new event — Tab: fields | Ctrl+s: save | Esc: cancel"
+			}
+		case "e", "E":
+			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				if ev.IsCancelled {
+					m.statusMsg = "Cannot edit a cancelled event"
+					break
+				}
+				m.statusMsg = "Loading event..."
+				return m, loadCalendarEventForEditCmd(m.graphClient, ev.ID)
+			}
 		}
+
+	case stateCalendarCreate, stateCalendarCreateCancelConfirm, stateCalendarRecurrence:
+		return m.handleEventCreateUpdate(msg)
 
 	case stateFileBrowse:
 		key, ok := msg.(tea.KeyMsg)
@@ -4627,7 +4718,7 @@ func (m mainModel) View() string {
 
 		s.WriteString("   " + toLabel + "\n   " + toValStyle.Render(m.composeTo.View()) + "\n")
 		if m.config.UseSQLite != 0 && m.composeStep == 0 && len(m.filteredContacts) > 0 {
-			popupContent := m.renderContactsPopup()
+			popupContent := m.renderContactsPopup(0)
 			lines := strings.Split(popupContent, "\n")
 			for _, line := range lines {
 				if strings.TrimSpace(line) != "" {
@@ -4641,7 +4732,7 @@ func (m mainModel) View() string {
 
 		s.WriteString("   " + ccLabel + "\n   " + ccValStyle.Render(m.composeCc.View()) + "\n")
 		if m.config.UseSQLite != 0 && m.composeStep == 1 && len(m.filteredContacts) > 0 {
-			popupContent := m.renderContactsPopup()
+			popupContent := m.renderContactsPopup(0)
 			lines := strings.Split(popupContent, "\n")
 			for _, line := range lines {
 				if strings.TrimSpace(line) != "" {
@@ -4701,10 +4792,16 @@ func (m mainModel) View() string {
 
 	case stateCalendar, stateCalendarDeclineConfirm:
 		s.WriteString(m.renderCalendarView())
+
+	case stateCalendarCreate, stateCalendarCreateCancelConfirm:
+		s.WriteString(m.renderCalendarCreateView())
+
+	case stateCalendarRecurrence:
+		s.WriteString(m.renderCalendarCreateView())
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4728,10 +4825,20 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [e] Edit Event | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			} else {
-				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [e] Edit Event | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			}
+		} else if m.state == stateCalendarCreate {
+			if m.eventCreateIsEditing() {
+				keysText = "  [Tab/Shift+Tab] Fields & options | [Space] Toggle/cycle option | [Ctrl+s] Save | [Ctrl+g] Editor | [Esc] Cancel"
+			} else {
+				keysText = "  [Tab/Shift+Tab] Fields & options | [Space] Toggle/cycle option | [Ctrl+s] Create | [Ctrl+g] Editor | [Esc] Cancel"
+			}
+		} else if m.state == stateCalendarCreateCancelConfirm {
+			keysText = "  [y] Yes, discard | [n/Esc] No, continue editing"
+		} else if m.state == stateCalendarRecurrence {
+			keysText = "  [Tab/Shift+Tab] Fields | [Space] Cycle pattern/range | Type interval/days/dates | [Esc] Save | [Backspace] Clear"
 		} else {
 			for _, line := range wrapKeyHints(m.mainKeyHints(), m.width, 2) {
 				s.WriteString(dimStyle.Render(line) + "\n")
@@ -5046,6 +5153,44 @@ func (m mainModel) View() string {
 			y = 0
 		}
 		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateCalendarCreateCancelConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 9
+		dropdownView := m.renderCalendarCreateCancelConfirmPopup(modalWidth)
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateCalendarRecurrence {
+		modalWidth := 56
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 18
+		dropdownView := m.renderCalendarRecurrencePopup(modalWidth)
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
 	} else if m.state == stateComposeCancelConfirm {
 		modalWidth := 60
 		if modalWidth > m.width-6 {
@@ -5163,7 +5308,68 @@ func (m mainModel) renderNotifiedEventsBox(active bool) string {
 	return applyPaneTitle(rendered, titleText, active)
 }
 
-func (m mainModel) renderContactsPopup() string {
+// renderContactsList renders a borderless contact suggestion list for inline embedding.
+func (m mainModel) renderContactsList(listWidth int) string {
+	if len(m.filteredContacts) == 0 {
+		return ""
+	}
+	if listWidth <= 0 {
+		listWidth = m.width - 26
+	}
+	if listWidth < 30 {
+		listWidth = 30
+	}
+
+	maxContacts := 5
+	if len(m.filteredContacts) < maxContacts {
+		maxContacts = len(m.filteredContacts)
+	}
+	start := m.contactsStartIdx
+	if start < 0 {
+		start = 0
+	}
+	if start > len(m.filteredContacts)-maxContacts {
+		start = len(m.filteredContacts) - maxContacts
+	}
+	end := start + maxContacts
+
+	var rows []string
+	if start > 0 {
+		rows = append(rows, dimStyle.Render(fmt.Sprintf("  … %d more above", start)))
+	}
+	for i := start; i < end; i++ {
+		contact := m.filteredContacts[i]
+		var text string
+		if contact.Name != "" {
+			text = fmt.Sprintf("%s <%s>", contact.Name, contact.Address)
+		} else {
+			text = contact.Address
+		}
+		prefix := "  "
+		if i == m.contactsSelected {
+			prefix = "› "
+		}
+		line := prefix + text
+		if lipgloss.Width(line) > listWidth {
+			// truncate visually
+			for len(text) > 3 && lipgloss.Width(prefix+text) > listWidth-1 {
+				text = text[:len(text)-1]
+			}
+			line = prefix + text + "…"
+		}
+		if i == m.contactsSelected {
+			rows = append(rows, selectedItemStyle.Render(line))
+		} else {
+			rows = append(rows, line)
+		}
+	}
+	if end < len(m.filteredContacts) {
+		rows = append(rows, dimStyle.Render(fmt.Sprintf("  … %d more below", len(m.filteredContacts)-end)))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m mainModel) renderContactsPopup(popupWidth int) string {
 	if len(m.filteredContacts) == 0 {
 		return ""
 	}
@@ -5185,7 +5391,10 @@ func (m mainModel) renderContactsPopup() string {
 	}
 	end := start + maxContacts
 
-	width := m.width - 26
+	width := popupWidth
+	if width <= 0 {
+		width = m.width - 26
+	}
 	if width < 40 {
 		width = 40
 	}
@@ -5209,10 +5418,15 @@ func (m mainModel) renderContactsPopup() string {
 		}
 
 		// pad the line to align with popup width
-		if len(line) < width {
-			line = line + strings.Repeat(" ", width-len(line))
-		} else if len(line) > width {
-			line = line[:width-3] + "..."
+		lineVis := lipgloss.Width(line)
+		if lineVis < width {
+			line = line + strings.Repeat(" ", width-lineVis)
+		} else if lineVis > width {
+			// truncate by runes until it fits
+			for len(line) > 3 && lipgloss.Width(line) > width-3 {
+				line = line[:len(line)-1]
+			}
+			line = line + "..."
 		}
 
 		if i == m.contactsSelected {
@@ -5808,6 +6022,22 @@ func (m mainModel) renderHelpContent() string {
 		"  [Esc]               Cancel composing / Close suggestions",
 	}
 
+	calendarTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR EVENT CREATION (N from calendar)")
+	calendarEditTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorCyan)).Render("CALENDAR EVENT EDIT (e from calendar)")
+	calendarLines := []string{
+		calendarTitle,
+		calendarEditTitle,
+		"",
+		"  [Tab] / [Shift+Tab] Navigate fields (Subject..Options)",
+		"  Attendees: Tab between Required and Optional rows",
+		"  [Ctrl+s] / [Ctrl+x] Create event",
+		"  [Ctrl+g]            Open body in external editor",
+		"  [s]                 Focus suggested times",
+		"  Options step: Tab/Shift+Tab between rows; Space toggles/cycles",
+		"  (all-day, Teams, show-as, reminder, recurrence); type reminder minutes",
+		"  [Esc]               Cancel (with confirm)",
+	}
+
 	// Build two column section dynamically based on width
 	if m.helpViewport.Width >= 130 {
 		maxLen := len(col1Lines)
@@ -5849,6 +6079,10 @@ func (m mainModel) renderHelpContent() string {
 
 	// Compose section
 	for _, l := range composeLines {
+		s.WriteString(l + "\n")
+	}
+	s.WriteString("\n")
+	for _, l := range calendarLines {
 		s.WriteString(l + "\n")
 	}
 

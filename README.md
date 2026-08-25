@@ -119,6 +119,9 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
   - **`"join"` (default)** — Opens the raw online meeting join URL in the browser. Note that Teams may prompt for login, since a cold-opened join link has no authenticated session context.
   - **`"owa"`** — Opens the event itself in Outlook Web (`webLink` from Graph), where your existing browser session is already authenticated and you can click "Join Teams meeting" via SSO — no login prompt. Falls back to an OWA link constructed from the event ID when `webLink` is not cached yet, and finally to the raw join URL when neither exists.
 * `events_reminder_min`: An array of integers specifying the minutes before a calendar event to send a desktop notification reminder (defaults to `[30, 15, 1]`). Only triggers desktop notifications if `use_sqlite` is set to `1` (which caches events in the SQLite database).
+* `calendar_default_duration_min`: Default meeting duration in minutes when creating a new calendar event (defaults to `60`).
+* `calendar_default_reminder_min`: Default reminder offset in minutes before a newly created event (defaults to `15`).
+* `calendar_work_start_hour` / `calendar_work_end_hour`: Hours (0–23) defining the busy-timeline window shown while creating events (defaults to `8` and `18`).
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -212,6 +215,8 @@ Press **`c`** from the main view to open the calendar popup.
 | `p`                  | Navigate to the **Previous Week** (only in Week View) |
 | `v`                  | **Toggle calendar layout** between List and Week view (persists to config) |
 | `r`                  | Refresh calendar events from the server           |
+| `N`                  | **Create a new calendar event** (opens event creation form with attendee availability) |
+| `e`                  | **Edit the selected calendar event** (opens the same form pre-filled with event details) |
 | `Ctrl+e`             | Open the unread event reminders popup             |
 | `Esc` / `q` / `c`   | Close the calendar popup                          |
 
@@ -224,6 +229,40 @@ The right-hand detail pane shows:
 - A preview of the event body
 
 > **Note**: Accept/decline/tentative actions send a response notification to the organizer by email. Only events with `responseRequested = true` can be responded to.
+
+### Creating and Editing Calendar Events
+
+Press **`N`** (capital N) from the calendar popup to open the **Create Event** form. Press **`e`** on a selected event to **edit** it in the same form (subject, required/optional attendees, times, location, body, Teams, show-as, reminder, and recurrence). **`Ctrl+s`** saves changes when editing.
+
+The form is split into two columns:
+
+- **Left**: Multi-step fields (Tab/Shift+Tab to navigate): Subject, Attendees, Start, End, Location, Body, and Options.
+- **Right**: Attendee **busy timeline** (via Graph `getSchedule`) and **suggested time slots** (via Graph `findMeetingTimes`).
+
+**Attendees step** has separate **Required** and **Optional** fields (Tab/Shift+Tab moves between them), like Outlook. Use `!room@domain.com` in either field for a resource (meeting room/equipment).
+
+When SQLite caching is enabled, contact autocomplete works in both attendee fields (same as email compose).
+
+**Options step** key bindings (Tab/Shift+Tab moves between option rows; Tab again from the last row focuses suggested times):
+
+| Key | Action |
+| --- | --- |
+| `Tab` / `Shift+Tab` | Move between option rows (all-day, Teams, show-as, reminder, reminder minutes, recurrence) |
+| `Space` | Toggle all-day, Teams, and reminder; cycle show-as (busy → free → tentative → oof → workingElsewhere); open recurrence popup on the recurrence row |
+| (type) | On **Reminder (min)**, type the number of minutes before the event |
+| `R` | Open recurrence configuration popup (from Options) |
+
+**Recurrence popup** (`R` or Space on the recurrence row): Tab/Shift+Tab between fields. Use **Space** to cycle pattern type, week-of-month index, day of week, and range type. **Type directly** into interval, days of week (`mon,wed,fri`), day of month, end date (`YYYY-MM-DD`), and occurrence count. Press `Esc` to save, `Backspace` on a non-text field to clear recurrence entirely.
+
+**Availability panel**:
+| Key | Action |
+| --- | --- |
+| `r` | Refresh availability and suggestions |
+| `s` | Focus suggested times list |
+| `Up`/`Down` | Navigate suggestions (when focused) |
+| `Enter` | Apply selected suggestion to start/end times |
+
+**Save / cancel**: `Ctrl+s` or `Ctrl+x` to create the event; `Esc` to cancel (with confirmation if content entered). `Ctrl+g` opens the body field in your external editor.
 
 ---
 

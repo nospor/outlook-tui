@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -699,7 +701,10 @@ type CalendarEvent struct {
 	ResponseStatus   struct {
 		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
 	} `json:"responseStatus"`
-	BodyPreview string `json:"bodyPreview"`
+	Body             ItemBody `json:"body"`
+	BodyPreview      string   `json:"bodyPreview"`
+	IsReminderOn     bool     `json:"isReminderOn"`
+	ReminderMinutesBeforeStart int `json:"reminderMinutesBeforeStart"`
 }
 
 // CalendarDateTime holds an ISO-8601 datetime string and its timezone.
@@ -710,12 +715,7 @@ type CalendarDateTime struct {
 
 // Time returns the CalendarDateTime parsed as a time.Time in UTC.
 func (cdt CalendarDateTime) Time() time.Time {
-	loc := time.UTC
-	if cdt.TimeZone != "" {
-		if l, err := time.LoadLocation(cdt.TimeZone); err == nil {
-			loc = l
-		}
-	}
+	loc := graphTimeZoneLocation(cdt.TimeZone)
 	formats := []string{
 		"2006-01-02T15:04:05.9999999",
 		"2006-01-02T15:04:05",
@@ -727,6 +727,36 @@ func (cdt CalendarDateTime) Time() time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// windowsTimeZoneToIANA maps common Microsoft Graph Windows timezone names to IANA IDs.
+var windowsTimeZoneToIANA = map[string]string{
+	"GMT Standard Time":              "Europe/London",
+	"Greenwich Standard Time":        "Etc/GMT",
+	"W. Europe Standard Time":        "Europe/Berlin",
+	"Central European Standard Time": "Europe/Budapest",
+	"Romance Standard Time":          "Europe/Paris",
+	"Eastern Standard Time":          "America/New_York",
+	"Central Standard Time":          "America/Chicago",
+	"Mountain Standard Time":         "America/Denver",
+	"Pacific Standard Time":          "America/Los_Angeles",
+}
+
+func graphTimeZoneLocation(tz string) *time.Location {
+	if tz != "" {
+		if loc, err := time.LoadLocation(tz); err == nil {
+			return loc
+		}
+		if iana, ok := windowsTimeZoneToIANA[tz]; ok {
+			if loc, err := time.LoadLocation(iana); err == nil {
+				return loc
+			}
+		}
+	}
+	if loc, err := time.LoadLocation(localTimeZone()); err == nil {
+		return loc
+	}
+	return time.UTC
 }
 
 // ─── Calendar API Methods ─────────────────────────────────────────────────────
@@ -816,3 +846,741 @@ func (gc *GraphClient) RespondToCalendarEvent(eventID string, response EventResp
 	return nil
 }
 
+// ─── Calendar Event Creation Types ───────────────────────────────────────────
+
+// ParsedAttendee holds a parsed attendee email and Graph attendee type.
+type ParsedAttendee struct {
+	Address string
+	Type    string // required, optional, resource
+}
+
+// ParseAttendeeList parses a comma-separated attendee string.
+// Prefix ? marks optional, ! marks resource; default is required.
+func ParseAttendeeList(s string) []ParsedAttendee {
+	var out []ParsedAttendee
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		attType := "required"
+		if strings.HasPrefix(part, "?") {
+			attType = "optional"
+			part = strings.TrimSpace(part[1:])
+		} else if strings.HasPrefix(part, "!") {
+			attType = "resource"
+			part = strings.TrimSpace(part[1:])
+		}
+		addr := part
+		if strings.Contains(part, "<") && strings.Contains(part, ">") {
+			start := strings.Index(part, "<")
+			end := strings.Index(part, ">")
+			if start < end {
+				addr = strings.TrimSpace(part[start+1 : end])
+			}
+		}
+		if addr != "" {
+			out = append(out, ParsedAttendee{Address: addr, Type: attType})
+		}
+	}
+	return out
+}
+
+// ParseAttendeeField parses comma-separated addresses using defaultType unless ! marks a resource.
+func ParseAttendeeField(s string, defaultType string) []ParsedAttendee {
+	var out []ParsedAttendee
+	for _, a := range ParseAttendeeList(s) {
+		if a.Type == "resource" {
+			out = append(out, a)
+		} else {
+			out = append(out, ParsedAttendee{Address: a.Address, Type: defaultType})
+		}
+	}
+	return out
+}
+
+// IsValidAttendeeEmail reports whether s looks like a complete email address.
+func IsValidAttendeeEmail(s string) bool {
+	s = strings.TrimSpace(s)
+	at := strings.LastIndex(s, "@")
+	return at > 0 && at < len(s)-1
+}
+
+// FilterValidAttendees returns only attendees with plausible email addresses.
+func FilterValidAttendees(attendees []ParsedAttendee) []ParsedAttendee {
+	var out []ParsedAttendee
+	for _, a := range attendees {
+		if IsValidAttendeeEmail(a.Address) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// RecurrenceSettings holds user-configured recurrence for event creation.
+type RecurrenceSettings struct {
+	Enabled       bool
+	PatternType   string   // daily, weekly, absoluteMonthly, relativeMonthly, absoluteYearly, relativeYearly
+	Interval      int
+	DaysOfWeek    []string // monday..sunday for weekly
+	DayOfMonth    int      // 1-31 for absoluteMonthly/absoluteYearly
+	Index         string   // first, second, third, fourth, last for relative*
+	DayOfWeek     string   // monday..sunday for relative*
+	RangeType     string   // noEnd, endDate, numbered
+	StartDate     string   // YYYY-MM-DD
+	EndDate       string   // YYYY-MM-DD for endDate range
+	NumberedCount int      // for numbered range
+}
+
+// BuildRecurrencePattern converts RecurrenceSettings to Graph patternedRecurrence JSON.
+func BuildRecurrencePattern(r RecurrenceSettings) map[string]interface{} {
+	if !r.Enabled {
+		return nil
+	}
+	interval := r.Interval
+	if interval <= 0 {
+		interval = 1
+	}
+	pattern := map[string]interface{}{
+		"type":     r.PatternType,
+		"interval": interval,
+	}
+	switch r.PatternType {
+	case "weekly":
+		if len(r.DaysOfWeek) > 0 {
+			pattern["daysOfWeek"] = r.DaysOfWeek
+		} else {
+			pattern["daysOfWeek"] = []string{"monday"}
+		}
+	case "absoluteMonthly":
+		day := r.DayOfMonth
+		if day <= 0 {
+			day = 1
+		}
+		pattern["dayOfMonth"] = day
+	case "relativeMonthly", "relativeYearly":
+		idx := r.Index
+		if idx == "" {
+			idx = "first"
+		}
+		dow := r.DayOfWeek
+		if dow == "" {
+			dow = "monday"
+		}
+		pattern["index"] = idx
+		pattern["daysOfWeek"] = []string{dow}
+		if r.PatternType == "relativeYearly" {
+			month := 1
+			if r.DayOfMonth > 0 && r.DayOfMonth <= 12 {
+				month = r.DayOfMonth
+			}
+			pattern["month"] = month
+		}
+	case "absoluteYearly":
+		day := r.DayOfMonth
+		if day <= 0 {
+			day = 1
+		}
+		pattern["dayOfMonth"] = day
+		month := 1
+		if r.Interval > 0 && r.Interval <= 12 {
+			month = r.Interval
+		}
+		pattern["month"] = month
+	}
+	rangeType := r.RangeType
+	if rangeType == "" {
+		rangeType = "noEnd"
+	}
+	recRange := map[string]interface{}{
+		"type":      rangeType,
+		"startDate": r.StartDate,
+	}
+	switch rangeType {
+	case "endDate":
+		recRange["endDate"] = r.EndDate
+	case "numbered":
+		count := r.NumberedCount
+		if count <= 0 {
+			count = 10
+		}
+		recRange["numberOfOccurrences"] = count
+	}
+	return map[string]interface{}{
+		"pattern": pattern,
+		"range":   recRange,
+	}
+}
+
+// RecurrencePreview returns a human-readable recurrence summary.
+func RecurrencePreview(r RecurrenceSettings) string {
+	if !r.Enabled {
+		return "None"
+	}
+	interval := r.Interval
+	if interval <= 0 {
+		interval = 1
+	}
+	var base string
+	switch r.PatternType {
+	case "daily":
+		if interval == 1 {
+			base = "Every day"
+		} else {
+			base = fmt.Sprintf("Every %d days", interval)
+		}
+	case "weekly":
+		days := strings.Join(r.DaysOfWeek, ", ")
+		if days == "" {
+			days = "monday"
+		}
+		if interval == 1 {
+			base = fmt.Sprintf("Every week on %s", days)
+		} else {
+			base = fmt.Sprintf("Every %d weeks on %s", interval, days)
+		}
+	case "absoluteMonthly":
+		day := r.DayOfMonth
+		if day <= 0 {
+			day = 1
+		}
+		base = fmt.Sprintf("Monthly on day %d", day)
+	case "relativeMonthly":
+		idx, dow := r.Index, r.DayOfWeek
+		if idx == "" {
+			idx = "first"
+		}
+		if dow == "" {
+			dow = "monday"
+		}
+		base = fmt.Sprintf("Monthly on the %s %s", idx, dow)
+	case "absoluteYearly":
+		base = "Yearly"
+	case "relativeYearly":
+		idx, dow := r.Index, r.DayOfWeek
+		if idx == "" {
+			idx = "first"
+		}
+		if dow == "" {
+			dow = "monday"
+		}
+		base = fmt.Sprintf("Yearly on the %s %s", idx, dow)
+	default:
+		base = r.PatternType
+	}
+	switch r.RangeType {
+	case "endDate":
+		return base + " until " + r.EndDate
+	case "numbered":
+		return fmt.Sprintf("%s, %d times", base, r.NumberedCount)
+	}
+	return base
+}
+
+// CreateEventRequest holds all fields for creating a calendar event.
+type CreateEventRequest struct {
+	Subject               string
+	Body                  string
+	Start                 time.Time
+	End                   time.Time
+	Location              string
+	Attendees             []ParsedAttendee
+	IsAllDay              bool
+	ShowAs                string
+	IsOnlineMeeting       bool
+	IsReminderOn          bool
+	ReminderMinutesBefore int
+	Recurrence            RecurrenceSettings
+}
+
+func localTimeZone() string {
+	// Graph requires IANA (e.g. "Europe/London") or Windows names — not abbreviations like "BST".
+	if tz := os.Getenv("TZ"); tz != "" {
+		tz = strings.TrimPrefix(tz, ":")
+		if tz != "" && tz != "Local" {
+			return tz
+		}
+	}
+	if data, err := os.ReadFile("/etc/timezone"); err == nil {
+		if tz := strings.TrimSpace(string(data)); tz != "" {
+			return tz
+		}
+	}
+	if link, err := os.Readlink("/etc/localtime"); err == nil {
+		if tz := ianaFromZoneinfoPath(link); tz != "" {
+			return tz
+		}
+	}
+	if name := time.Now().Location().String(); name != "" && name != "Local" {
+		return name
+	}
+	return "UTC"
+}
+
+func ianaFromZoneinfoPath(path string) string {
+	const marker = "zoneinfo/"
+	if idx := strings.Index(path, marker); idx >= 0 {
+		return path[idx+len(marker):]
+	}
+	const prefix = "/usr/share/zoneinfo/"
+	if strings.HasPrefix(path, prefix) {
+		return strings.TrimPrefix(path, prefix)
+	}
+	return ""
+}
+
+func toGraphDateTime(t time.Time) CalendarDateTime {
+	local := t.In(time.Local)
+	return CalendarDateTime{
+		DateTime: local.Format("2006-01-02T15:04:05"),
+		TimeZone: localTimeZone(),
+	}
+}
+
+func buildCalendarEventPayload(req CreateEventRequest) map[string]interface{} {
+	body := map[string]interface{}{
+		"subject": req.Subject,
+		"body": map[string]string{
+			"contentType": "Text",
+			"content":     req.Body,
+		},
+		"start":    toGraphDateTime(req.Start),
+		"end":      toGraphDateTime(req.End),
+		"isAllDay": req.IsAllDay,
+	}
+	if req.Location != "" {
+		body["location"] = map[string]string{"displayName": req.Location}
+	}
+	showAs := req.ShowAs
+	if showAs == "" {
+		showAs = "busy"
+	}
+	body["showAs"] = showAs
+	if req.IsReminderOn {
+		body["isReminderOn"] = true
+		mins := req.ReminderMinutesBefore
+		if mins <= 0 {
+			mins = 15
+		}
+		body["reminderMinutesBeforeStart"] = mins
+	} else {
+		body["isReminderOn"] = false
+	}
+	if req.IsOnlineMeeting {
+		body["isOnlineMeeting"] = true
+		body["onlineMeetingProvider"] = "teamsForBusiness"
+	} else {
+		body["isOnlineMeeting"] = false
+	}
+	if len(req.Attendees) > 0 {
+		var atts []map[string]interface{}
+		for _, a := range req.Attendees {
+			attType := a.Type
+			if attType == "" {
+				attType = "required"
+			}
+			atts = append(atts, map[string]interface{}{
+				"emailAddress": map[string]string{"address": a.Address},
+				"type":         attType,
+			})
+		}
+		body["attendees"] = atts
+	}
+	if rec := BuildRecurrencePattern(req.Recurrence); rec != nil {
+		body["recurrence"] = rec
+	}
+	return body
+}
+
+// GetCalendarEvent fetches a single event with fields needed for editing.
+func (gc *GraphClient) GetCalendarEvent(eventID string) (*CalendarEvent, error) {
+	reqURL := fmt.Sprintf(
+		"%s/me/events/%s?$select=id,subject,body,bodyPreview,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,onlineMeeting,showAs,isReminderOn,reminderMinutesBeforeStart,responseRequested,responseStatus,webLink",
+		graphBaseURL, url.PathEscape(eventID),
+	)
+	resp, err := gc.client.Get(reqURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get event: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var ev CalendarEvent
+	if err := json.NewDecoder(resp.Body).Decode(&ev); err != nil {
+		return nil, err
+	}
+	return &ev, nil
+}
+
+// CreateCalendarEvent creates a new calendar event via POST /me/events.
+func (gc *GraphClient) CreateCalendarEvent(req CreateEventRequest) (*CalendarEvent, error) {
+	body := buildCalendarEventPayload(req)
+	if !req.IsReminderOn {
+		delete(body, "isReminderOn")
+	}
+	if !req.IsOnlineMeeting {
+		delete(body, "isOnlineMeeting")
+	}
+	if len(req.Attendees) == 0 {
+		delete(body, "attendees")
+	}
+
+	jsonBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := fmt.Sprintf("%s/me/events", graphBaseURL)
+	httpReq, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Prefer", fmt.Sprintf(`outlook.timezone="%s"`, localTimeZone()))
+
+	resp, err := gc.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to create event: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var ev CalendarEvent
+	if err := json.NewDecoder(resp.Body).Decode(&ev); err != nil {
+		return nil, err
+	}
+	return &ev, nil
+}
+
+// UpdateCalendarEvent updates an existing calendar event via PATCH /me/events/{id}.
+func (gc *GraphClient) UpdateCalendarEvent(eventID string, req CreateEventRequest) (*CalendarEvent, error) {
+	body := buildCalendarEventPayload(req)
+	if len(req.Attendees) == 0 {
+		body["attendees"] = []map[string]interface{}{}
+	}
+	jsonBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/me/events/%s", graphBaseURL, url.PathEscape(eventID))
+	httpReq, err := http.NewRequest(http.MethodPatch, reqURL, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Prefer", fmt.Sprintf(`outlook.timezone="%s"`, localTimeZone()))
+
+	resp, err := gc.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to update event: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var ev CalendarEvent
+	if err := json.NewDecoder(resp.Body).Decode(&ev); err != nil {
+		return nil, err
+	}
+	return &ev, nil
+}
+
+// ScheduleInformation holds free/busy data for one mailbox from getSchedule.
+type ScheduleInformation struct {
+	ScheduleID       string `json:"scheduleId"`
+	AvailabilityView string `json:"availabilityView"`
+	WorkingHours     *struct {
+		StartTime string `json:"startTime"`
+		EndTime   string `json:"endTime"`
+	} `json:"workingHours"`
+}
+
+// GetAttendeeSchedule fetches free/busy via POST /me/calendar/getSchedule.
+func (gc *GraphClient) GetAttendeeSchedule(schedules []string, start, end time.Time, intervalMin int) ([]ScheduleInformation, error) {
+	if len(schedules) == 0 {
+		return nil, nil
+	}
+	if intervalMin <= 0 {
+		intervalMin = 30
+	}
+	reqBody := map[string]interface{}{
+		"schedules":                schedules,
+		"startTime":                toGraphDateTime(start),
+		"endTime":                  toGraphDateTime(end),
+		"availabilityViewInterval": intervalMin,
+	}
+	jsonBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := fmt.Sprintf("%s/me/calendar/getSchedule", graphBaseURL)
+	httpReq, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Prefer", fmt.Sprintf(`outlook.timezone="%s"`, localTimeZone()))
+
+	resp, err := gc.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get schedule: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Value []ScheduleInformation `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result.Value, nil
+}
+
+// MeetingTimeSuggestion is one suggested meeting slot from findMeetingTimes.
+type MeetingTimeSuggestion struct {
+	Confidence float64
+	Start      time.Time
+	End        time.Time
+	Reason     string
+}
+
+// MeetingTimeSuggestionsResult holds findMeetingTimes output.
+type MeetingTimeSuggestionsResult struct {
+	Suggestions            []MeetingTimeSuggestion
+	EmptySuggestionsReason string
+}
+
+// FindMeetingTimesRequest holds parameters for findMeetingTimes.
+type FindMeetingTimesRequest struct {
+	Attendees      []ParsedAttendee
+	Duration       time.Duration
+	SearchStart    time.Time
+	SearchEnd      time.Time
+	ActivityDomain string
+}
+
+// FindMeetingTimes suggests meeting times via POST /me/findMeetingTimes.
+func (gc *GraphClient) FindMeetingTimes(req FindMeetingTimesRequest) (*MeetingTimeSuggestionsResult, error) {
+	domain := req.ActivityDomain
+	if domain == "" {
+		domain = "work"
+	}
+	durMins := int(req.Duration.Minutes())
+	if durMins <= 0 {
+		durMins = 60
+	}
+	durationISO := fmt.Sprintf("PT%dM", durMins)
+
+	var attendees []map[string]interface{}
+	for _, a := range req.Attendees {
+		attendees = append(attendees, map[string]interface{}{
+			"type":         a.Type,
+			"emailAddress": map[string]string{"address": a.Address},
+		})
+	}
+
+	reqBody := map[string]interface{}{
+		"attendees": attendees,
+		"timeConstraint": map[string]interface{}{
+			"activityDomain": domain,
+			"timeSlots": []map[string]interface{}{
+				{
+					"start": toGraphDateTime(req.SearchStart),
+					"end":   toGraphDateTime(req.SearchEnd),
+				},
+			},
+		},
+		"meetingDuration":         durationISO,
+		"returnSuggestionReasons": true,
+	}
+
+	jsonBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := fmt.Sprintf("%s/me/findMeetingTimes", graphBaseURL)
+	httpReq, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Prefer", fmt.Sprintf(`outlook.timezone="%s"`, localTimeZone()))
+
+	resp, err := gc.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to find meeting times: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var raw struct {
+		EmptySuggestionsReason string `json:"emptySuggestionsReason"`
+		MeetingTimeSuggestions []struct {
+			Confidence      float64 `json:"confidence"`
+			MeetingTimeSlot struct {
+				Start CalendarDateTime `json:"start"`
+				End   CalendarDateTime `json:"end"`
+			} `json:"meetingTimeSlot"`
+			SuggestionReason string `json:"suggestionReason"`
+		} `json:"meetingTimeSuggestions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+
+	out := &MeetingTimeSuggestionsResult{
+		EmptySuggestionsReason: raw.EmptySuggestionsReason,
+	}
+	for _, s := range raw.MeetingTimeSuggestions {
+		out.Suggestions = append(out.Suggestions, MeetingTimeSuggestion{
+			Confidence: s.Confidence,
+			Start:      s.MeetingTimeSlot.Start.Time(),
+			End:        s.MeetingTimeSlot.End.Time(),
+			Reason:     s.SuggestionReason,
+		})
+	}
+	return out, nil
+}
+
+// filterAndSortMeetingSuggestions drops past slots and prefers the event day.
+func filterAndSortMeetingSuggestions(suggestions []MeetingTimeSuggestion, preferDay, now time.Time) []MeetingTimeSuggestion {
+	now = now.In(time.Local)
+	py, pm, pd := preferDay.In(time.Local).Date()
+	filtered := make([]MeetingTimeSuggestion, 0, len(suggestions))
+	for _, s := range suggestions {
+		if s.Start.Local().Before(now) {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		si := filtered[i].Start.Local()
+		sj := filtered[j].Start.Local()
+		yi, mi, di := si.Date()
+		yj, mj, dj := sj.Date()
+		sameI := yi == py && mi == pm && di == pd
+		sameJ := yj == py && mj == pm && dj == pd
+		if sameI != sameJ {
+			return sameI
+		}
+		return si.Before(sj)
+	})
+	return filtered
+}
+
+// formatMeetingConfidence formats Graph findMeetingTimes confidence (0–1 or 0–100).
+func formatMeetingConfidence(c float64) string {
+	if c > 1 {
+		return fmt.Sprintf("%.0f%%", c)
+	}
+	return fmt.Sprintf("%.0f%%", c*100)
+}
+
+// AvailabilitySlotStatus maps getSchedule availabilityView digit to a label.
+func AvailabilitySlotStatus(code byte) string {
+	switch code {
+	case '0':
+		return "free"
+	case '1':
+		return "tentative"
+	case '2':
+		return "busy"
+	case '3':
+		return "oof"
+	case '4':
+		return "workingElsewhere"
+	default:
+		return "unknown"
+	}
+}
+
+// AvailabilitySymbol returns a single-char symbol for timeline rendering.
+func AvailabilitySymbol(code byte) string {
+	switch code {
+	case '0':
+		return "░"
+	case '1':
+		return "▒"
+	case '2':
+		return "█"
+	case '3':
+		return "▓"
+	case '4':
+		return "▒"
+	default:
+		return "?"
+	}
+}
+
+// CountScheduleConflicts counts attendees busy/OOF during the proposed window.
+// scheduleQueryStart is when availabilityView slot 0 begins (the getSchedule request start).
+func CountScheduleConflicts(schedules []ScheduleInformation, scheduleQueryStart, windowStart, windowEnd time.Time, intervalMin int) int {
+	if intervalMin <= 0 {
+		intervalMin = 30
+	}
+	slotDur := time.Duration(intervalMin) * time.Minute
+	conflicts := 0
+	for _, sch := range schedules {
+		if sch.AvailabilityView == "" {
+			continue
+		}
+		hasConflict := false
+		for i := 0; i < len(sch.AvailabilityView); i++ {
+			slotStart := scheduleQueryStart.Add(time.Duration(i) * slotDur)
+			slotEnd := slotStart.Add(slotDur)
+			if !slotEnd.After(windowStart) || !slotStart.Before(windowEnd) {
+				continue
+			}
+			code := sch.AvailabilityView[i]
+			if code == '2' || code == '3' {
+				hasConflict = true
+				break
+			}
+		}
+		if hasConflict {
+			conflicts++
+		}
+	}
+	return conflicts
+}
+
+// ParseEventDateTime parses "YYYY-MM-DD HH:MM" in local timezone.
+func ParseEventDateTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	formats := []string{
+		"2006-01-02 15:04",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+	}
+	for _, f := range formats {
+		if t, err := time.ParseInLocation(f, s, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid date/time: %q (use YYYY-MM-DD HH:MM)", s)
+}
+
+// FormatEventDateTime formats a time for the create-event form.
+func FormatEventDateTime(t time.Time) string {
+	return t.In(time.Local).Format("2006-01-02 15:04")
+}

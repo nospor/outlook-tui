@@ -742,7 +742,7 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	if m.contactsStartIdx != 0 {
 		t.Errorf("expected contactsStartIdx to be 0 initially, got %d", m.contactsStartIdx)
 	}
-	popupInit := m.renderContactsPopup()
+	popupInit := m.renderContactsPopup(0)
 	if !strings.Contains(popupInit, "C1") || !strings.Contains(popupInit, "C5") {
 		t.Errorf("expected initially to contain C1 and C5, got: %q", popupInit)
 	}
@@ -775,7 +775,7 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	if curr.contactsStartIdx != 1 {
 		t.Errorf("expected contactsStartIdx to scroll to 1, got %d", curr.contactsStartIdx)
 	}
-	popupScroll := curr.renderContactsPopup()
+	popupScroll := curr.renderContactsPopup(0)
 	if strings.Contains(popupScroll, "C1") {
 		t.Errorf("expected C1 to be scrolled out, got: %q", popupScroll)
 	}
@@ -803,7 +803,7 @@ func TestComposeContactSuggestionsScrolling(t *testing.T) {
 	if curr.contactsStartIdx != 3 {
 		t.Errorf("expected contactsStartIdx to scroll to 3, got %d", curr.contactsStartIdx)
 	}
-	popupEnd := curr.renderContactsPopup()
+	popupEnd := curr.renderContactsPopup(0)
 	if strings.Contains(popupEnd, "C3") {
 		t.Errorf("expected C3 to be scrolled out, got: %q", popupEnd)
 	}
