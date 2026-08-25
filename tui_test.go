@@ -2073,3 +2073,117 @@ func TestFocusReportingAndReadMarking(t *testing.T) {
 		t.Error("expected fetch message detail command to mark read because app is focused")
 	}
 }
+
+func hintsContain(hints []string, want string) bool {
+	for _, h := range hints {
+		if h == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMainKeyHintsFoldersPane(t *testing.T) {
+	base := mainModel{
+		activePane: paneFolders,
+		folders: []MailFolder{
+			{ID: "junk", DisplayName: "Junk Email"},
+			{ID: "inbox", DisplayName: "Inbox"},
+			{ID: "favorites", DisplayName: "Favorites"},
+		},
+		config: Config{ProtectedFolders: []string{"Inbox", "Sent Items"}},
+	}
+
+	m := base
+	m.selectedFolder = 0
+	hints := m.mainKeyHints()
+	if !hintsContain(hints, "[E] Empty") {
+		t.Errorf("expected [E] Empty for non-protected folder, got %v", hints)
+	}
+	if hintsContain(hints, "[Space] Thread") {
+		t.Errorf("did not expect [Space] Thread in folders pane, got %v", hints)
+	}
+
+	m.selectedFolder = 1
+	hints = m.mainKeyHints()
+	if hintsContain(hints, "[E] Empty") {
+		t.Errorf("did not expect [E] Empty for protected Inbox, got %v", hints)
+	}
+
+	m.selectedFolder = 2
+	hints = m.mainKeyHints()
+	if hintsContain(hints, "[E] Empty") {
+		t.Errorf("did not expect [E] Empty for Favorites folder, got %v", hints)
+	}
+}
+
+func TestMainKeyHintsDetailPane(t *testing.T) {
+	m := mainModel{
+		activePane: paneDetail,
+		config:     Config{CalendarEnabled: true},
+	}
+	hints := m.mainKeyHints()
+	if !hintsContain(hints, "[j/k/↑/↓] Scroll") {
+		t.Errorf("expected scroll hint in detail pane, got %v", hints)
+	}
+	if !hintsContain(hints, "[PgUp/Dn] Half Page") {
+		t.Errorf("expected page scroll hint in detail pane, got %v", hints)
+	}
+	if hintsContain(hints, "[Space] Thread") {
+		t.Errorf("did not expect [Space] Thread in detail pane, got %v", hints)
+	}
+	if len(hints) < 2 || hints[len(hints)-2] != "[?] Help" || hints[len(hints)-1] != "[q] Quit" {
+		t.Errorf("expected [?] Help and [q] Quit as last hints, got %v", hints)
+	}
+}
+
+func TestMainKeyHintsMessageActions(t *testing.T) {
+	msg := Message{ID: "msg-1", Subject: "Hello"}
+	m := mainModel{
+		activePane: paneMessages,
+		folders: []MailFolder{
+			{ID: "deleted", DisplayName: "Deleted Items", WellKnownName: "deleteditems"},
+		},
+		selectedFolder: 0,
+		virtualList:    []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}},
+		virtualSelected: 0,
+		threadGroups: []ThreadGroup{
+			{ConversationID: "conv-1", Members: []Message{msg}},
+		},
+		attachments: []Attachment{{ID: "att-1", Name: "file.pdf"}},
+	}
+
+	hints := m.mainKeyHints()
+	for _, want := range []string{"[A] Reply", "[d] Delete", "[U] Undelete", "[a] Attach"} {
+		if !hintsContain(hints, want) {
+			t.Errorf("expected %q in hints, got %v", want, hints)
+		}
+	}
+}
+
+func TestWrapKeyHintsTwoLines(t *testing.T) {
+	hints := []string{
+		"[Tab] Pane",
+		"[n] Compose",
+		"[A] Reply",
+		"[d] Delete",
+		"[f] Fav",
+		"[?] Help",
+		"[q] Quit",
+	}
+	lines := wrapKeyHints(hints, 50, 2)
+	if len(lines) == 0 || len(lines) > 2 {
+		t.Fatalf("expected 1-2 lines, got %d: %v", len(lines), lines)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > 50 {
+			t.Errorf("line exceeds max width 50 (width=%d): %q", lipgloss.Width(line), line)
+		}
+	}
+	combined := strings.Join(lines, "\n")
+	for _, hint := range hints[:3] {
+		if !strings.Contains(combined, hint) {
+			t.Errorf("expected early hints to be preserved, missing %q in %q", hint, combined)
+		}
+	}
+}

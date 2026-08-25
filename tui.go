@@ -37,6 +37,12 @@ const (
 	paneDetail
 )
 
+// mainViewFooterLines is the number of footer lines in the main view (2 keybind + 1 status).
+const mainViewFooterLines = 3
+
+// mainViewChromeLines is the total non-pane vertical budget (title, spacing, borders, footer).
+const mainViewChromeLines = 7 + mainViewFooterLines
+
 type appState int
 
 const (
@@ -4323,9 +4329,9 @@ func (m mainModel) updateViewportSizeLayout1() mainModel {
 	//   Height(n) with Border             → outer = n+2  (Height is inner content)
 	//   fView outer=25, mView outer=35 → dView outer must = m.width-60 → Width = m.width-62
 	//   Content area inside padding = Width - 2 = m.width-64 (viewport width)
-	// View() line budget: 1 (title) + 2 (\n\n) + paneHeight+2 (borders) + 1 (trailing \n) + 1 (\n before footer) + 2 (footer status + keys) = paneHeight+9
-	// So paneHeight = m.height - 9.
-	paneHeight := m.height - 9 // inner content; outer = paneHeight+2 (border top+bottom)
+	// View() line budget: 1 (title) + 2 (\n\n) + paneHeight+2 (borders) + 1 (trailing \n) + 1 (\n before footer) + 3 (footer keys x2 + status) = paneHeight+10
+	// So paneHeight = m.height - mainViewChromeLines.
+	paneHeight := m.height - mainViewChromeLines // inner content; outer = paneHeight+2 (border top+bottom)
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -4358,8 +4364,8 @@ func (m mainModel) updateViewportSizeLayout2() mainModel {
 	//
 	// Left column: leftColInner=46 → leftColOuter=50 (inner + 2 padding + 2 border)
 	// Right detail pane content width = m.width - leftColOuter - 4 (its own pad+border) = m.width - 54
-	// Same budget as Layout1: paneHeight+9 total lines → totalHeight = m.height - 9.
-	totalHeight := m.height - 9
+	// Same budget as Layout1: paneHeight+10 total lines → totalHeight = m.height - mainViewChromeLines.
+	totalHeight := m.height - mainViewChromeLines
 	if totalHeight < 10 {
 		totalHeight = 10
 	}
@@ -4727,17 +4733,13 @@ func (m mainModel) View() string {
 				keysText = "  [Esc/q/c] Close | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
 			}
 		} else {
-			if m.width >= 160 {
-				keysText = "  [Tab] Switch Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [m] Move | [r] Reload | [M] More | [R] Read | [f] Favorite | [a] Attach | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
-			} else if m.width >= 130 {
-				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [A] Reply | [d] Delete | [U] Undelete | [m] Move | [r] Reload | [M] More | [R] Read | [f] Fav | [y] Yank | [o] Open TUI | [?] Help | [q] Quit"
-			} else if m.width >= 95 {
-				keysText = "  [Tab] Pane | [Space] Thread | [n] Compose | [d] Delete | [m] Move | [f] Fav | [r] Reload | [M] More | [?] Help | [q] Quit"
-			} else {
-				keysText = "  [Tab] Pane | [Space] Thread | [d] Del | [f] Fav | [?] Help | [q] Quit"
+			for _, line := range wrapKeyHints(m.mainKeyHints(), m.width, 2) {
+				s.WriteString(dimStyle.Render(line) + "\n")
 			}
 		}
-		s.WriteString(dimStyle.Render(keysText) + "\n")
+		if m.state != stateMain {
+			s.WriteString(dimStyle.Render(keysText) + "\n")
+		}
 		s.WriteString(m.renderStatusBar(m.statusMsg, true))
 	} else if m.state != stateDeviceAuth && m.state != stateLoading {
 		if m.statusMsg != "" {
@@ -5273,7 +5275,7 @@ func (m mainModel) renderFilePickerPopup(w, h int) string {
 //
 //	[Folders | Messages | Detail]
 func (m mainModel) renderLayout1() string {
-	paneHeight := m.height - 9
+	paneHeight := m.height - mainViewChromeLines
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
@@ -5323,7 +5325,7 @@ func (m mainModel) renderLayout1() string {
 // Left column inner width = 46 → outer = 50 (2 padding + 2 border on each side).
 // Right column inner width = m.width - 54.
 func (m mainModel) renderLayout2() string {
-	totalHeight := m.height - 9
+	totalHeight := m.height - mainViewChromeLines
 	if totalHeight < 10 {
 		totalHeight = 10
 	}
@@ -9604,6 +9606,121 @@ func convertInlineStylesToANSI(htmlContent string) string {
 	}
 
 	return result.String()
+}
+
+// mainKeyHints returns ordered keybind hint fragments for the main view footer.
+func (m mainModel) mainKeyHints() []string {
+	hints := []string{"[Tab] Pane"}
+
+	switch m.activePane {
+	case paneFolders:
+		hints = append(hints,
+			"[j/k/↑/↓] Folder",
+			"[J/K] Messages",
+			"[r] Reload",
+			"[M] More",
+		)
+		if len(m.folders) > 0 {
+			f := m.folders[m.selectedFolder]
+			protected := m.config.ProtectedFolders
+			if protected == nil {
+				protected = []string{"Inbox", "Sent Items"}
+			}
+			if !isProtectedFolder(f, protected) {
+				hints = append(hints, "[E] Empty")
+			}
+		}
+	case paneMessages:
+		hints = append(hints,
+			"[j/k/↑/↓] Select",
+			"[Space] Thread",
+			"[r] Reload",
+			"[M] More",
+		)
+	case paneDetail:
+		hints = append(hints,
+			"[j/k/↑/↓] Scroll",
+			"[PgUp/Dn] Half Page",
+		)
+	}
+
+	if m.activeMessage() != nil {
+		hints = append(hints,
+			"[A] Reply",
+			"[d] Delete",
+			"[D] Thread",
+			"[f] Fav",
+			"[m] Move",
+			"[R] Read",
+			"[y] Yank",
+			"[o] Open TUI",
+			"[Ctrl+g] Editor",
+		)
+		if m.isInDeletedItems() {
+			hints = append(hints, "[U] Undelete")
+		}
+		if len(m.attachments) > 0 {
+			hints = append(hints, "[a] Attach")
+		}
+	}
+
+	hints = append(hints, "[n] Compose")
+	if m.config.CalendarEnabled {
+		hints = append(hints, "[c] Calendar")
+	}
+	hints = append(hints, "[?] Help", "[q] Quit")
+
+	return hints
+}
+
+// wrapKeyHints packs hint fragments into up to maxLines lines within maxWidth.
+func wrapKeyHints(hints []string, maxWidth int, maxLines int) []string {
+	if len(hints) == 0 || maxLines <= 0 {
+		return nil
+	}
+
+	const prefix = "  "
+	const sep = " | "
+
+	var lines []string
+	var current strings.Builder
+
+	for _, hint := range hints {
+		if len(lines) >= maxLines {
+			break
+		}
+
+		candidate := hint
+		if current.Len() > 0 {
+			candidate = sep + hint
+		}
+
+		testLine := prefix + current.String() + candidate
+		if lipgloss.Width(testLine) > maxWidth {
+			if current.Len() > 0 {
+				lines = append(lines, prefix+current.String())
+				current.Reset()
+				if len(lines) >= maxLines {
+					break
+				}
+				candidate = hint
+				testLine = prefix + candidate
+				if lipgloss.Width(testLine) > maxWidth {
+					continue
+				}
+			} else {
+				continue
+			}
+		}
+
+		current.WriteString(candidate)
+	}
+
+	if current.Len() > 0 && len(lines) < maxLines {
+		lines = append(lines, prefix+current.String())
+	}
+
+	return lines
 }
 
 func (m mainModel) renderStatusBar(text string, includePrefix bool) string {
