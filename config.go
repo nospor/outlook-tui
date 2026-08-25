@@ -14,7 +14,8 @@ type Config struct {
 	RefreshTimeMin  int      `json:"refresh_time_min"` // defaults to 5
 	Layout          int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
 	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
-	ExcludedFolders []string `json:"excluded_folders"`
+	ExcludedFolders  []string `json:"excluded_folders"`
+	ProtectedFolders []string `json:"protected_folders"` // folders blocked from "empty folder" (E); defaults to Inbox and Sent Items
 	ScrollLines     int      `json:"scroll_lines"` // defaults to 1
 	ImageViewer     string   `json:"image_viewer"`
 	AttachmentDir   string   `json:"attachment_dir"`
@@ -67,6 +68,7 @@ func LoadConfig() (Config, error) {
 			CalendarView:      "list",
 			CalendarOpenMode:  "join",
 			EventsReminderMin: []int{30, 15, 1},
+			ProtectedFolders:  []string{"Inbox", "Sent Items"},
 		}
 		_ = SaveConfig(cfg)
 		return cfg, nil
@@ -89,6 +91,10 @@ func LoadConfig() (Config, error) {
 
 	if cfg.EventsReminderMin == nil {
 		cfg.EventsReminderMin = []int{30, 15, 1}
+	}
+
+	if cfg.ProtectedFolders == nil {
+		cfg.ProtectedFolders = []string{"Inbox", "Sent Items"}
 	}
 
 	if cfg.TenantID == "" {
@@ -151,7 +157,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "calendar_open_mode") || !strings.Contains(string(data), "events_reminder_min") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "protected_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "calendar_open_mode") || !strings.Contains(string(data), "events_reminder_min") {
 		_ = SaveConfig(cfg)
 	}
 

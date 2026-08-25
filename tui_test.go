@@ -126,6 +126,23 @@ func TestSortFolders_Excluded(t *testing.T) {
 	}
 }
 
+func TestIsProtectedFolder(t *testing.T) {
+	protected := []string{"Inbox", "Sent Items"}
+
+	if !isProtectedFolder(MailFolder{ID: "favorites", DisplayName: "Favorites"}, protected) {
+		t.Error("expected Favorites to always be protected")
+	}
+	if !isProtectedFolder(MailFolder{ID: "1", DisplayName: "Inbox", WellKnownName: "inbox"}, protected) {
+		t.Error("expected Inbox to be protected by display name")
+	}
+	if !isProtectedFolder(MailFolder{ID: "2", DisplayName: "Boîte d'envoi", WellKnownName: "sentitems"}, protected) {
+		t.Error("expected sentitems well-known name to be protected")
+	}
+	if isProtectedFolder(MailFolder{ID: "3", DisplayName: "Archive", WellKnownName: "archive"}, protected) {
+		t.Error("expected Archive not to be protected")
+	}
+}
+
 func TestFormatBodyContent(t *testing.T) {
 	// Force Lipgloss to output ANSI colors in headless test environments
 	lipgloss.SetColorProfile(termenv.TrueColor)

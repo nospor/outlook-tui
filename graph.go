@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -122,6 +123,110 @@ func (gc *GraphClient) GetMessagesPage(folderID string, skip int) ([]Message, er
 
 func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
 	return gc.GetMessagesPage(folderID, 0)
+}
+
+const messagePageSize = 50
+const deleteConcurrency = 10
+
+// GetMessageIDsPage fetches a page of message IDs from a folder (lightweight).
+func (gc *GraphClient) GetMessageIDsPage(folderID string, skip int) ([]string, error) {
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id&$top=%d&$skip=%d&$orderby=receivedDateTime%%20desc",
+		graphBaseURL, url.PathEscape(folderID), messagePageSize, skip)
+	resp, err := gc.client.Get(reqURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get message IDs: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Value []struct {
+			ID string `json:"id"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(result.Value))
+	for i, v := range result.Value {
+		ids[i] = v.ID
+	}
+	return ids, nil
+}
+
+// getAllMessageIDs paginates through all messages in a folder and returns their IDs.
+func (gc *GraphClient) getAllMessageIDs(folderID string) ([]string, error) {
+	var allIDs []string
+	skip := 0
+	for {
+		page, err := gc.GetMessageIDsPage(folderID, skip)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		allIDs = append(allIDs, page...)
+		skip += len(page)
+		if len(page) < messagePageSize {
+			break
+		}
+	}
+	return allIDs, nil
+}
+
+// deleteMessagesConcurrent deletes messages with a bounded worker pool.
+func (gc *GraphClient) deleteMessagesConcurrent(ids []string, hardDelete bool) []error {
+	if len(ids) == 0 {
+		return nil
+	}
+	errs := make([]error, len(ids))
+	sem := make(chan struct{}, deleteConcurrency)
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func(idx int, msgID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if hardDelete {
+				errs[idx] = gc.HardDeleteMessage(msgID)
+			} else {
+				errs[idx] = gc.DeleteMessage(msgID)
+			}
+		}(i, id)
+	}
+	wg.Wait()
+
+	var actualErrors []error
+	for _, err := range errs {
+		if err != nil {
+			actualErrors = append(actualErrors, err)
+		}
+	}
+	return actualErrors
+}
+
+// EmptyFolderMessages deletes all messages in a folder, re-fetching in waves until empty.
+func (gc *GraphClient) EmptyFolderMessages(folderID string, hardDelete bool) (deletedCount int, errs []error, err error) {
+	for {
+		ids, fetchErr := gc.getAllMessageIDs(folderID)
+		if fetchErr != nil {
+			return deletedCount, errs, fetchErr
+		}
+		if len(ids) == 0 {
+			break
+		}
+		waveErrs := gc.deleteMessagesConcurrent(ids, hardDelete)
+		errs = append(errs, waveErrs...)
+		deletedCount += len(ids) - len(waveErrs)
+	}
+	return deletedCount, errs, nil
 }
 
 func (gc *GraphClient) GetMessage(messageID string) (*Message, error) {

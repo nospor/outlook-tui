@@ -394,6 +394,12 @@ func (d *DB) DeleteMessage(messageID string) error {
 	return err
 }
 
+// DeleteFolderMessages removes all cached messages for a folder.
+func (d *DB) DeleteFolderMessages(folderID string) error {
+	_, err := d.db.Exec(`DELETE FROM messages WHERE folder_id = ?`, folderID)
+	return err
+}
+
 // UpdateReadStatus updates the is_read flag for a message in the cache and favorites.
 func (d *DB) UpdateReadStatus(messageID string, isRead bool) error {
 	_, _ = d.db.Exec(`UPDATE messages SET is_read = ? WHERE id = ?`, boolToInt(isRead), messageID)

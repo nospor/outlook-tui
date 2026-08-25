@@ -51,6 +51,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.CalendarOpenMode != "join" {
 		t.Errorf("expected default CalendarOpenMode to be 'join', got %q", cfg.CalendarOpenMode)
 	}
+	if cfg.ProtectedFolders == nil || len(cfg.ProtectedFolders) != 2 || cfg.ProtectedFolders[0] != "Inbox" || cfg.ProtectedFolders[1] != "Sent Items" {
+		t.Errorf("expected default ProtectedFolders to be [\"Inbox\", \"Sent Items\"], got %v", cfg.ProtectedFolders)
+	}
 	expectedDefaultDir := filepath.Join(tempDir, "Downloads")
 	if cfg.AttachmentDir != expectedDefaultDir {
 		t.Errorf("expected default AttachmentDir to be %q, got %q", expectedDefaultDir, cfg.AttachmentDir)

@@ -55,6 +55,7 @@ const (
 	stateFileBrowse
 	stateComposeCancelConfirm
 	stateDeleteThreadConfirm
+	stateEmptyFolderConfirm
 	stateYankSelect
 	stateCalendar                // calendar popup (requires calendar_enabled = true)
 	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
@@ -110,6 +111,11 @@ type (
 	multipleMailsDeletedMsg struct {
 		MessageIDs []string
 		Errors     []error
+	}
+	folderEmptiedMsg struct {
+		FolderID      string
+		DeletedCount  int
+		Errors        []error
 	}
 	mailRestoredMsg     struct{ MessageID string }
 	mailMovedMsg        struct {
@@ -207,6 +213,12 @@ type mainModel struct {
 	// Thread deletion confirm state
 	deleteThreadMsgIDs  []string
 	deleteThreadSubject string
+
+	// Empty folder confirm state
+	emptyFolderConfirmID    string
+	emptyFolderConfirmName  string
+	emptyFolderConfirmCount int
+	emptyingFolderID        string // non-empty while empty-folder operation runs
 
 	// IDs of messages that have been optimistically removed locally but whose
 	// Graph API delete call has not yet returned. These are filtered out of any
@@ -629,6 +641,20 @@ func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string, hardDelete bool) t
 		return multipleMailsDeletedMsg{
 			MessageIDs: msgIDs,
 			Errors:     actualErrors,
+		}
+	}
+}
+
+func emptyFolderCmd(gc *GraphClient, folderID string, hardDelete bool) tea.Cmd {
+	return func() tea.Msg {
+		deletedCount, errs, err := gc.EmptyFolderMessages(folderID, hardDelete)
+		if err != nil {
+			return errMsg(err)
+		}
+		return folderEmptiedMsg{
+			FolderID:     folderID,
+			DeletedCount: deletedCount,
+			Errors:       errs,
 		}
 	}
 }
@@ -1368,6 +1394,15 @@ func (m mainModel) isInDeletedItems() bool {
 	return f.WellKnownName == "deleteditems"
 }
 
+func (m mainModel) isDeletedItemsFolder(folderID string) bool {
+	for _, f := range m.folders {
+		if f.ID == folderID {
+			return f.WellKnownName == "deleteditems"
+		}
+	}
+	return false
+}
+
 // loadCachedFolderMessages loads cached messages from SQLite for the currently
 // selected folder and updates the model's message list and thread groups.
 // It is a no-op when SQLite is disabled or no cache exists for the folder.
@@ -1667,6 +1702,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.statusMsg = fmt.Sprintf("Error: %v", msg)
+		if m.emptyingFolderID != "" {
+			m.emptyingFolderID = ""
+		}
 		if m.state == stateLoading {
 			// If error in loading, go back to config
 			m.state = stateConfig
@@ -1792,6 +1830,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
 		}
+		if m.emptyingFolderID != "" && msg.FolderID == m.emptyingFolderID {
+			break
+		}
 		if len(msg.Messages) == 0 {
 			m.statusMsg = "No more messages to load"
 			break
@@ -1823,6 +1864,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case messagesFetchedMsg:
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
+			break
+		}
+		if m.emptyingFolderID != "" && msg.FolderID == m.emptyingFolderID {
 			break
 		}
 		// Populate any cached bodies and attachments into the newly fetched message list to avoid losing them in memory
@@ -2282,6 +2326,35 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
 		}
 
+	case folderEmptiedMsg:
+		m.emptyingFolderID = ""
+		folderName := msg.FolderID
+		for i := range m.folders {
+			if m.folders[i].ID == msg.FolderID {
+				folderName = m.folders[i].DisplayName
+				m.folders[i].UnreadItemCount = 0
+				m.folders[i].TotalItemCount = 0
+				break
+			}
+		}
+		if len(msg.Errors) > 0 {
+			m.statusMsg = fmt.Sprintf("Emptied %s (%d deleted, %d errors)", folderName, msg.DeletedCount, len(msg.Errors))
+		} else if msg.DeletedCount == 0 {
+			m.statusMsg = fmt.Sprintf("Folder %s is already empty", folderName)
+		} else {
+			m.statusMsg = fmt.Sprintf("Emptied %s (%d messages deleted)", folderName, msg.DeletedCount)
+		}
+		if m.db != nil {
+			_ = m.db.DeleteFolderMessages(msg.FolderID)
+		}
+		if len(m.folders) > 0 && m.folders[m.selectedFolder].ID == msg.FolderID {
+			return m, tea.Batch(
+				fetchFoldersCmd(m.graphClient),
+				fetchMessagesCmd(m.graphClient, msg.FolderID),
+			)
+		}
+		return m, fetchFoldersCmd(m.graphClient)
+
 	case mailRestoredMsg:
 		m.statusMsg = "Message restored to Inbox"
 		// Remove from SQLite cache (as it is leaving the current folder, e.g. Deleted Items) and favorites
@@ -2480,7 +2553,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Fetch current folder messages
 			if len(m.folders) > 0 {
 				folderID := m.folders[m.selectedFolder].ID
-				if folderID != "favorites" {
+				if folderID != "favorites" && folderID != m.emptyingFolderID {
 					bgCmds = append(bgCmds, func() tea.Msg {
 						msgs, err := m.graphClient.GetMessages(folderID)
 						if err == nil {
@@ -2894,6 +2967,23 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
+			}
+		case "E":
+			// Empty all messages in the selected folder (Folders pane only)
+			if m.activePane == paneFolders && len(m.folders) > 0 {
+				f := m.folders[m.selectedFolder]
+				protected := m.config.ProtectedFolders
+				if protected == nil {
+					protected = []string{"Inbox", "Sent Items"}
+				}
+				if isProtectedFolder(f, protected) {
+					m.statusMsg = fmt.Sprintf("Cannot empty protected folder: %s", f.DisplayName)
+					break
+				}
+				m.emptyFolderConfirmID = f.ID
+				m.emptyFolderConfirmName = f.DisplayName
+				m.emptyFolderConfirmCount = f.TotalItemCount
+				m.state = stateEmptyFolderConfirm
 			}
 		case "r":
 			// Reload selected folder
@@ -3781,6 +3871,56 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.deleteThreadSubject = ""
 		}
 
+	case stateEmptyFolderConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "y", "Y":
+			m.state = stateMain
+			folderID := m.emptyFolderConfirmID
+			folderName := m.emptyFolderConfirmName
+			hardDelete := m.isDeletedItemsFolder(folderID)
+			m.emptyingFolderID = folderID
+			if hardDelete {
+				m.statusMsg = fmt.Sprintf("Permanently deleting all messages in %s...", folderName)
+			} else {
+				m.statusMsg = fmt.Sprintf("Moving all messages in %s to Deleted Items...", folderName)
+			}
+			if len(m.folders) > 0 && m.folders[m.selectedFolder].ID == folderID {
+				var ids []string
+				for _, msg := range m.messages {
+					ids = append(ids, msg.ID)
+				}
+				if len(ids) > 0 {
+					m.removeMessagesFromLocalState(ids)
+				} else {
+					m.messages = nil
+					m.buildThreadGroups()
+				}
+				m.detailMessage = nil
+				m.attachments = nil
+				m.detailViewport.SetContent("")
+			}
+			for i := range m.folders {
+				if m.folders[i].ID == folderID {
+					m.folders[i].UnreadItemCount = 0
+					m.folders[i].TotalItemCount = 0
+					break
+				}
+			}
+			cmds = append(cmds, emptyFolderCmd(m.graphClient, folderID, hardDelete))
+			m.emptyFolderConfirmID = ""
+			m.emptyFolderConfirmName = ""
+			m.emptyFolderConfirmCount = 0
+		case "n", "N", "esc":
+			m.state = stateMain
+			m.emptyFolderConfirmID = ""
+			m.emptyFolderConfirmName = ""
+			m.emptyFolderConfirmCount = 0
+		}
+
 	case stateCalendarDeclineConfirm:
 		key, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -4429,7 +4569,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateAttachments, stateNotifiedEventsSelect, stateMoveFolderSelect:
+	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateEmptyFolderConfirm, stateAttachments, stateNotifiedEventsSelect, stateMoveFolderSelect:
 		if m.state == stateNotifiedEventsSelect && m.prevState == stateCalendar {
 			s.WriteString(m.renderCalendarView())
 		} else {
@@ -4558,7 +4698,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4572,6 +4712,8 @@ func (m mainModel) View() string {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select URL | [Enter] Open in TUI"
 		} else if m.state == stateDeleteThreadConfirm {
 			keysText = "  [y] Yes, delete thread | [n/Esc] No, cancel"
+		} else if m.state == stateEmptyFolderConfirm {
+			keysText = "  [y] Yes, empty folder | [n/Esc] No, cancel"
 		} else if m.state == stateCalendarDeclineConfirm {
 			keysText = "  [y] Yes, decline event | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
@@ -4667,6 +4809,26 @@ func (m mainModel) View() string {
 		}
 		modalHeight := 11
 		dropdownView := m.renderDeleteThreadConfirmPopup(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateEmptyFolderConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 12
+		dropdownView := m.renderEmptyFolderConfirmPopup(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -4919,7 +5081,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -5607,6 +5769,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [Space]             Toggle collapse/expand thread",
 		"  [r]                 Reload current folder",
 		"  [M]                 Load more messages (paginate)",
+		"  [E]                 Empty folder (Folders pane only)",
 	}
 
 	// Right column: Actions & Compose
@@ -6376,6 +6539,83 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 		paddingNo = 0
 	}
 	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, keep thread / Go Back" + strings.Repeat(" ", paddingNo)
+	rows = append(rows, btnNoRendered)
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorRed)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+func (m mainModel) renderEmptyFolderConfirmPopup(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	hardDelete := m.isDeletedItemsFolder(m.emptyFolderConfirmID)
+
+	var rows []string
+	headerText := " EMPTY FOLDER? "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	countStr := "unknown number of"
+	if m.emptyFolderConfirmCount > 0 {
+		countStr = fmt.Sprintf("all %d", m.emptyFolderConfirmCount)
+	}
+	line1 := fmt.Sprintf("You are about to delete %s message(s) in:", countStr)
+	if len(line1) < dropdownWidth-2 {
+		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
+	} else if len(line1) > dropdownWidth-2 {
+		line1 = line1[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line1)
+
+	folderText := fmt.Sprintf("  \"%s\"", m.emptyFolderConfirmName)
+	if len(folderText) < dropdownWidth-2 {
+		folderText = folderText + strings.Repeat(" ", dropdownWidth-2-len(folderText))
+	} else if len(folderText) > dropdownWidth-2 {
+		folderText = folderText[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(folderText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	var line2 string
+	if hardDelete {
+		line2 = "Messages will be permanently deleted. This cannot be undone."
+	} else {
+		line2 = "Messages will be moved to Deleted Items."
+	}
+	if len(line2) < dropdownWidth-2 {
+		line2 = line2 + strings.Repeat(" ", dropdownWidth-2-len(line2))
+	} else if len(line2) > dropdownWidth-2 {
+		line2 = line2[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line2)
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	btnYesRaw := "  [y] Yes, empty folder"
+	paddingYes := dropdownWidth - 2 - len(btnYesRaw)
+	if paddingYes < 0 {
+		paddingYes = 0
+	}
+	btnYesRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, empty folder" + strings.Repeat(" ", paddingYes)
+	rows = append(rows, btnYesRendered)
+
+	btnNoRaw := "  [n] No, cancel"
+	paddingNo := dropdownWidth - 2 - len(btnNoRaw)
+	if paddingNo < 0 {
+		paddingNo = 0
+	}
+	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, cancel" + strings.Repeat(" ", paddingNo)
 	rows = append(rows, btnNoRendered)
 
 	joined := strings.Join(rows, "\n")
@@ -8256,6 +8496,42 @@ func isExcluded(folder MailFolder, excluded []string) bool {
 		}
 	}
 	return false
+}
+
+// isProtectedFolder reports whether the folder cannot be emptied via the E key.
+// Favorites is always protected; other folders match protected_folders by display or well-known name.
+func isProtectedFolder(folder MailFolder, protected []string) bool {
+	if folder.ID == "favorites" {
+		return true
+	}
+	for _, entry := range protected {
+		if folderMatchesProtectionEntry(folder, entry) {
+			return true
+		}
+	}
+	return false
+}
+
+// folderMatchesProtectionEntry checks whether a folder matches a protected_folders config entry,
+// including common well-known folder aliases (e.g. sentitems vs "Sent Items").
+func folderMatchesProtectionEntry(folder MailFolder, entry string) bool {
+	entryLower := strings.ToLower(strings.TrimSpace(entry))
+	if entryLower == "" {
+		return false
+	}
+	displayLower := strings.ToLower(folder.DisplayName)
+	wellKnownLower := strings.ToLower(folder.WellKnownName)
+	if displayLower == entryLower || wellKnownLower == entryLower {
+		return true
+	}
+	switch entryLower {
+	case "inbox":
+		return wellKnownLower == "inbox" || displayLower == "inbox"
+	case "sent items", "sentitems", "sent":
+		return wellKnownLower == "sentitems" || displayLower == "sent items" || displayLower == "sentitems" || displayLower == "sent"
+	default:
+		return false
+	}
 }
 
 func wrapText(text string, width int) string {
