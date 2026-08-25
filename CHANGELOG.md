@@ -1,4 +1,21 @@
 
+## [0.8.0] - 2026-08-25
+
+### Features
+
+- Add empty folder action with E key and protected_folders config ([e5be5bb](https://github.com/nospor/outlook-tui/commit/e5be5bb255ecf66950d388cfafedfdd368c04604))
+
+            Press E in the Folders pane to delete all messages in the selected
+            folder after confirmation. Inbox and Sent Items are protected by default
+            via protected_folders; Favorites is always blocked. Uses wave-based
+            Graph API pagination with bounded concurrency and guards against
+            background refresh races during deletion.
+- *(tui)* Add pane-aware two-line footer keybinds ([a9f0bc0](https://github.com/nospor/outlook-tui/commit/a9f0bc0203d611236159ffc222c48d00b12c94d6))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.7.9 [skip ci] ([4b9ff91](https://github.com/nospor/outlook-tui/commit/4b9ff9198113e1a0586b690b249bb5c19be48fde))
+
 ## [0.7.9] - 2026-08-24
 
 ### Features
