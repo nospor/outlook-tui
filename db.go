@@ -801,6 +801,12 @@ func (d *DB) GetCalendarEvents(start, end time.Time) ([]CalendarEvent, error) {
 	return events, rows.Err()
 }
 
+// DeleteCalendarEvent removes a calendar event from the cache by ID.
+func (d *DB) DeleteCalendarEvent(eventID string) error {
+	_, err := d.db.Exec(`DELETE FROM calendar_events WHERE id = ?`, eventID)
+	return err
+}
+
 // UpdateCalendarResponseStatus updates the response status of a cached calendar event.
 func (d *DB) UpdateCalendarResponseStatus(eventID string, status string) error {
 	_, err := d.db.Exec(`UPDATE calendar_events SET response_status = ? WHERE id = ?`, status, eventID)

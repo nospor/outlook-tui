@@ -218,6 +218,7 @@ Press **`c`** from the main view to open the calendar popup.
 | `N`                  | **Create a new calendar event** (opens event creation form with attendee availability) |
 | `L`                  | **Manage attendee lists** (reusable groups for event creation) |
 | `e`                  | **Edit the selected calendar event** (opens the same form pre-filled with event details) |
+| `D`                  | **Delete the selected calendar event** (requires confirmation; cancels the meeting if you are the organizer, or removes it from your calendar if you are an attendee) |
 | `Ctrl+e`             | Open the unread event reminders popup             |
 | `Esc` / `q` / `c`   | Close the calendar popup                          |
 
@@ -229,7 +230,7 @@ The right-hand detail pane shows:
 - Up to 5 attendees with their individual response statuses
 - A preview of the event body
 
-> **Note**: Accept/decline/tentative actions send a response notification to the organizer by email. Only events with `responseRequested = true` can be responded to.
+> **Note**: Accept/decline/tentative actions send a response notification to the organizer by email. Only events with `responseRequested = true` can be responded to. **`D`** (capital D) permanently deletes the event (with confirmation); **`d`** (lowercase) declines an invitation — these are distinct actions.
 
 ### Creating and Editing Calendar Events
 

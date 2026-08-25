@@ -65,6 +65,7 @@ const (
 	stateYankSelect
 	stateCalendar                // calendar popup (requires calendar_enabled = true)
 	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
+	stateCalendarDeleteConfirm   // confirmation dialog before deleting a calendar event
 	stateCalendarCreate          // create new calendar event
 	stateCalendarCreateCancelConfirm
 	stateCalendarRecurrence      // recurrence sub-popup for event creation
@@ -148,6 +149,11 @@ type (
 	calendarRespondedMsg struct {
 		EventID  string
 		Response EventResponse
+	}
+	calendarDeletedMsg struct {
+		EventID string
+		Subject string
+		Err     error
 	}
 	calendarRemindersCheckedMsg struct{}
 )
@@ -242,6 +248,10 @@ type mainModel struct {
 	// Calendar decline confirm state
 	calendarDeclineEventID string
 	calendarDeclineSubject string
+
+	// Calendar delete confirm state
+	calendarDeleteEventID string
+	calendarDeleteSubject string
 
 	// Calendar state (only active when config.CalendarEnabled == true)
 	calendarEvents      []CalendarEvent // currently loaded events
@@ -466,6 +476,30 @@ func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 	return m.fetchCalendarCmd()
 }
 
+// removeCalendarEventFromLocalState removes an event from in-memory state and cache.
+func (m *mainModel) removeCalendarEventFromLocalState(eventID string) {
+	for i, ev := range m.calendarEvents {
+		if ev.ID == eventID {
+			m.calendarEvents = append(m.calendarEvents[:i], m.calendarEvents[i+1:]...)
+			break
+		}
+	}
+	if m.calendarSelected >= len(m.calendarEvents) && len(m.calendarEvents) > 0 {
+		m.calendarSelected = len(m.calendarEvents) - 1
+	}
+	if len(m.calendarEvents) == 0 {
+		m.calendarSelected = 0
+		m.calendarViewport.SetContent("")
+	}
+	if m.config.UseSQLite == 1 && m.db != nil {
+		_ = m.db.DeleteCalendarEvent(eventID)
+	}
+	_ = removeNotifiedEventFromFile(eventID)
+	if evs, err := loadNotifiedEventsFromFile(); err == nil {
+		m.notifiedEvents = evs
+	}
+}
+
 // selectEventForToday returns the index of the first event whose start time falls on today
 // (local time). If no event falls on today, it returns the index of the earliest event that
 // starts after now. Falls back to 0 if the slice is empty or every event is in the past.
@@ -533,6 +567,14 @@ func calendarRespondCmd(gc *GraphClient, eventID string, response EventResponse)
 			return errMsg(err)
 		}
 		return calendarRespondedMsg{EventID: eventID, Response: response}
+	}
+}
+
+// deleteCalendarEventCmd permanently deletes a calendar event via the Graph API.
+func deleteCalendarEventCmd(gc *GraphClient, eventID, subject string) tea.Cmd {
+	return func() tea.Msg {
+		err := gc.DeleteCalendarEvent(eventID)
+		return calendarDeletedMsg{EventID: eventID, Subject: subject, Err: err}
 	}
 }
 
@@ -2619,6 +2661,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case calendarDeletedMsg:
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("Failed to delete event: %v", msg.Err)
+			if m.graphClient != nil && !m.calendarLoading {
+				m.calendarLoading = true
+				cmds = append(cmds, m.fetchCalendarCmd())
+			}
+		} else {
+			m.statusMsg = fmt.Sprintf("Event deleted: %s", msg.Subject)
+		}
+
 	case tickMsg:
 		// Background tick: fetch folders and current messages silently.
 		// Always reschedule the next tick regardless of state, so the chain
@@ -3824,7 +3877,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = "This event does not require a response"
 				}
 			}
-		case "d", "D":
+		case "d":
 			// Decline the selected event — ask for confirmation first
 			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
 				ev := m.calendarEvents[m.calendarSelected]
@@ -3835,6 +3888,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.statusMsg = "This event does not require a response"
 				}
+			}
+		case "D":
+			// Delete the selected event — ask for confirmation first
+			if m.graphClient != nil && len(m.calendarEvents) > 0 && m.calendarSelected < len(m.calendarEvents) {
+				ev := m.calendarEvents[m.calendarSelected]
+				if ev.IsCancelled {
+					m.statusMsg = "Cannot delete a cancelled event"
+					break
+				}
+				m.calendarDeleteEventID = ev.ID
+				m.calendarDeleteSubject = ev.Subject
+				m.state = stateCalendarDeleteConfirm
 			}
 		case "g", "G":
 			// Open the online meeting join URL in the browser (or the event in
@@ -4068,6 +4133,30 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.calendarDeclineEventID = ""
 			m.calendarDeclineSubject = ""
 			m.statusMsg = "Decline cancelled"
+		}
+
+	case stateCalendarDeleteConfirm:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		switch key.String() {
+		case "y", "Y":
+			m.state = stateCalendar
+			if m.calendarDeleteEventID != "" {
+				eventID := m.calendarDeleteEventID
+				subject := m.calendarDeleteSubject
+				m.removeCalendarEventFromLocalState(eventID)
+				m.statusMsg = "Deleting event..."
+				cmds = append(cmds, deleteCalendarEventCmd(m.graphClient, eventID, subject))
+			}
+			m.calendarDeleteEventID = ""
+			m.calendarDeleteSubject = ""
+		case "n", "N", "esc":
+			m.state = stateCalendar
+			m.calendarDeleteEventID = ""
+			m.calendarDeleteSubject = ""
+			m.statusMsg = "Delete cancelled"
 		}
 
 	case stateNotifiedEventsSelect:
@@ -4821,7 +4910,7 @@ func (m mainModel) View() string {
 	case stateFileBrowse:
 		s.WriteString(m.renderFilePickerPopup(m.width-4, m.height-10))
 
-	case stateCalendar, stateCalendarDeclineConfirm:
+	case stateCalendar, stateCalendarDeclineConfirm, stateCalendarDeleteConfirm:
 		s.WriteString(m.renderCalendarView())
 
 	case stateCalendarCreate, stateCalendarCreateCancelConfirm:
@@ -4838,7 +4927,7 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect || m.state == stateAttendeeLists || m.state == stateAttendeeListEdit || m.state == stateAttendeeListDeleteConfirm {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect || m.state == stateAttendeeLists || m.state == stateAttendeeListEdit || m.state == stateAttendeeListDeleteConfirm {
 		s.WriteString("\n")
 
 		var keysText string
@@ -4856,15 +4945,17 @@ func (m mainModel) View() string {
 			keysText = "  [y] Yes, empty folder | [n/Esc] No, cancel"
 		} else if m.state == stateCalendarDeclineConfirm {
 			keysText = "  [y] Yes, decline event | [n/Esc] No, cancel"
+		} else if m.state == stateCalendarDeleteConfirm {
+			keysText = "  [y] Yes, delete event | [n/Esc] No, cancel"
 		} else if m.state == stateAttachments {
 			keysText = "  [Up/Down/j/k] Select Attachment | [Enter] Save / Open | [Esc] Back"
 		} else if m.state == stateNotifiedEventsSelect {
 			keysText = "  [Esc/q] Close | [Up/Down/j/k] Select Reminder | [Enter] Go to Event on Calendar"
 		} else if m.state == stateCalendar {
 			if m.config.CalendarView == "week" {
-				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [D] Delete | [j/k/Up/Down] Select Event | [h/l/Left/Right] Prev/Next Day | [n/p] Next/Prev Week | [v] Toggle Layout | [r] Refresh"
 			} else {
-				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh | " + m.calendarGHint() + " [a] Accept [t] Tentative [d] Decline"
+				keysText = "  [Esc/q/c] Close | [N] New Event | [L] Attendee Lists | [e] Edit Event | [D] Delete | [j/k/Arrows] Select Event | [v] Toggle Layout | [r] Refresh"
 			}
 		} else if m.state == stateCalendarCreate {
 			if m.eventCreateIsEditing() {
@@ -5001,6 +5092,26 @@ func (m mainModel) View() string {
 		}
 		modalHeight := 11
 		dropdownView := m.renderCalendarDeclineConfirmPopup(modalWidth)
+
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateCalendarDeleteConfirm {
+		modalWidth := 60
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 30 {
+			modalWidth = 30
+		}
+		modalHeight := 11
+		dropdownView := m.renderCalendarDeleteConfirmPopup(modalWidth)
 
 		x := (m.width - modalWidth) / 2
 		y := (m.height - modalHeight) / 2
@@ -5290,7 +5401,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -6006,7 +6117,13 @@ func (m mainModel) renderCalendarView() string {
 			detailBuf.WriteString("\n" + dim.Render(m.calendarGHint()) + "\n")
 		}
 		if ev.ResponseRequested && !ev.IsCancelled {
-			hint := "[a] Accept  [t] Tentative  [d] Decline"
+			hint := "[a] Accept  [t] Tentative  [d] Decline  [D] Delete"
+			if joinURL != "" || m.config.CalendarOpenMode == "owa" {
+				hint = m.calendarGHint() + "  " + hint
+			}
+			detailBuf.WriteString("\n" + dim.Render(hint) + "\n")
+		} else if !ev.IsCancelled {
+			hint := "[D] Delete"
 			if joinURL != "" || m.config.CalendarOpenMode == "owa" {
 				hint = m.calendarGHint() + "  " + hint
 			}
@@ -6091,6 +6208,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [N]                 Create new calendar event",
 		"  [L]                 Manage attendee lists",
 		"  [e]                 Edit selected event",
+		"  [D]                 Delete selected event",
 		"  [a] / [t] / [d]     Accept / Tentative / Decline invitation",
 		"  [g]                 Join meeting or open in OWA",
 		"  [v]                 Toggle list/week layout",
@@ -7025,6 +7143,74 @@ func (m mainModel) renderCalendarDeclineConfirmPopup(width int) string {
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(ColorYellow)).
+		Padding(0, 1)
+
+	return popupStyle.Render(joined)
+}
+
+// renderCalendarDeleteConfirmPopup renders a confirmation modal asking the user
+// to confirm before deleting a calendar event.
+func (m mainModel) renderCalendarDeleteConfirmPopup(width int) string {
+	dropdownWidth := width - 4
+	if dropdownWidth < 20 {
+		dropdownWidth = 20
+	}
+
+	var rows []string
+	headerText := " DELETE EVENT? "
+	if len(headerText) < dropdownWidth-2 {
+		headerText = headerText + strings.Repeat(" ", dropdownWidth-2-len(headerText))
+	}
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render(headerText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line1 := "You are about to delete this calendar event:"
+	if len(line1) < dropdownWidth-2 {
+		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
+	} else if len(line1) > dropdownWidth-2 {
+		line1 = line1[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line1)
+
+	subjText := fmt.Sprintf("  \"%s\"", m.calendarDeleteSubject)
+	if len(subjText) < dropdownWidth-2 {
+		subjText = subjText + strings.Repeat(" ", dropdownWidth-2-len(subjText))
+	} else if len(subjText) > dropdownWidth-2 {
+		subjText = subjText[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(subjText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	line2 := "Do you really want to delete this event?"
+	if len(line2) < dropdownWidth-2 {
+		line2 = line2 + strings.Repeat(" ", dropdownWidth-2-len(line2))
+	} else if len(line2) > dropdownWidth-2 {
+		line2 = line2[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, line2)
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	btnYesRaw := "  [y] Yes, delete event"
+	paddingYes := dropdownWidth - 2 - len(btnYesRaw)
+	if paddingYes < 0 {
+		paddingYes = 0
+	}
+	btnYesRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render("[y]") + " Yes, delete event" + strings.Repeat(" ", paddingYes)
+	rows = append(rows, btnYesRendered)
+
+	btnNoRaw := "  [n] No, go back"
+	paddingNo := dropdownWidth - 2 - len(btnNoRaw)
+	if paddingNo < 0 {
+		paddingNo = 0
+	}
+	btnNoRendered := "  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorGreen)).Render("[n]") + " No, go back" + strings.Repeat(" ", paddingNo)
+	rows = append(rows, btnNoRendered)
+
+	joined := strings.Join(rows, "\n")
+
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ColorRed)).
 		Padding(0, 1)
 
 	return popupStyle.Render(joined)

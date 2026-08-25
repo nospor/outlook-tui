@@ -1294,6 +1294,25 @@ func (gc *GraphClient) UpdateCalendarEvent(eventID string, req CreateEventReques
 	return &ev, nil
 }
 
+// DeleteCalendarEvent permanently deletes a calendar event via DELETE /me/events/{id}.
+func (gc *GraphClient) DeleteCalendarEvent(eventID string) error {
+	reqURL := fmt.Sprintf("%s/me/events/%s", graphBaseURL, url.PathEscape(eventID))
+	req, err := http.NewRequest(http.MethodDelete, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := gc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to delete event: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
 // ScheduleInformation holds free/busy data for one mailbox from getSchedule.
 type ScheduleInformation struct {
 	ScheduleID       string `json:"scheduleId"`
