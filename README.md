@@ -245,6 +245,20 @@ The form is split into two columns:
 
 When SQLite caching is enabled, contact autocomplete works in both attendee fields (same as email compose). **Attendee lists** (saved locally in `db.db`, always — like Favorites) also appear in autocomplete: typing a list name adds all members to the active Required or Optional field (duplicates skipped). Manage lists with **`L`** from the calendar popup.
 
+**Start / End steps** use an interactive date/time picker:
+
+| Key | Action |
+| --- | --- |
+| `,` / `.` (or `<` / `>`) | Previous / next month (when date is focused) |
+| `←`/`→` or `h`/`l` | Previous / next day (date focus) or switch hour ↔ minute (time focus) |
+| `↑`/`↓` or `j`/`k` | Previous / next week (date focus) or adjust hour/minute (time focus) |
+| `+`/`-` | Adjust hour or minute (when that part is focused) |
+| `Tab` / `Shift+Tab` | Move focus: date → hour → minute, then to the next/previous wizard field |
+| `Enter` | Jump from date to hour |
+| `i` | Type a date/time manually (`Enter` apply, `Esc` cancel) |
+
+The status line under the picker shows which part is focused (`date`, `hour`, or `minute`). Changing start/end times refreshes the availability panel automatically (debounced).
+
 ### Attendee Lists
 
 Press **`L`** (capital L) from the calendar popup to open the **Attendee Lists** manager:

@@ -74,6 +74,7 @@ type (
 		Event *CalendarEvent
 	}
 	eventCreateEditorLoadedMsg string
+	eventCreateAvailDebounceMsg struct{}
 )
 
 func (m *mainModel) initEventCreateForm(prefillDay time.Time) {
@@ -106,15 +107,8 @@ func (m *mainModel) initEventCreateForm(prefillDay time.Time) {
 	m.eventCreateOptionalAttendees.Placeholder = "optional@domain.com (optional)"
 	m.eventCreateOptionalAttendees.Width = w
 
-	m.eventCreateStart = textinput.New()
-	m.eventCreateStart.Placeholder = "YYYY-MM-DD HH:MM"
-	m.eventCreateStart.Width = w
-	m.eventCreateStart.SetValue(FormatEventDateTime(start))
-
-	m.eventCreateEnd = textinput.New()
-	m.eventCreateEnd.Placeholder = "YYYY-MM-DD HH:MM"
-	m.eventCreateEnd.Width = w
-	m.eventCreateEnd.SetValue(FormatEventDateTime(end))
+	m.eventCreateStart = NewDateTimePicker(start)
+	m.eventCreateEnd = NewDateTimePicker(end)
 
 	m.eventCreateLocation = textinput.New()
 	m.eventCreateLocation.Placeholder = "Room or location (optional)"
@@ -227,8 +221,8 @@ func (m *mainModel) initEventEditForm(ev CalendarEvent) {
 	m.eventCreateSubject.SetValue(ev.Subject)
 	m.eventCreateAttendees.SetValue(formatCalendarAttendeesField(ev.Attendees, "required"))
 	m.eventCreateOptionalAttendees.SetValue(formatCalendarAttendeesField(ev.Attendees, "optional"))
-	m.eventCreateStart.SetValue(FormatEventDateTime(ev.Start.Time().Local()))
-	m.eventCreateEnd.SetValue(FormatEventDateTime(ev.End.Time().Local()))
+	m.eventCreateStart.SetTime(ev.Start.Time().Local())
+	m.eventCreateEnd.SetTime(ev.End.Time().Local())
 	m.eventCreateLocation.SetValue(ev.Location.DisplayName)
 	m.eventCreateBody.SetValue(calendarEventBodyText(ev))
 
@@ -489,13 +483,13 @@ func (m mainModel) eventCreateHasContent() bool {
 }
 
 func (m mainModel) parsedEventCreateTimes() (time.Time, time.Time, error) {
-	start, err := ParseEventDateTime(m.eventCreateStart.Value())
-	if err != nil {
-		return time.Time{}, time.Time{}, err
+	start := m.eventCreateStart.Time()
+	end := m.eventCreateEnd.Time()
+	if start.IsZero() {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid start date/time")
 	}
-	end, err := ParseEventDateTime(m.eventCreateEnd.Value())
-	if err != nil {
-		return time.Time{}, time.Time{}, err
+	if end.IsZero() {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid end date/time")
 	}
 	return start, end, nil
 }
@@ -641,6 +635,12 @@ func loadCalendarEventForEditCmd(gc *GraphClient, eventID string) tea.Cmd {
 	}
 }
 
+func (m *mainModel) scheduleDebouncedAvailabilityRefresh() tea.Cmd {
+	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+		return eventCreateAvailDebounceMsg{}
+	})
+}
+
 func (m *mainModel) scheduleAvailabilityRefresh() tea.Cmd {
 	if m.graphClient == nil {
 		m.eventCreateAvailLoading = false
@@ -681,8 +681,8 @@ func (m *mainModel) applyMeetingSuggestion(idx int) {
 		return
 	}
 	s := m.eventCreateSuggestions[idx]
-	m.eventCreateStart.SetValue(FormatEventDateTime(s.Start.Local()))
-	m.eventCreateEnd.SetValue(FormatEventDateTime(s.End.Local()))
+	m.eventCreateStart.SetTime(s.Start.Local())
+	m.eventCreateEnd.SetTime(s.End.Local())
 }
 
 func (m *mainModel) cycleEventCreateShowAs() {
@@ -700,6 +700,13 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case eventCreateAvailDebounceMsg:
+		if m.state == stateCalendarCreate &&
+			(m.eventCreateStep == eventCreateStepStart || m.eventCreateStep == eventCreateStepEnd) {
+			return m, m.scheduleAvailabilityRefresh()
+		}
+		return m, nil
+
 	case scheduleFetchedMsg:
 		m.eventCreateAvailLoading = false
 		m.eventCreateSchedules = msg.Schedules
@@ -804,6 +811,17 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if msg.String() == "esc" {
+			if m.eventCreateStep == eventCreateStepStart && m.eventCreateStart.InTextMode() {
+				m.eventCreateStart.CancelTextMode()
+				return m, nil
+			}
+			if m.eventCreateStep == eventCreateStepEnd && m.eventCreateEnd.InTextMode() {
+				m.eventCreateEnd.CancelTextMode()
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
 		case "esc":
 			if m.eventCreateFocusSuggestions {
@@ -844,6 +862,24 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+			if m.eventCreateStep == eventCreateStepStart {
+				prev := m.eventCreateStart.Time()
+				if m.eventCreateStart.AdvanceSubFocus() {
+					if !m.eventCreateStart.Time().Equal(prev) {
+						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
+			if m.eventCreateStep == eventCreateStepEnd {
+				prev := m.eventCreateEnd.Time()
+				if m.eventCreateEnd.AdvanceSubFocus() {
+					if !m.eventCreateEnd.Time().Equal(prev) {
+						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
 			prevStep := m.eventCreateStep
 			m.eventCreateStep = (m.eventCreateStep + 1) % eventCreateStepCount
 			if m.eventCreateStep == eventCreateStepAttendees {
@@ -882,6 +918,32 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.eventCreateAttendeesStep--
 					m.updateEventCreateAttendeesFocus()
 					return m, nil
+				}
+			}
+			if m.eventCreateStep == eventCreateStepStart {
+				prev := m.eventCreateStart.Time()
+				wasText := m.eventCreateStart.InTextMode()
+				if m.eventCreateStart.RetreatSubFocus() {
+					if !m.eventCreateStart.Time().Equal(prev) {
+						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					}
+					return m, tea.Batch(cmds...)
+				}
+				if wasText && !m.eventCreateStart.Time().Equal(prev) {
+					cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+				}
+			}
+			if m.eventCreateStep == eventCreateStepEnd {
+				prev := m.eventCreateEnd.Time()
+				wasText := m.eventCreateEnd.InTextMode()
+				if m.eventCreateEnd.RetreatSubFocus() {
+					if !m.eventCreateEnd.Time().Equal(prev) {
+						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					}
+					return m, tea.Batch(cmds...)
+				}
+				if wasText && !m.eventCreateEnd.Time().Equal(prev) {
+					cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
 				}
 			}
 			m.eventCreateStep = (m.eventCreateStep - 1 + eventCreateStepCount) % eventCreateStepCount
@@ -951,9 +1013,17 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.updateEventCreateFilteredSuggestions()
 		case eventCreateStepStart:
+			prev := m.eventCreateStart.Time()
 			m.eventCreateStart, cmd = m.eventCreateStart.Update(msg)
+			if !m.eventCreateStart.Time().Equal(prev) {
+				cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+			}
 		case eventCreateStepEnd:
+			prev := m.eventCreateEnd.Time()
 			m.eventCreateEnd, cmd = m.eventCreateEnd.Update(msg)
+			if !m.eventCreateEnd.Time().Equal(prev) {
+				cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+			}
 		case eventCreateStepLocation:
 			m.eventCreateLocation, cmd = m.eventCreateLocation.Update(msg)
 		case eventCreateStepBody:
@@ -1130,9 +1200,9 @@ func (m mainModel) eventCreateFieldSummary(step int) string {
 		}
 		return strings.Join(parts, " | ")
 	case eventCreateStepStart:
-		return m.eventCreateStart.Value()
+		return m.eventCreateStart.Summary()
 	case eventCreateStepEnd:
-		return m.eventCreateEnd.Value()
+		return m.eventCreateEnd.Summary()
 	case eventCreateStepLocation:
 		return m.eventCreateLocation.Value()
 	case eventCreateStepBody:

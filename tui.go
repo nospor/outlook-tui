@@ -271,8 +271,8 @@ type mainModel struct {
 	eventCreateAttendees           textinput.Model
 	eventCreateOptionalAttendees   textinput.Model
 	eventCreateAttendeesStep       int
-	eventCreateStart               textinput.Model
-	eventCreateEnd                 textinput.Model
+	eventCreateStart               DateTimePicker
+	eventCreateEnd                 DateTimePicker
 	eventCreateLocation            textinput.Model
 	eventCreateBody                textarea.Model
 	eventCreateStep                int
