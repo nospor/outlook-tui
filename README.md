@@ -227,7 +227,7 @@ The right-hand detail pane shows:
 - Whether the meeting is online
 - Organizer name and email
 - Your current response status (✓ Accepted / ? Tentative / ✗ Declined / ⏳ Not responded)
-- Up to 5 attendees with their individual response statuses
+- Up to 20 attendees split evenly across two columns (max 10 per column) with individual response statuses; if more than 20, a “… and N more” line is shown
 - A preview of the event body
 
 > **Note**: Accept/decline/tentative actions send a response notification to the organizer by email. Only events with `responseRequested = true` can be responded to. **`D`** (capital D) permanently deletes the event (with confirmation); **`d`** (lowercase) declines an invitation — these are distinct actions.

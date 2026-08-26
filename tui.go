@@ -5867,6 +5867,84 @@ func padString(s string, width int) string {
 	return s + strings.Repeat(" ", width-visualWidth)
 }
 
+const calendarAttendeesMaxShown = 20
+
+func formatCalendarAttendeeLine(att CalendarEventAttendee, maxWidth int) string {
+	name := att.EmailAddress.Name
+	if name == "" {
+		name = att.EmailAddress.Address
+	}
+	resp := ""
+	switch att.Status.Response {
+	case "accepted":
+		resp = " ✓"
+	case "tentativelyAccepted":
+		resp = " ?"
+	case "declined":
+		resp = " ✗"
+	}
+	prefix := "  • "
+	suffix := dimStyle.Render(resp)
+	avail := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(suffix)
+	if avail < 4 {
+		avail = 4
+	}
+	if lipgloss.Width(name) > avail {
+		name = name[:avail-2] + ".."
+	}
+	return prefix + name + suffix
+}
+
+func renderCalendarAttendeesTwoColumn(attendees []CalendarEventAttendee, paneWidth int) string {
+	if len(attendees) == 0 {
+		return ""
+	}
+
+	shown := attendees
+	if len(shown) > calendarAttendeesMaxShown {
+		shown = shown[:calendarAttendeesMaxShown]
+	}
+
+	colWidth := (paneWidth - 2) / 2
+	if colWidth < 12 {
+		colWidth = 12
+	}
+
+	var leftLines, rightLines []string
+	leftCount := (len(shown) + 1) / 2
+	for i, att := range shown {
+		line := formatCalendarAttendeeLine(att, colWidth)
+		if i < leftCount {
+			leftLines = append(leftLines, line)
+		} else {
+			rightLines = append(rightLines, line)
+		}
+	}
+
+	maxRows := len(leftLines)
+	if len(rightLines) > maxRows {
+		maxRows = len(rightLines)
+	}
+	for len(leftLines) < maxRows {
+		leftLines = append(leftLines, "")
+	}
+	for len(rightLines) < maxRows {
+		rightLines = append(rightLines, "")
+	}
+
+	var buf strings.Builder
+	for i := 0; i < maxRows; i++ {
+		buf.WriteString(padString(leftLines[i], colWidth))
+		buf.WriteString("  ")
+		buf.WriteString(rightLines[i])
+		buf.WriteString("\n")
+	}
+	if len(attendees) > calendarAttendeesMaxShown {
+		buf.WriteString(dimStyle.Render(fmt.Sprintf("  … and %d more\n", len(attendees)-calendarAttendeesMaxShown)))
+	}
+	return buf.String()
+}
+
 // renderCalendarView renders the calendar popup with a two-pane layout.
 func (m mainModel) renderCalendarView() string {
 	var s strings.Builder
@@ -6074,32 +6152,10 @@ func (m mainModel) renderCalendarView() string {
 			detailBuf.WriteString(dim.Render("Show as:  ") + ev.ShowAs + "\n")
 		}
 
-		// Attendees (up to 5)
+		// Attendees (two columns, up to 20)
 		if len(ev.Attendees) > 0 {
 			detailBuf.WriteString("\n" + dim.Render("Attendees:") + "\n")
-			shown := ev.Attendees
-			if len(shown) > 5 {
-				shown = shown[:5]
-			}
-			for _, att := range shown {
-				name := att.EmailAddress.Name
-				if name == "" {
-					name = att.EmailAddress.Address
-				}
-				resp := ""
-				switch att.Status.Response {
-				case "accepted":
-					resp = " ✓"
-				case "tentativelyAccepted":
-					resp = " ?"
-				case "declined":
-					resp = " ✗"
-				}
-				detailBuf.WriteString("  • " + name + dimStyle.Render(resp) + "\n")
-			}
-			if len(ev.Attendees) > 5 {
-				detailBuf.WriteString(dim.Render(fmt.Sprintf("  … and %d more\n", len(ev.Attendees)-5)))
-			}
+			detailBuf.WriteString(renderCalendarAttendeesTwoColumn(ev.Attendees, detailWidth))
 		}
 
 		// Preview
