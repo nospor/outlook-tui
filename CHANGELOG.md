@@ -1,4 +1,29 @@
 
+## [0.8.1] - 2026-08-26
+
+### Features
+
+- *(calendar)* Add event create/edit form with attendee availability ([f8d1b46](https://github.com/nospor/outlook-tui/commit/f8d1b4651c06fc80b21314ec62bc1738156e4de7))
+
+            Add N/e calendar form for creating and editing events with required and
+            optional attendees, busy timeline, suggested meeting times, and options
+            (all-day, Teams, show-as, reminder, recurrence). Integrate Graph APIs
+            for create, update, getSchedule, and findMeetingTimes, and polish UX
+            around pane focus, defaults, and availability loading.
+- *(calendar)* Add reusable attendee lists for event creation ([5297608](https://github.com/nospor/outlook-tui/commit/52976080480b6a8000d3647d28b91d41b409b19f))
+
+            Store named attendee groups in SQLite and manage them from the calendar
+            with L. Event create/edit autocomplete matches list names and expands
+            members into the active required/optional field. List editor uses an
+            add field with per-member rows for easier add/remove.
+- *(calendar)* Add D key to delete events with confirmation ([36b5960](https://github.com/nospor/outlook-tui/commit/36b59600ffc013b8608162306766cebad865b0a8))
+- *(calendar)* Replace start/end text fields with interactive datetime picker ([8e3318f](https://github.com/nospor/outlook-tui/commit/8e3318fced3156329b9e75f1f43db37df98f31f9))
+- *(calendar)* Display event attendees in two even columns ([f51fdc9](https://github.com/nospor/outlook-tui/commit/f51fdc90602d2dd22ccd05735fe8bc0cf50334f8))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.0 [skip ci] ([de6705a](https://github.com/nospor/outlook-tui/commit/de6705a6b81872289ae80eda4a9d0e7d50c28fdf))
+
 ## [0.8.0] - 2026-08-25
 
 ### Features
