@@ -494,6 +494,19 @@ func (m mainModel) parsedEventCreateTimes() (time.Time, time.Time, error) {
 	return start, end, nil
 }
 
+func (m *mainModel) syncEventCreateEndFromStart() {
+	start := m.eventCreateStart.Time()
+	m.eventCreateEnd.SetTime(start.Add(eventCreateAvailIntervalMin * time.Minute))
+}
+
+func (m *mainModel) eventCreateOnStartTimeChanged(prev time.Time) tea.Cmd {
+	if m.eventCreateStart.Time().Equal(prev) {
+		return nil
+	}
+	m.syncEventCreateEndFromStart()
+	return m.scheduleDebouncedAvailabilityRefresh()
+}
+
 func (m mainModel) eventCreateAttendeeEmails() []string {
 	var emails []string
 	for _, a := range m.eventCreateParsedAttendees() {
@@ -865,8 +878,8 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.eventCreateStep == eventCreateStepStart {
 				prev := m.eventCreateStart.Time()
 				if m.eventCreateStart.AdvanceSubFocus() {
-					if !m.eventCreateStart.Time().Equal(prev) {
-						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					if cmd := m.eventCreateOnStartTimeChanged(prev); cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 					return m, tea.Batch(cmds...)
 				}
@@ -924,13 +937,15 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				prev := m.eventCreateStart.Time()
 				wasText := m.eventCreateStart.InTextMode()
 				if m.eventCreateStart.RetreatSubFocus() {
-					if !m.eventCreateStart.Time().Equal(prev) {
-						cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+					if cmd := m.eventCreateOnStartTimeChanged(prev); cmd != nil {
+						cmds = append(cmds, cmd)
 					}
 					return m, tea.Batch(cmds...)
 				}
-				if wasText && !m.eventCreateStart.Time().Equal(prev) {
-					cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+				if wasText {
+					if cmd := m.eventCreateOnStartTimeChanged(prev); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			}
 			if m.eventCreateStep == eventCreateStepEnd {
@@ -1015,8 +1030,8 @@ func (m *mainModel) handleEventCreateUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case eventCreateStepStart:
 			prev := m.eventCreateStart.Time()
 			m.eventCreateStart, cmd = m.eventCreateStart.Update(msg)
-			if !m.eventCreateStart.Time().Equal(prev) {
-				cmds = append(cmds, m.scheduleDebouncedAvailabilityRefresh())
+			if syncCmd := m.eventCreateOnStartTimeChanged(prev); syncCmd != nil {
+				cmds = append(cmds, syncCmd)
 			}
 		case eventCreateStepEnd:
 			prev := m.eventCreateEnd.Time()
