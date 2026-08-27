@@ -2,9 +2,138 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestEscapeODataString(t *testing.T) {
+	if got := escapeODataString("it's"); got != "it''s" {
+		t.Errorf("escapeODataString = %q, want it''s", got)
+	}
+}
+
+func TestMessageMatchesConversation(t *testing.T) {
+	msg := Message{ID: "solo-id", ConversationID: ""}
+	if !messageMatchesConversation(msg, "solo-id") {
+		t.Error("empty conversationId should match message id")
+	}
+	msg2 := Message{ID: "msg-1", ConversationID: "conv-1"}
+	if !messageMatchesConversation(msg2, "conv-1") {
+		t.Error("expected conversation match")
+	}
+	if messageMatchesConversation(msg2, "conv-2") {
+		t.Error("expected no match")
+	}
+}
+
+func TestGetConversationMessageIDs(t *testing.T) {
+	conversationID := "conv-123"
+	folderID := "inbox-folder"
+	requestCount := 0
+	var nextPageURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/mailFolders/"+folderID+"/messages") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		requestCount++
+		hasFilter := strings.Contains(r.URL.RawQuery, "filter")
+		var value []Message
+		if hasFilter {
+			if requestCount == 1 {
+				value = []Message{
+					{ID: "hit-1", ConversationID: conversationID},
+					{ID: "hit-2", ConversationID: conversationID},
+				}
+			} else {
+				value = []Message{{ID: "hit-3", ConversationID: conversationID}}
+			}
+		} else {
+			if requestCount == 1 {
+				value = []Message{
+					{ID: "other-1", ConversationID: "conv-other"},
+					{ID: "hit-1", ConversationID: conversationID},
+					{ID: "hit-2", ConversationID: conversationID},
+				}
+			} else {
+				value = []Message{{ID: "hit-3", ConversationID: conversationID}}
+			}
+		}
+		payload := map[string]interface{}{"value": value}
+		if requestCount == 1 {
+			payload["@odata.nextLink"] = nextPageURL
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+	nextPageURL = server.URL + "/me/mailFolders/" + folderID + "/messages?page=2"
+
+	oldBase := graphBaseURL
+	graphBaseURL = server.URL
+	t.Cleanup(func() { graphBaseURL = oldBase })
+
+	gc := NewGraphClient(server.Client())
+	got, err := gc.GetConversationMessageIDs(folderID, conversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d ids, want 3: %v", len(got), got)
+	}
+	if requestCount != 2 {
+		t.Errorf("expected 2 paginated requests, got %d", requestCount)
+	}
+}
+
+func TestDeleteConversationMessagesWaves(t *testing.T) {
+	conversationID := "conv-wave"
+	folderID := "inbox-folder"
+	remaining := map[string]bool{"a": true, "b": true, "c": true}
+	deleteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages"):
+			var hits []Message
+			for id := range remaining {
+				hits = append(hits, Message{ID: id, ConversationID: conversationID})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"value": hits})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/move"):
+			deleteCalls++
+			parts := strings.Split(r.URL.Path, "/")
+			id := parts[len(parts)-2]
+			delete(remaining, id)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	oldBase := graphBaseURL
+	graphBaseURL = server.URL
+	t.Cleanup(func() { graphBaseURL = oldBase })
+
+	gc := NewGraphClient(server.Client())
+	succeeded, failed, errs := gc.DeleteConversationMessages(folderID, conversationID, nil, false)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(failed) > 0 {
+		t.Fatalf("unexpected failed ids: %v", failed)
+	}
+	if len(succeeded) != 3 {
+		t.Fatalf("expected 3 succeeded, got %d: %v", len(succeeded), succeeded)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected all messages removed, remaining: %v", remaining)
+	}
+	if deleteCalls != 3 {
+		t.Errorf("expected 3 delete calls, got %d", deleteCalls)
+	}
+}
 
 func TestParseAttendeeList(t *testing.T) {
 	tests := []struct {
@@ -74,7 +203,6 @@ func TestCountScheduleConflicts(t *testing.T) {
 	queryStart := time.Date(2026, 1, 15, 8, 0, 0, 0, time.Local)
 	eventStart := time.Date(2026, 1, 15, 9, 0, 0, 0, time.Local)
 	eventEnd := time.Date(2026, 1, 15, 10, 0, 0, 0, time.Local)
-	// slots: 8:00=0, 8:30=0, 9:00=2, 9:30=2, ...
 	schedules := []ScheduleInformation{
 		{ScheduleID: "a@x.com", AvailabilityView: "0022000000"},
 		{ScheduleID: "b@x.com", AvailabilityView: "0000000000"},
@@ -116,10 +244,10 @@ func TestCreateEventRequestJSON(t *testing.T) {
 		RangeType: "noEnd", StartDate: "2026-03-15",
 	})
 	body := map[string]interface{}{
-		"subject": "Team sync",
-		"start":   toGraphDateTime(start),
-		"end":     toGraphDateTime(end),
-		"showAs":  "busy",
+		"subject":    "Team sync",
+		"start":      toGraphDateTime(start),
+		"end":        toGraphDateTime(end),
+		"showAs":     "busy",
 		"recurrence": rec,
 	}
 	data, err := json.Marshal(body)
@@ -226,11 +354,11 @@ func TestFilterAndSortMeetingSuggestions(t *testing.T) {
 	tue := time.Date(2026, 8, 25, 0, 0, 0, 0, loc)
 	now := time.Date(2026, 8, 25, 9, 0, 0, 0, loc)
 	suggestions := []MeetingTimeSuggestion{
-		{Start: time.Date(2026, 8, 24, 14, 0, 0, 0, loc)}, // Monday — past relative to now on Tue
-		{Start: time.Date(2026, 8, 25, 14, 0, 0, 0, loc)}, // Tuesday afternoon
-		{Start: time.Date(2026, 8, 24, 16, 0, 0, 0, loc)}, // Monday — should be dropped
-		{Start: time.Date(2026, 8, 26, 10, 0, 0, 0, loc)}, // Wednesday
-		{Start: time.Date(2026, 8, 25, 11, 0, 0, 0, loc)}, // Tuesday morning
+		{Start: time.Date(2026, 8, 24, 14, 0, 0, 0, loc)},
+		{Start: time.Date(2026, 8, 25, 14, 0, 0, 0, loc)},
+		{Start: time.Date(2026, 8, 24, 16, 0, 0, 0, loc)},
+		{Start: time.Date(2026, 8, 26, 10, 0, 0, 0, loc)},
+		{Start: time.Date(2026, 8, 25, 11, 0, 0, 0, loc)},
 	}
 	out := filterAndSortMeetingSuggestions(suggestions, tue, now)
 	if len(out) != 3 {

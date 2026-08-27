@@ -2187,3 +2187,66 @@ func TestWrapKeyHintsTwoLines(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteThreadKeyOpensConfirm(t *testing.T) {
+	members := make([]Message, 10)
+	for i := range members {
+		members[i] = Message{ID: "msg-" + string(rune('a'+i)), ConversationID: "conv-1"}
+	}
+	m := mainModel{
+		state:           stateMain,
+		activePane:      paneMessages,
+		folders:         []MailFolder{{ID: "inbox", DisplayName: "Inbox"}},
+		selectedFolder:  0,
+		messages:        members,
+		threadGroups:    []ThreadGroup{{ConversationID: "conv-1", Subject: "Test thread", Members: members}},
+		virtualList:     []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}},
+		virtualSelected: 0,
+	}
+	updatedInterface, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	updated := updatedInterface.(mainModel)
+	if updated.state != stateDeleteThreadConfirm {
+		t.Fatalf("expected stateDeleteThreadConfirm, got %v", updated.state)
+	}
+	if len(updated.deleteThreadMsgIDs) != 10 {
+		t.Fatalf("expected 10 local ids, got %d", len(updated.deleteThreadMsgIDs))
+	}
+	if updated.deleteThreadConversationID != "conv-1" {
+		t.Errorf("conversation id = %q, want conv-1", updated.deleteThreadConversationID)
+	}
+	if cmd != nil {
+		t.Fatal("expected no background resolve command on D")
+	}
+}
+
+func TestMultipleMailsDeletedPartialFailureRestoresPending(t *testing.T) {
+	m := mainModel{
+		state:          stateMain,
+		folders:        []MailFolder{{ID: "inbox", DisplayName: "Inbox"}},
+		selectedFolder: 0,
+		graphClient:    NewGraphClient(http.DefaultClient),
+		pendingDeleteIDs: map[string]bool{
+			"ok-1":   true,
+			"fail-1": true,
+		},
+	}
+	updatedInterface, cmd := m.Update(multipleMailsDeletedMsg{
+		MessageIDs:   []string{"ok-1", "fail-1"},
+		SucceededIDs: []string{"ok-1"},
+		FailedIDs:    []string{"fail-1"},
+		Errors:       []error{io.EOF},
+	})
+	updated := updatedInterface.(mainModel)
+	if updated.pendingDeleteIDs["fail-1"] {
+		t.Error("failed id should be removed from pendingDeleteIDs")
+	}
+	if !updated.pendingDeleteIDs["ok-1"] {
+		t.Error("successful id should stay pending until fetch confirms deletion")
+	}
+	if !strings.Contains(updated.statusMsg, "1/2") {
+		t.Errorf("expected partial status message, got %q", updated.statusMsg)
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh command on partial failure")
+	}
+}

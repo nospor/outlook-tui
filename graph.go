@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const graphBaseURL = "https://graph.microsoft.com/v1.0"
+var graphBaseURL = "https://graph.microsoft.com/v1.0"
 
 type MailFolder struct {
 	ID               string `json:"id"`
@@ -129,6 +129,8 @@ func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
 
 const messagePageSize = 50
 const deleteConcurrency = 10
+const maxFolderScanPages = 200
+const maxConversationDeleteWaves = 3
 
 // GetMessageIDsPage fetches a page of message IDs from a folder (lightweight).
 func (gc *GraphClient) GetMessageIDsPage(folderID string, skip int) ([]string, error) {
@@ -161,6 +163,181 @@ func (gc *GraphClient) GetMessageIDsPage(folderID string, skip int) ([]string, e
 	return ids, nil
 }
 
+func escapeODataString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+type messageListPage struct {
+	Messages []Message
+	NextLink string
+}
+
+func (gc *GraphClient) getMessageListPage(reqURL string) (messageListPage, error) {
+	resp, err := gc.client.Get(reqURL)
+	if err != nil {
+		return messageListPage{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return messageListPage{}, fmt.Errorf("failed to get messages: status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Value    []Message `json:"value"`
+		NextLink string    `json:"@odata.nextLink"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return messageListPage{}, err
+	}
+	return messageListPage{Messages: result.Value, NextLink: result.NextLink}, nil
+}
+
+func messageMatchesConversation(msg Message, conversationID string) bool {
+	cid := msg.ConversationID
+	if cid == "" {
+		cid = msg.ID
+	}
+	return cid == conversationID
+}
+
+func (gc *GraphClient) paginateMessageIDList(initialURL string) ([]string, error) {
+	idSet := make(map[string]bool)
+	seenURLs := make(map[string]bool)
+	reqURL := initialURL
+	for page := 0; reqURL != "" && page < maxFolderScanPages; page++ {
+		if seenURLs[reqURL] {
+			break
+		}
+		seenURLs[reqURL] = true
+
+		pageResult, err := gc.getMessageListPage(reqURL)
+		if err != nil {
+			return nil, err
+		}
+		for _, msg := range pageResult.Messages {
+			if msg.ID != "" {
+				idSet[msg.ID] = true
+			}
+		}
+		reqURL = pageResult.NextLink
+	}
+
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func (gc *GraphClient) getConversationMessageIDsFiltered(folderID, conversationID string) ([]string, error) {
+	filter := fmt.Sprintf("conversationId eq '%s'", escapeODataString(conversationID))
+	params := url.Values{}
+	params.Set("$filter", filter)
+	params.Set("$select", "id")
+	params.Set("$top", fmt.Sprintf("%d", messagePageSize))
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?%s", graphBaseURL, url.PathEscape(folderID), params.Encode())
+	return gc.paginateMessageIDList(reqURL)
+}
+
+func (gc *GraphClient) scanFolderForConversationIDs(folderID, conversationID string) ([]string, error) {
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,conversationId&$top=%d&$orderby=receivedDateTime%%20desc",
+		graphBaseURL, url.PathEscape(folderID), messagePageSize)
+
+	idSet := make(map[string]bool)
+	seenURLs := make(map[string]bool)
+	for page := 0; reqURL != "" && page < maxFolderScanPages; page++ {
+		if seenURLs[reqURL] {
+			break
+		}
+		seenURLs[reqURL] = true
+
+		pageResult, err := gc.getMessageListPage(reqURL)
+		if err != nil {
+			return nil, err
+		}
+		for _, msg := range pageResult.Messages {
+			if messageMatchesConversation(msg, conversationID) {
+				idSet[msg.ID] = true
+			}
+		}
+		reqURL = pageResult.NextLink
+	}
+
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// GetConversationMessageIDs returns all message IDs in a conversation within a folder.
+// It tries a Graph $filter query first (fast), then falls back to a bounded folder scan.
+func (gc *GraphClient) GetConversationMessageIDs(folderID, conversationID string) ([]string, error) {
+	if ids, err := gc.getConversationMessageIDsFiltered(folderID, conversationID); err == nil && len(ids) > 0 {
+		return ids, nil
+	}
+	return gc.scanFolderForConversationIDs(folderID, conversationID)
+}
+
+// DeleteConversationMessages deletes every message in a conversation within a folder.
+// seedIDs are deleted immediately; up to maxConversationDeleteWaves verification scans
+// catch any messages the filter or local list missed.
+func (gc *GraphClient) DeleteConversationMessages(folderID, conversationID string, seedIDs []string, hardDelete bool) (succeeded, failed []string, errs []error) {
+	succeededSet := make(map[string]bool)
+	failedSet := make(map[string]bool)
+
+	deleteBatch := func(ids []string) int {
+		if len(ids) == 0 {
+			return 0
+		}
+		perErrs := gc.deleteMessagesConcurrent(ids, hardDelete)
+		successCount := 0
+		for i, id := range ids {
+			if perErrs[i] != nil {
+				failedSet[id] = true
+				errs = append(errs, perErrs[i])
+			} else {
+				succeededSet[id] = true
+				delete(failedSet, id)
+				successCount++
+			}
+		}
+		return successCount
+	}
+
+	deleteBatch(seedIDs)
+
+	for wave := 0; wave < maxConversationDeleteWaves; wave++ {
+		ids, err := gc.GetConversationMessageIDs(folderID, conversationID)
+		if err != nil {
+			errs = append(errs, err)
+			break
+		}
+		var remaining []string
+		for _, id := range ids {
+			if !succeededSet[id] {
+				remaining = append(remaining, id)
+			}
+		}
+		if len(remaining) == 0 {
+			break
+		}
+		if deleteBatch(remaining) == 0 {
+			break
+		}
+	}
+
+	for id := range succeededSet {
+		succeeded = append(succeeded, id)
+	}
+	for id := range failedSet {
+		failed = append(failed, id)
+	}
+	return succeeded, failed, errs
+}
+
 // getAllMessageIDs paginates through all messages in a folder and returns their IDs.
 func (gc *GraphClient) getAllMessageIDs(folderID string) ([]string, error) {
 	var allIDs []string
@@ -183,6 +360,7 @@ func (gc *GraphClient) getAllMessageIDs(folderID string) ([]string, error) {
 }
 
 // deleteMessagesConcurrent deletes messages with a bounded worker pool.
+// The returned slice has one entry per input ID (nil means success).
 func (gc *GraphClient) deleteMessagesConcurrent(ids []string, hardDelete bool) []error {
 	if len(ids) == 0 {
 		return nil
@@ -204,14 +382,7 @@ func (gc *GraphClient) deleteMessagesConcurrent(ids []string, hardDelete bool) [
 		}(i, id)
 	}
 	wg.Wait()
-
-	var actualErrors []error
-	for _, err := range errs {
-		if err != nil {
-			actualErrors = append(actualErrors, err)
-		}
-	}
-	return actualErrors
+	return errs
 }
 
 // EmptyFolderMessages deletes all messages in a folder, re-fetching in waves until empty.
@@ -225,8 +396,13 @@ func (gc *GraphClient) EmptyFolderMessages(folderID string, hardDelete bool) (de
 			break
 		}
 		waveErrs := gc.deleteMessagesConcurrent(ids, hardDelete)
-		errs = append(errs, waveErrs...)
-		deletedCount += len(ids) - len(waveErrs)
+		for _, err := range waveErrs {
+			if err != nil {
+				errs = append(errs, err)
+			} else {
+				deletedCount++
+			}
+		}
 	}
 	return deletedCount, errs, nil
 }

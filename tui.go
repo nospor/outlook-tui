@@ -15,7 +15,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -122,8 +121,10 @@ type (
 	mailSentMsg             struct{}
 	mailDeletedMsg          struct{ MessageID string }
 	multipleMailsDeletedMsg struct {
-		MessageIDs []string
-		Errors     []error
+		MessageIDs   []string
+		SucceededIDs []string
+		FailedIDs    []string
+		Errors       []error
 	}
 	folderEmptiedMsg struct {
 		FolderID      string
@@ -231,8 +232,10 @@ type mainModel struct {
 	selectedMoveFolderIdx int
 
 	// Thread deletion confirm state
-	deleteThreadMsgIDs  []string
-	deleteThreadSubject string
+	deleteThreadMsgIDs         []string
+	deleteThreadSubject        string
+	deleteThreadConversationID string
+	deleteThreadFolderID       string
 
 	// Empty folder confirm state
 	emptyFolderConfirmID    string
@@ -720,33 +723,38 @@ func deleteMailCmd(gc *GraphClient, msgID string, hardDelete bool) tea.Cmd {
 	}
 }
 
+func deleteConversationCmd(gc *GraphClient, folderID, conversationID string, seedIDs []string, hardDelete bool) tea.Cmd {
+	return func() tea.Msg {
+		succeeded, failed, errs := gc.DeleteConversationMessages(folderID, conversationID, seedIDs, hardDelete)
+		allIDs := append(append([]string{}, succeeded...), failed...)
+		return multipleMailsDeletedMsg{
+			MessageIDs:   allIDs,
+			SucceededIDs: succeeded,
+			FailedIDs:    failed,
+			Errors:       errs,
+		}
+	}
+}
+
 func deleteMultipleMailsCmd(gc *GraphClient, msgIDs []string, hardDelete bool) tea.Cmd {
 	return func() tea.Msg {
-		var wg sync.WaitGroup
-		errs := make([]error, len(msgIDs))
-		for i, id := range msgIDs {
-			wg.Add(1)
-			go func(idx int, msgID string) {
-				defer wg.Done()
-				if hardDelete {
-					errs[idx] = gc.HardDeleteMessage(msgID)
-				} else {
-					errs[idx] = gc.DeleteMessage(msgID)
-				}
-			}(i, id)
-		}
-		wg.Wait()
-
+		perErrs := gc.deleteMessagesConcurrent(msgIDs, hardDelete)
+		succeeded := make([]string, 0, len(msgIDs))
+		failed := make([]string, 0)
 		var actualErrors []error
-		for _, err := range errs {
-			if err != nil {
-				actualErrors = append(actualErrors, err)
+		for i, id := range msgIDs {
+			if perErrs[i] != nil {
+				failed = append(failed, id)
+				actualErrors = append(actualErrors, perErrs[i])
+			} else {
+				succeeded = append(succeeded, id)
 			}
 		}
-
 		return multipleMailsDeletedMsg{
-			MessageIDs: msgIDs,
-			Errors:     actualErrors,
+			MessageIDs:   msgIDs,
+			SucceededIDs: succeeded,
+			FailedIDs:    failed,
+			Errors:       actualErrors,
 		}
 	}
 }
@@ -1379,6 +1387,32 @@ func normaliseSubject(s string) string {
 		}
 	}
 	return s
+}
+
+// localConversationMessageIDs returns IDs from m.messages matching a conversation.
+func (m mainModel) localConversationMessageIDs(conversationID string) []string {
+	var ids []string
+	for _, msg := range m.messages {
+		if messageMatchesConversation(msg, conversationID) {
+			ids = append(ids, msg.ID)
+		}
+	}
+	return ids
+}
+
+// unionMessageIDs returns the deduplicated union of multiple message ID slices.
+func unionMessageIDs(lists ...[]string) []string {
+	set := make(map[string]bool)
+	for _, list := range lists {
+		for _, id := range list {
+			set[id] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	return out
 }
 
 // buildThreadGroups groups m.messages into conversation threads.
@@ -2375,18 +2409,23 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case multipleMailsDeletedMsg:
-		if len(msg.Errors) > 0 {
-			m.statusMsg = fmt.Sprintf("Deleted thread with %d errors (e.g. %v)", len(msg.Errors), msg.Errors[0])
-		} else {
+		total := len(msg.MessageIDs)
+		succeeded := len(msg.SucceededIDs)
+		failed := len(msg.FailedIDs)
+		if failed > 0 {
+			m.statusMsg = fmt.Sprintf("Deleted %d/%d messages in thread (%d failed)", succeeded, total, failed)
+			for _, id := range msg.FailedIDs {
+				delete(m.pendingDeleteIDs, id)
+			}
+		} else if succeeded > 0 {
 			m.statusMsg = "Thread moved to Deleted Items"
 		}
 
-		// Find if any of the deleted messages were unread before deleting
-		// and remove them from SQLite cache and favorites
+		// Remove successfully deleted messages from SQLite cache and favorites.
 		var deletedMsgFolderIDs []string
 		unreadCount := 0
 
-		for _, targetID := range msg.MessageIDs {
+		for _, targetID := range msg.SucceededIDs {
 			wasUnread := false
 			for _, em := range m.messages {
 				if em.ID == targetID {
@@ -2448,9 +2487,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateFavoritesFolderCounts()
 				return m, nil
 			}
-			// Only refresh the message list; folder unread counts were
-			// already updated locally so a separate fetchFoldersCmd is not needed.
-			return m, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID)
+			var refreshCmds []tea.Cmd
+			if failed > 0 {
+				refreshCmds = append(refreshCmds, fetchFoldersCmd(m.graphClient))
+			}
+			refreshCmds = append(refreshCmds, fetchMessagesCmd(m.graphClient, m.folders[m.selectedFolder].ID))
+			return m, tea.Batch(refreshCmds...)
 		}
 
 	case folderEmptiedMsg:
@@ -3020,17 +3062,26 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "D":
 			// Delete current thread with confirmation
-			if am := m.activeMessage(); am != nil {
-				item := m.virtualList[m.virtualSelected]
-				tg := m.threadGroups[item.ThreadIdx]
-				var ids []string
-				for _, mem := range tg.Members {
-					ids = append(ids, mem.ID)
-				}
-				if len(ids) > 0 {
-					m.deleteThreadMsgIDs = ids
-					m.deleteThreadSubject = tg.Subject
-					m.state = stateDeleteThreadConfirm
+			if am := m.activeMessage(); am != nil && len(m.folders) > 0 {
+				folderID := m.folders[m.selectedFolder].ID
+				if folderID != "favorites" {
+					item := m.virtualList[m.virtualSelected]
+					tg := m.threadGroups[item.ThreadIdx]
+					var localIDs []string
+					for _, mem := range tg.Members {
+						localIDs = append(localIDs, mem.ID)
+					}
+					if len(localIDs) > 0 {
+						convID := tg.ConversationID
+						if convID == "" {
+							convID = am.ID
+						}
+						m.deleteThreadMsgIDs = localIDs
+						m.deleteThreadSubject = tg.Subject
+						m.deleteThreadConversationID = convID
+						m.deleteThreadFolderID = folderID
+						m.state = stateDeleteThreadConfirm
+					}
 				}
 			}
 		case "U":
@@ -4008,12 +4059,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "y", "Y":
 			m.state = stateMain
-			if len(m.deleteThreadMsgIDs) > 0 {
+			removeIDs := unionMessageIDs(m.deleteThreadMsgIDs, m.localConversationMessageIDs(m.deleteThreadConversationID))
+			if len(removeIDs) > 0 && m.deleteThreadConversationID != "" && m.deleteThreadFolderID != "" {
 				hardDelete := m.isInDeletedItems()
 				if hardDelete {
-					m.statusMsg = fmt.Sprintf("Permanently deleting %d message(s) in thread...", len(m.deleteThreadMsgIDs))
+					m.statusMsg = fmt.Sprintf("Permanently deleting thread in %s...", m.folders[m.selectedFolder].DisplayName)
 				} else {
-					m.statusMsg = fmt.Sprintf("Moving %d message(s) in thread to Deleted Items...", len(m.deleteThreadMsgIDs))
+					m.statusMsg = fmt.Sprintf("Deleting thread in %s (may take a moment)...", m.folders[m.selectedFolder].DisplayName)
 				}
 				// Capture unread counts BEFORE removing from local state, because
 				// removeMessagesFromLocalState clears m.messages and m.threadGroups
@@ -4022,8 +4074,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					folderID := m.folders[m.selectedFolder].ID
 					if folderID != "favorites" {
 						threadUnreadCount := 0
-						delIDSet := make(map[string]bool, len(m.deleteThreadMsgIDs))
-						for _, id := range m.deleteThreadMsgIDs {
+						delIDSet := make(map[string]bool, len(removeIDs))
+						for _, id := range removeIDs {
 							delIDSet[id] = true
 						}
 						for _, msg := range m.messages {
@@ -4048,20 +4100,26 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				// Optimistically remove all thread messages from local state for
 				// instant UI feedback; background API calls sync with server.
-				m.removeMessagesFromLocalState(m.deleteThreadMsgIDs)
+				m.removeMessagesFromLocalState(removeIDs)
 				var detailCmd tea.Cmd
 				m, detailCmd = m.loadMessageDetail(m.activeMessage())
 				if detailCmd != nil {
 					cmds = append(cmds, detailCmd)
 				}
-				cmds = append(cmds, deleteMultipleMailsCmd(m.graphClient, m.deleteThreadMsgIDs, hardDelete))
+				cmds = append(cmds, deleteConversationCmd(m.graphClient, m.deleteThreadFolderID, m.deleteThreadConversationID, removeIDs, hardDelete))
+			} else if len(m.deleteThreadMsgIDs) == 0 {
+				m.statusMsg = "No thread messages to delete"
 			}
 			m.deleteThreadMsgIDs = nil
 			m.deleteThreadSubject = ""
+			m.deleteThreadConversationID = ""
+			m.deleteThreadFolderID = ""
 		case "n", "N", "esc":
 			m.state = stateMain
 			m.deleteThreadMsgIDs = nil
 			m.deleteThreadSubject = ""
+			m.deleteThreadConversationID = ""
+			m.deleteThreadFolderID = ""
 		}
 
 	case stateEmptyFolderConfirm:
@@ -7007,7 +7065,7 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 	rows = append(rows, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorRed)).Render(headerText))
 	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
 
-	line1 := fmt.Sprintf("You are about to delete all %d message(s) in the thread:", len(m.deleteThreadMsgIDs))
+	line1 := fmt.Sprintf("You are about to delete all %d loaded message(s) in the thread:", len(m.deleteThreadMsgIDs))
 	if len(line1) < dropdownWidth-2 {
 		line1 = line1 + strings.Repeat(" ", dropdownWidth-2-len(line1))
 	} else if len(line1) > dropdownWidth-2 {
@@ -7022,6 +7080,15 @@ func (m mainModel) renderDeleteThreadConfirmPopup(width int) string {
 		subjText = subjText[:dropdownWidth-5] + "..."
 	}
 	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(subjText))
+	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
+
+	noteText := "Any other messages in this conversation (same folder) will also be deleted."
+	if len(noteText) < dropdownWidth-2 {
+		noteText = noteText + strings.Repeat(" ", dropdownWidth-2-len(noteText))
+	} else if len(noteText) > dropdownWidth-2 {
+		noteText = noteText[:dropdownWidth-5] + "..."
+	}
+	rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(noteText))
 	rows = append(rows, strings.Repeat(" ", dropdownWidth-2))
 
 	line2 := "Do you really want to delete this entire thread?"
