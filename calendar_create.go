@@ -1339,7 +1339,7 @@ func (m mainModel) renderCalendarCreateView() string {
 	leftPane = applyPaneTitle(leftPane, "EVENT DETAILS", !m.eventCreateFocusSuggestions)
 
 	var rightLines []string
-	rightLines = append(rightLines, cyan.Render("BUSY TIMELINE")+" "+dimStyle.Render("(░ free ▒ tentative █ busy ▓ OOF)"))
+	rightLines = append(rightLines, cyan.Render("BUSY TIMELINE")+" "+availabilityTimelineLegend())
 	if m.eventCreateAvailLoading {
 		rightLines = append(rightLines, m.spinner.View()+" Loading availability...")
 	} else {
@@ -1424,28 +1424,60 @@ func (m mainModel) renderBusyTimeline() []string {
 		row := fmt.Sprintf("%-10s ", email)
 		view := sch.AvailabilityView
 		for i := 0; i < slotCount && i < len(view); i++ {
-			sym := AvailabilitySymbol(view[i])
 			slotStart := m.eventCreateScheduleQueryStart.Add(time.Duration(i) * eventCreateAvailIntervalMin * time.Minute)
 			slotEnd := slotStart.Add(eventCreateAvailIntervalMin * time.Minute)
 			inEvent := !eventEnd.IsZero() && slotEnd.After(eventStart) && slotStart.Before(eventEnd)
-			if inEvent {
-				sym = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorViolet)).Bold(true).Render(sym)
-			} else if view[i] == '2' || view[i] == '3' {
-				sym = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(sym)
-			}
-			row += padTimelineCell(sym, eventCreateSlotCharWidth)
+			row += formatAvailabilityCell(view[i], inEvent, eventCreateSlotCharWidth)
 		}
 		lines = append(lines, row)
 	}
 	return lines
 }
 
-func padTimelineCell(sym string, width int) string {
-	vis := lipgloss.Width(sym)
-	if vis >= width {
-		return sym
+func formatAvailabilityCell(code byte, inEvent bool, width int) string {
+	sym := AvailabilitySymbol(code)
+	content := sym
+	if vis := lipgloss.Width(sym); vis < width {
+		content += strings.Repeat(" ", width-vis)
 	}
-	return sym + strings.Repeat(" ", width-vis)
+
+	if inEvent {
+		return lipgloss.NewStyle().
+			Background(lipgloss.Color(ColorGreen)).
+			Foreground(lipgloss.Color(ColorBg)).
+			Bold(true).
+			Render(content)
+	}
+
+	switch code {
+	case '0':
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(sym) + strings.Repeat(" ", width-lipgloss.Width(sym))
+	case '1':
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(ColorYellow)).Render(sym) + strings.Repeat(" ", width-lipgloss.Width(sym))
+	case '2', '3':
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Bold(true).Render(sym) + strings.Repeat(" ", width-lipgloss.Width(sym))
+	case '4':
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Render(sym) + strings.Repeat(" ", width-lipgloss.Width(sym))
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(sym) + strings.Repeat(" ", width-lipgloss.Width(sym))
+	}
+}
+
+func availabilityTimelineLegend() string {
+	proposedSample := lipgloss.NewStyle().
+		Background(lipgloss.Color(ColorGreen)).
+		Foreground(lipgloss.Color(ColorBg)).
+		Bold(true).
+		Render(" ## ")
+	parts := []string{
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSubtext)).Render(". free"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorYellow)).Render("~ tentative"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Bold(true).Render("# busy"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Bold(true).Render("! OOF"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Render("W elsewhere"),
+		proposedSample + dimStyle.Render("proposed time"),
+	}
+	return dimStyle.Render("(") + strings.Join(parts, dimStyle.Render("  ")) + dimStyle.Render(")")
 }
 
 func (m mainModel) renderEventCreateAttendeeRows(activeLabel, inactiveLabel lipgloss.Style) []string {

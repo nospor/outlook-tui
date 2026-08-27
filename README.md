@@ -239,7 +239,7 @@ Press **`N`** (capital N) from the calendar popup to open the **Create Event** f
 The form is split into two columns:
 
 - **Left**: Multi-step fields (Tab/Shift+Tab to navigate): Subject, Attendees, Start, End, Location, Body, and Options.
-- **Right**: Attendee **busy timeline** (via Graph `getSchedule`) and **suggested time slots** (via Graph `findMeetingTimes`).
+- **Right**: Attendee **busy timeline** (via Graph `getSchedule`) and **suggested time slots** (via Graph `findMeetingTimes`). The timeline uses distinct, color-coded symbols: `.` free, `~` tentative, `#` busy, `!` OOF, `W` working elsewhere; slots in your proposed event window have a green background.
 
 **Attendees step** has separate **Required** and **Optional** fields (Tab/Shift+Tab moves between them), like Outlook. Use `!room@domain.com` in either field for a resource (meeting room/equipment).
 

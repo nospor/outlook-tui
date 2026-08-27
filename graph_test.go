@@ -214,11 +214,17 @@ func TestCountScheduleConflicts(t *testing.T) {
 }
 
 func TestAvailabilitySymbol(t *testing.T) {
-	if AvailabilitySymbol('0') != "░" {
-		t.Error("free symbol mismatch")
+	cases := map[byte]string{
+		'0': ".",
+		'1': "~",
+		'2': "#",
+		'3': "!",
+		'4': "W",
 	}
-	if AvailabilitySymbol('2') != "█" {
-		t.Error("busy symbol mismatch")
+	for code, want := range cases {
+		if got := AvailabilitySymbol(code); got != want {
+			t.Errorf("AvailabilitySymbol(%q) = %q, want %q", code, got, want)
+		}
 	}
 }
 
