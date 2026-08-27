@@ -1,4 +1,14 @@
 
+## [0.8.2] - 2026-08-27
+
+### Bug Fixes
+
+- *(tui)* Delete full conversation in folder with bounded Graph lookup ([beb15e5](https://github.com/nospor/outlook-tui/commit/beb15e50992c187c760ebd45a7beb41ae184e826))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.1 [skip ci] ([2796a5f](https://github.com/nospor/outlook-tui/commit/2796a5f1af291da6da714cbfa36238186def868b))
+
 ## [0.8.1] - 2026-08-26
 
 ### Features
