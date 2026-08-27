@@ -1,4 +1,18 @@
 
+## [0.8.3] - 2026-08-27
+
+### Features
+
+- *(calendar)* Auto-sync end date/time when start changes in event create ([11137ae](https://github.com/nospor/outlook-tui/commit/11137ae3e6530383ae333d2d995f421a7e9a9d52))
+
+### Bug Fixes
+
+- *(calendar)* Use clearer symbols and green highlight in busy timeline ([08a0b0b](https://github.com/nospor/outlook-tui/commit/08a0b0bf500a43d2bbb93322dc0fc150af0d0fb6))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.2 [skip ci] ([ad92cc9](https://github.com/nospor/outlook-tui/commit/ad92cc979748ca495e58dc03a44e0af8c7baa6ad))
+
 ## [0.8.2] - 2026-08-27
 
 ### Bug Fixes
