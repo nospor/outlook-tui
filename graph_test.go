@@ -377,3 +377,76 @@ func TestFilterAndSortMeetingSuggestions(t *testing.T) {
 		t.Errorf("expected Tuesday 14:00 second, got %v", out[1].Start)
 	}
 }
+
+func TestPastedImageExt(t *testing.T) {
+	if got := pastedImageExt("image/png"); got != "png" {
+		t.Errorf("pastedImageExt(png) = %q, want png", got)
+	}
+	if got := pastedImageExt("image/jpeg"); got != "jpg" {
+		t.Errorf("pastedImageExt(jpeg) = %q, want jpg", got)
+	}
+}
+
+func TestUniquePastedImageName(t *testing.T) {
+	taken := map[string]bool{"pasted-image-1.png": true}
+	got := uniquePastedImageName("image/png", taken)
+	if got != "pasted-image-2.png" {
+		t.Errorf("uniquePastedImageName = %q, want pasted-image-2.png", got)
+	}
+	if !taken["pasted-image-2.png"] {
+		t.Error("expected pasted-image-2.png to be marked taken")
+	}
+}
+
+func TestMakeImageAttachmentsAvoidsReservedNames(t *testing.T) {
+	reserved := map[string]bool{"pasted-image-1.png": true}
+	images := []PastedImage{
+		{Bytes: []byte("img1"), ContentType: "image/png"},
+	}
+	atts := makeImageAttachments(images, reserved)
+	if len(atts) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(atts))
+	}
+	if atts[0].Name != "pasted-image-2.png" {
+		t.Errorf("attachment name = %q, want pasted-image-2.png", atts[0].Name)
+	}
+	if atts[0].ContentId != "image1" {
+		t.Errorf("contentId = %q, want image1", atts[0].ContentId)
+	}
+}
+
+func TestBuildComposeAttachmentsUniqueNames(t *testing.T) {
+	files := []PendingFile{
+		{Name: "pasted-image-1.png", ContentType: "image/png", Data: []byte("file")},
+	}
+	images := []PastedImage{
+		{Bytes: []byte("img"), ContentType: "image/png", Name: "pasted-image-1.png"},
+	}
+	atts := buildComposeAttachments(images, files, nil)
+	if len(atts) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(atts))
+	}
+	if atts[0].Name == atts[1].Name {
+		t.Errorf("duplicate attachment names: %q and %q", atts[0].Name, atts[1].Name)
+	}
+	if atts[0].Name != "pasted-image-2.png" {
+		t.Errorf("pasted image name = %q, want pasted-image-2.png", atts[0].Name)
+	}
+	if atts[1].Name != "pasted-image-1.png" {
+		t.Errorf("file attachment name = %q, want pasted-image-1.png", atts[1].Name)
+	}
+}
+
+func TestBuildComposeAttachmentsReservesReplyTargetNames(t *testing.T) {
+	images := []PastedImage{
+		{Bytes: []byte("img"), ContentType: "image/png"},
+	}
+	reserved := map[string]bool{"pasted-image-1.png": true}
+	atts := buildComposeAttachments(images, nil, reserved)
+	if len(atts) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(atts))
+	}
+	if atts[0].Name != "pasted-image-2.png" {
+		t.Errorf("attachment name = %q, want pasted-image-2.png", atts[0].Name)
+	}
+}

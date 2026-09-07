@@ -479,12 +479,66 @@ func parseAddressStringToRecipients(addressStr string) []Recipient {
 	return recipients
 }
 
-func makeImageAttachments(images []PastedImage) []Attachment {
+func pastedImageExt(contentType string) string {
+	if strings.Contains(contentType, "jpeg") {
+		return "jpg"
+	}
+	return "png"
+}
+
+func uniquePastedImageName(contentType string, taken map[string]bool) string {
+	ext := pastedImageExt(contentType)
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("pasted-image-%d.%s", n, ext)
+		if !taken[name] {
+			taken[name] = true
+			return name
+		}
+	}
+}
+
+func collectComposeAttachmentNames(files []PendingFile, images []PastedImage, extraReserved map[string]bool) map[string]bool {
+	taken := make(map[string]bool)
+	for name := range extraReserved {
+		taken[name] = true
+	}
+	for _, f := range files {
+		if f.Name != "" {
+			taken[f.Name] = true
+		}
+	}
+	for _, img := range images {
+		if img.Name != "" {
+			taken[img.Name] = true
+		}
+	}
+	return taken
+}
+
+func buildComposeAttachments(images []PastedImage, files []PendingFile, extraReserved map[string]bool) []Attachment {
+	taken := collectComposeAttachmentNames(files, nil, extraReserved)
+	var attachments []Attachment
+	if len(images) > 0 {
+		attachments = append(attachments, makeImageAttachments(images, taken)...)
+	}
+	if len(files) > 0 {
+		attachments = append(attachments, makeFileAttachments(files)...)
+	}
+	return attachments
+}
+
+func makeImageAttachments(images []PastedImage, reservedNames map[string]bool) []Attachment {
 	var atts []Attachment
+	taken := reservedNames
+	if taken == nil {
+		taken = make(map[string]bool)
+	}
 	for i, img := range images {
-		name := fmt.Sprintf("pasted-image-%d.png", i+1)
-		if strings.Contains(img.ContentType, "jpeg") {
-			name = fmt.Sprintf("pasted-image-%d.jpg", i+1)
+		name := img.Name
+		if name == "" || taken[name] {
+			name = uniquePastedImageName(img.ContentType, taken)
+		} else {
+			taken[name] = true
 		}
 		atts = append(atts, Attachment{
 			OdataType:    "#microsoft.graph.fileAttachment",
@@ -519,7 +573,7 @@ func makeFileAttachments(files []PendingFile) []Attachment {
 	return atts
 }
 
-func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string, images []PastedImage, files []PendingFile) error {
+func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddress string, images []PastedImage, files []PendingFile, reservedNames map[string]bool) error {
 	reqURL := fmt.Sprintf("%s/me/sendMail", graphBaseURL)
 
 	sendReq := struct {
@@ -563,14 +617,7 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 	sendReq.SaveToSentItems = "true"
 
 	if len(images) > 0 || len(files) > 0 {
-		var attachments []Attachment
-		if len(images) > 0 {
-			attachments = append(attachments, makeImageAttachments(images)...)
-		}
-		if len(files) > 0 {
-			attachments = append(attachments, makeFileAttachments(files)...)
-		}
-		sendReq.Message.Attachments = attachments
+		sendReq.Message.Attachments = buildComposeAttachments(images, files, reservedNames)
 	}
 
 	jsonBytes, err := json.Marshal(sendReq)
@@ -594,7 +641,7 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 
 // ReplyMessage sends a reply to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/reply on the Graph API.
-func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, images []PastedImage, files []PendingFile) error {
+func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, images []PastedImage, files []PendingFile, reservedNames map[string]bool) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/reply", graphBaseURL, url.PathEscape(messageID))
 
 	type ReplyReq struct {
@@ -606,13 +653,7 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 	}
 	var replyReq ReplyReq
 
-	var attachments []Attachment
-	if len(images) > 0 {
-		attachments = append(attachments, makeImageAttachments(images)...)
-	}
-	if len(files) > 0 {
-		attachments = append(attachments, makeFileAttachments(files)...)
-	}
+	attachments := buildComposeAttachments(images, files, reservedNames)
 	if len(attachments) > 0 {
 		replyReq.Message.Attachments = attachments
 	}
@@ -661,7 +702,7 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 
 // ReplyAllMessage sends a reply-all to a specific message, linking it to the original thread.
 // It calls POST /me/messages/{id}/replyAll on the Graph API.
-func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string, images []PastedImage, files []PendingFile) error {
+func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress string, images []PastedImage, files []PendingFile, reservedNames map[string]bool) error {
 	reqURL := fmt.Sprintf("%s/me/messages/%s/replyAll", graphBaseURL, url.PathEscape(messageID))
 
 	type ReplyReq struct {
@@ -674,13 +715,7 @@ func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress
 	}
 	var replyReq ReplyReq
 
-	var attachments []Attachment
-	if len(images) > 0 {
-		attachments = append(attachments, makeImageAttachments(images)...)
-	}
-	if len(files) > 0 {
-		attachments = append(attachments, makeFileAttachments(files)...)
-	}
+	attachments := buildComposeAttachments(images, files, reservedNames)
 	if len(attachments) > 0 {
 		replyReq.Message.Attachments = attachments
 	}

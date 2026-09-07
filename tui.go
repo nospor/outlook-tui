@@ -213,6 +213,7 @@ type mainModel struct {
 	contactsStartIdx  int
 	composedImages    []PastedImage
 	composedFiles     []PendingFile
+	composeReservedNames map[string]bool // attachment names from reply target to avoid collisions
 	filepicker        filepicker.Model
 
 	// Notification tracking
@@ -688,18 +689,18 @@ func fetchAttachmentsCmd(gc *GraphClient, msgID string) tea.Cmd {
 	}
 }
 
-func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool, images []PastedImage, files []PendingFile) tea.Cmd {
+func sendMailCmd(gc *GraphClient, to, cc, subject, body, replyToID string, replyAll bool, images []PastedImage, files []PendingFile, reservedNames map[string]bool) tea.Cmd {
 	return func() tea.Msg {
 		var err error
 		if replyToID != "" {
 			// Use the proper Graph reply endpoint so the message is threaded correctly.
 			if replyAll {
-				err = gc.ReplyAllMessage(replyToID, body, to, cc, images, files)
+				err = gc.ReplyAllMessage(replyToID, body, to, cc, images, files, reservedNames)
 			} else {
-				err = gc.ReplyMessage(replyToID, body, to, images, files)
+				err = gc.ReplyMessage(replyToID, body, to, images, files, reservedNames)
 			}
 		} else {
-			err = gc.SendMessage(subject, body, to, cc, images, files)
+			err = gc.SendMessage(subject, body, to, cc, images, files, reservedNames)
 		}
 		if err != nil {
 			return errMsg(err)
@@ -2333,8 +2334,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mailSentMsg:
 		m.state = stateMain
 		m.statusMsg = "Email sent successfully!"
-		m.composedFiles = nil
-		m.composedImages = nil
+		m.clearComposeState()
 		// Reload current folder
 		if len(m.folders) > 0 {
 			if m.folders[m.selectedFolder].ID == "favorites" {
@@ -2997,8 +2997,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composeStep = 0
 			m.composeReplyToID = "" // not a reply
 			m.composeIsReplyAll = false
-			m.composedImages = nil
-			m.composedFiles = nil
+			m.clearComposeState()
 			m.loadContacts()
 
 			m.composeTo = textinput.New()
@@ -3391,8 +3390,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.state = stateMain
 				m.statusMsg = "Compose cancelled"
-				m.composedImages = nil
-				m.composedFiles = nil
+				m.clearComposeState()
 			}
 		case "ctrl+f":
 			m.state = stateFileBrowse
@@ -3430,9 +3428,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.composeStep == 3 {
 				imgBytes, contentType, err := GetClipboardImage()
 				if err == nil && len(imgBytes) > 0 {
+					taken := collectComposeAttachmentNames(m.composedFiles, m.composedImages, m.composeReservedNames)
+					name := uniquePastedImageName(contentType, taken)
 					m.composedImages = append(m.composedImages, PastedImage{
 						Bytes:       imgBytes,
 						ContentType: contentType,
+						Name:        name,
 					})
 					placeholder := fmt.Sprintf("[Image %d]", len(m.composedImages))
 					m.composeBody.InsertString(placeholder)
@@ -3469,9 +3470,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.composeIsReplyAll,
 				m.composedImages,
 				m.composedFiles,
+				m.composeReservedNames,
 			))
-			m.composedImages = nil
-			m.composedFiles = nil
+			m.clearComposeState()
 		default:
 			// Update the focused compose input
 			var cmd tea.Cmd
@@ -4045,8 +4046,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			m.state = stateMain
 			m.statusMsg = "Compose cancelled"
-			m.composedImages = nil
-			m.composedFiles = nil
+			m.clearComposeState()
 		case "n", "N", "esc":
 			m.state = stateCompose
 		}
@@ -4280,6 +4280,37 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m *mainModel) clearComposeState() {
+	m.composedImages = nil
+	m.composedFiles = nil
+	m.composeReservedNames = nil
+}
+
+func (m *mainModel) replyTargetAttachments(origMsgID string) []Attachment {
+	if m.detailMessage != nil && m.detailMessage.ID == origMsgID {
+		if len(m.attachments) > 0 {
+			return m.attachments
+		}
+		if len(m.detailMessage.Attachments) > 0 {
+			return m.detailMessage.Attachments
+		}
+	}
+	if am := m.activeMessage(); am != nil && am.ID == origMsgID && len(am.Attachments) > 0 {
+		return am.Attachments
+	}
+	return nil
+}
+
+func (m *mainModel) reservedNamesFromAttachments(atts []Attachment) map[string]bool {
+	reserved := make(map[string]bool)
+	for _, att := range atts {
+		if att.Name != "" {
+			reserved[att.Name] = true
+		}
+	}
+	return reserved
+}
+
 func (m *mainModel) initiateReply(replyAll bool) {
 	origMsgPtr := m.activeMessage()
 	if origMsgPtr == nil {
@@ -4310,6 +4341,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	m.composeIsReplyAll = replyAll
 	m.composedImages = nil
 	m.composedFiles = nil
+	m.composeReservedNames = m.reservedNamesFromAttachments(m.replyTargetAttachments(origMsg.ID))
 	m.loadContacts()
 
 	m.composeTo = textinput.New()

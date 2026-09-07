@@ -14,6 +14,7 @@ import (
 type PastedImage struct {
 	Bytes       []byte
 	ContentType string // e.g. "image/png", "image/jpeg"
+	Name        string // assigned at paste time; used when sending
 }
 
 // GetClipboardImage tries to read an image from the clipboard.
