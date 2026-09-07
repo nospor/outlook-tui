@@ -1,4 +1,14 @@
 
+## [0.8.4] - 2026-09-07
+
+### Bug Fixes
+
+- Avoid duplicate pasted-image filenames when pasting in compose/reply ([45757ca](https://github.com/nospor/outlook-tui/commit/45757ca59ce24c52595ff9bb457e3fd130292cdc))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.3 [skip ci] ([aec9aaa](https://github.com/nospor/outlook-tui/commit/aec9aaad917402518ea26ae0ede2f407e5e02bc0))
+
 ## [0.8.3] - 2026-08-27
 
 ### Features
