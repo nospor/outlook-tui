@@ -214,7 +214,7 @@ func calendarEventBodyText(ev CalendarEvent) string {
 	return strings.TrimSpace(ev.BodyPreview)
 }
 
-func (m *mainModel) initEventEditForm(ev CalendarEvent) {
+func (m *mainModel) initEventEditForm(ev CalendarEvent) tea.Cmd {
 	m.initEventCreateForm(ev.Start.Time().Local())
 	m.eventCreateEditingID = ev.ID
 
@@ -246,6 +246,10 @@ func (m *mainModel) initEventEditForm(ev CalendarEvent) {
 	m.eventCreateAttendeesStep = 0
 	m.eventCreateOptionsStep = 0
 	m.updateEventCreateFocus()
+	// Start/end and attendees are already known when editing, so fill the
+	// availability pane immediately. New-event creation waits until those
+	// fields are confirmed (tab off Attendees/Start/End).
+	return m.scheduleAvailabilityRefresh()
 }
 
 func (m mainModel) eventCreateIsEditing() bool {

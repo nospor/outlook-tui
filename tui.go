@@ -1861,10 +1861,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Cannot edit a cancelled event"
 			return m, nil
 		}
-		m.initEventEditForm(*msg.Event)
+		cmd := m.initEventEditForm(*msg.Event)
 		m.state = stateCalendarCreate
 		m.statusMsg = "Edit event — Tab: fields | Ctrl+s: save | Esc: cancel"
-		return m, nil
+		return m, cmd
 
 	case deviceCodeMsg:
 		m.state = stateDeviceAuth

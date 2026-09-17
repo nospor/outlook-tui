@@ -257,7 +257,7 @@ When SQLite caching is enabled, contact autocomplete works in both attendee fiel
 | `Enter` | Jump from date to hour |
 | `i` | Type a date/time manually (`Enter` apply, `Esc` cancel) |
 
-The status line under the picker shows which part is focused (`date`, `hour`, or `minute`). Changing start/end times refreshes the availability panel automatically (debounced).
+The status line under the picker shows which part is focused (`date`, `hour`, or `minute`). Changing start/end times refreshes the availability panel automatically (debounced). Editing an existing event loads the availability pane immediately from the event's attendees and times; creating a new event waits until attendees are added and those fields are confirmed.
 
 ### Attendee Lists
 
