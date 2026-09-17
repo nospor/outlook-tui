@@ -73,7 +73,7 @@ type (
 	calendarEventLoadedForEditMsg struct {
 		Event *CalendarEvent
 	}
-	eventCreateEditorLoadedMsg string
+	eventCreateEditorLoadedMsg  string
 	eventCreateAvailDebounceMsg struct{}
 )
 
@@ -1412,9 +1412,12 @@ func (m mainModel) renderBusyTimeline() []string {
 	for h := startH; h < endH; h++ {
 		header += fmt.Sprintf("%-*d", hourColWidth, h)
 	}
-	lines = append(lines, dimStyle.Render(header))
+	lines = append(lines, dimStyle.Render(header+"  "+time.Now().Format("MST")+" local"))
 
 	eventStart, eventEnd, _ := m.parsedEventCreateTimes()
+	if conv := formatAvailabilityLocalClocks(m.eventCreateSchedules, eventStart); conv != "" {
+		lines = append(lines, dimStyle.Render(conv))
+	}
 
 	for _, sch := range m.eventCreateSchedules {
 		email := sch.ScheduleID
@@ -1432,6 +1435,31 @@ func (m mainModel) renderBusyTimeline() []string {
 		lines = append(lines, row)
 	}
 	return lines
+}
+
+func formatAvailabilityLocalClocks(schedules []ScheduleInformation, eventStart time.Time) string {
+	if eventStart.IsZero() || len(schedules) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, sch := range schedules {
+		label := formatAttendeeLocalTime(eventStart, sch)
+		if label == "" {
+			continue
+		}
+		email := sch.ScheduleID
+		if at := strings.IndexByte(email, '@'); at > 0 {
+			email = email[:at]
+		}
+		if len(email) > 12 {
+			email = email[:10] + ".."
+		}
+		parts = append(parts, email+" "+label)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + eventStart.Local().Format("15:04 MST") + " → " + strings.Join(parts, ", ")
 }
 
 func formatAvailabilityCell(code byte, inEvent bool, width int) string {

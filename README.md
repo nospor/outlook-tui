@@ -121,7 +121,7 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `events_reminder_min`: An array of integers specifying the minutes before a calendar event to send a desktop notification reminder (defaults to `[30, 15, 1]`). Only triggers desktop notifications if `use_sqlite` is set to `1` (which caches events in the SQLite database).
 * `calendar_default_duration_min`: Default meeting duration in minutes when creating a new calendar event (defaults to `60`).
 * `calendar_default_reminder_min`: Default reminder offset in minutes before a newly created event (defaults to `15`).
-* `calendar_work_start_hour` / `calendar_work_end_hour`: Hours (0–23) defining the busy-timeline window shown while creating events (defaults to `8` and `18`).
+* `calendar_work_start_hour` / `calendar_work_end_hour`: Hours (0–23) defining the busy-timeline window shown while creating events (defaults to `8` and `18`). The timeline is in **your** local timezone; attendee free/busy from Graph is converted using each mailbox’s `workingHours.timeZone` so a 16:00 US-Central meeting is not shown as 16:00 UK.
 
 Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching, folder exclusions, 5-line scrolling, custom download folder, sxiv for images, and Teams theme:
 ```json
@@ -239,7 +239,7 @@ Press **`N`** (capital N) from the calendar popup to open the **Create Event** f
 The form is split into two columns:
 
 - **Left**: Multi-step fields (Tab/Shift+Tab to navigate): Subject, Attendees, Start, End, Location, Body, and Options.
-- **Right**: Attendee **busy timeline** (via Graph `getSchedule`) and **suggested time slots** (via Graph `findMeetingTimes`). The timeline uses distinct, color-coded symbols: `.` free, `~` tentative, `#` busy, `!` OOF, `W` working elsewhere; slots in your proposed event window have a green background.
+- **Right**: Attendee **busy timeline** (via Graph `getSchedule`) and **suggested time slots** (via Graph `findMeetingTimes`). Hours are in **your local timezone**; busy blocks come from each mailbox’s `scheduleItems` (converted from the attendee’s timezone) rather than comparing wall-clock hours. When Graph reports a mailbox timezone, the pane also shows the proposed time in that attendee’s local clock (e.g. `16:30 BST → benito 10:30 CDT`). The timeline uses distinct, color-coded symbols: `.` free, `~` tentative, `#` busy, `!` OOF, `W` working elsewhere; slots in your proposed event window have a green background.
 
 **Attendees step** has separate **Required** and **Optional** fields (Tab/Shift+Tab moves between them), like Outlook. Use `!room@domain.com` in either field for a resource (meeting room/equipment).
 

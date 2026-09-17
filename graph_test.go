@@ -213,6 +213,215 @@ func TestCountScheduleConflicts(t *testing.T) {
 	}
 }
 
+func TestCountScheduleConflictsUsesScheduleItemTimezones(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	queryStart := time.Date(2026, 9, 18, 8, 0, 0, 0, london)
+	eventStart := time.Date(2026, 9, 18, 16, 30, 0, 0, london)
+	eventEnd := eventStart.Add(30 * time.Minute)
+
+	// 16:00–17:00 US Central is 22:00–23:00 London in September — not a 16:30 BST conflict,
+	// even if availabilityView naively marks the 16:00 column busy.
+	usAfternoon := ScheduleInformation{
+		ScheduleID:       "benito@x.com",
+		AvailabilityView: "00000000000000002200",
+		ScheduleItems: []ScheduleItem{
+			{
+				Status: "busy",
+				Start:  CalendarDateTime{DateTime: "2026-09-18T16:00:00", TimeZone: "Central Standard Time"},
+				End:    CalendarDateTime{DateTime: "2026-09-18T17:00:00", TimeZone: "Central Standard Time"},
+			},
+		},
+	}
+	if got := CountScheduleConflicts([]ScheduleInformation{usAfternoon}, queryStart, eventStart, eventEnd, 30); got != 0 {
+		t.Errorf("US afternoon meeting should not conflict with 16:30 London, got %d", got)
+	}
+
+	usMorning := ScheduleInformation{
+		ScheduleID: "berlany@x.com",
+		ScheduleItems: []ScheduleItem{
+			{
+				Status: "busy",
+				Start:  CalendarDateTime{DateTime: "2026-09-18T10:00:00", TimeZone: "Central Standard Time"},
+				End:    CalendarDateTime{DateTime: "2026-09-18T11:00:00", TimeZone: "Central Standard Time"},
+			},
+		},
+	}
+	if got := CountScheduleConflicts([]ScheduleInformation{usMorning}, queryStart, eventStart, eventEnd, 30); got != 1 {
+		t.Errorf("US morning meeting should conflict with 16:30 London, got %d", got)
+	}
+}
+
+func TestAvailabilityViewFromScheduleItemsConvertsTimezones(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	queryStart := time.Date(2026, 9, 18, 8, 0, 0, 0, london)
+	queryEnd := time.Date(2026, 9, 18, 18, 0, 0, 0, london)
+
+	afternoon := []ScheduleItem{{
+		Status: "busy",
+		Start:  CalendarDateTime{DateTime: "2026-09-18T16:00:00", TimeZone: "Central Standard Time"},
+		End:    CalendarDateTime{DateTime: "2026-09-18T17:00:00", TimeZone: "Central Standard Time"},
+	}}
+	view := availabilityViewFromScheduleItems(afternoon, queryStart, queryEnd, 30)
+	if view == "" {
+		t.Fatal("expected rebuilt availability view")
+	}
+	for i := 0; i < len(view); i++ {
+		if view[i] != '0' {
+			t.Fatalf("US 16:00 should be outside London 08:00–18:00, view[%d]=%c view=%q", i, view[i], view)
+		}
+	}
+
+	morning := []ScheduleItem{{
+		Status: "busy",
+		Start:  CalendarDateTime{DateTime: "2026-09-18T10:00:00", TimeZone: "Central Standard Time"},
+		End:    CalendarDateTime{DateTime: "2026-09-18T11:00:00", TimeZone: "Central Standard Time"},
+	}}
+	view = availabilityViewFromScheduleItems(morning, queryStart, queryEnd, 30)
+	if len(view) != 20 {
+		t.Fatalf("len(view)=%d, want 20", len(view))
+	}
+	// 10:00 CDT = 16:00 BST; 30-min slots from 08:00 → indexes 16 and 17.
+	if view[16] != '2' || view[17] != '2' {
+		t.Fatalf("expected busy at 16:00–17:00 London, view=%q", view)
+	}
+}
+
+func TestNormalizeScheduleAvailabilityReplacesWallClockView(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	queryStart := time.Date(2026, 9, 18, 8, 0, 0, 0, london)
+	queryEnd := time.Date(2026, 9, 18, 18, 0, 0, 0, london)
+	schedules := []ScheduleInformation{{
+		ScheduleID:       "benito@x.com",
+		AvailabilityView: "00000000000000002200",
+		ScheduleItems: []ScheduleItem{{
+			Status: "busy",
+			Start:  CalendarDateTime{DateTime: "2026-09-18T16:00:00", TimeZone: "Central Standard Time"},
+			End:    CalendarDateTime{DateTime: "2026-09-18T17:00:00", TimeZone: "Central Standard Time"},
+		}},
+	}}
+	normalizeScheduleAvailability(schedules, queryStart, queryEnd, 30)
+	for i := 0; i < len(schedules[0].AvailabilityView); i++ {
+		if schedules[0].AvailabilityView[i] != '0' {
+			t.Fatalf("normalized view still has busy at index %d: %q", i, schedules[0].AvailabilityView)
+		}
+	}
+}
+
+func TestNormalizeShiftsAttendeeWallClockAvailabilityView(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	queryStart := time.Date(2026, 9, 18, 9, 0, 0, 0, london)
+	queryEnd := time.Date(2026, 9, 18, 18, 0, 0, 0, london)
+	// 9:00–18:00, 30-min slots. Busy 14:00–18:00 attendee-local (indexes 10–17).
+	view := strings.Repeat("0", 10) + strings.Repeat("2", 8)
+	schedules := []ScheduleInformation{{
+		ScheduleID:       "benito@x.com",
+		AvailabilityView: view,
+		WorkingHours: &ScheduleWorkingHours{
+			TimeZone: &ScheduleTimeZone{Name: "Central Standard Time"},
+		},
+	}}
+	normalizeScheduleAvailability(schedules, queryStart, queryEnd, 30)
+
+	eventStart := time.Date(2026, 9, 18, 16, 30, 0, 0, london)
+	eventEnd := eventStart.Add(30 * time.Minute)
+	if got := CountScheduleConflicts(schedules, queryStart, eventStart, eventEnd, 30); got != 0 {
+		t.Fatalf("16:30 BST / 10:30 CDT should be free, conflicts=%d view=%q", got, schedules[0].AvailabilityView)
+	}
+	for i, c := range schedules[0].AvailabilityView {
+		if c != '0' {
+			t.Fatalf("US afternoon busy should move past 18:00 BST, view[%d]=%c view=%q", i, c, schedules[0].AvailabilityView)
+		}
+	}
+
+	// 10:00–11:00 CDT (indexes 2–3 from 09:00) should land at 16:00–17:00 BST (indexes 14–15).
+	morning := []ScheduleInformation{{
+		ScheduleID:       "benito@x.com",
+		AvailabilityView: "0022" + strings.Repeat("0", 14),
+		WorkingHours: &ScheduleWorkingHours{
+			TimeZone: &ScheduleTimeZone{Name: "Central Standard Time"},
+		},
+	}}
+	normalizeScheduleAvailability(morning, queryStart, queryEnd, 30)
+	got := morning[0].AvailabilityView
+	if len(got) < 16 || got[14] != '2' || got[15] != '2' {
+		t.Fatalf("10:00 CDT should appear at 16:00 BST, view=%q", got)
+	}
+	if got := CountScheduleConflicts(morning, queryStart, eventStart, eventEnd, 30); got != 1 {
+		t.Fatalf("10:30 CDT busy should conflict with 16:30 BST, conflicts=%d view=%q", got, morning[0].AvailabilityView)
+	}
+}
+
+func TestNormalizeReinterpretsOrganizerLabeledScheduleItems(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	queryStart := time.Date(2026, 9, 18, 9, 0, 0, 0, london)
+	queryEnd := time.Date(2026, 9, 18, 18, 0, 0, 0, london)
+	eventStart := time.Date(2026, 9, 18, 16, 30, 0, 0, london)
+	eventEnd := eventStart.Add(30 * time.Minute)
+
+	schedules := []ScheduleInformation{{
+		ScheduleID:       "benito@x.com",
+		AvailabilityView: strings.Repeat("0", 10) + strings.Repeat("2", 8),
+		WorkingHours: &ScheduleWorkingHours{
+			TimeZone: &ScheduleTimeZone{Name: "Central Standard Time"},
+		},
+		ScheduleItems: []ScheduleItem{{
+			Status: "busy",
+			Start:  CalendarDateTime{DateTime: "2026-09-18T14:00:00", TimeZone: "GMT Standard Time"},
+			End:    CalendarDateTime{DateTime: "2026-09-18T18:00:00", TimeZone: "GMT Standard Time"},
+		}},
+	}}
+	normalizeScheduleAvailability(schedules, queryStart, queryEnd, 30)
+	if got := CountScheduleConflicts(schedules, queryStart, eventStart, eventEnd, 30); got != 0 {
+		t.Fatalf("14:00–18:00 CDT labeled as London should not conflict at 16:30 BST, conflicts=%d view=%q", got, schedules[0].AvailabilityView)
+	}
+}
+
+func TestFormatAttendeeLocalTime(t *testing.T) {
+	london, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Skip("Europe/London unavailable")
+	}
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skip("America/Chicago unavailable")
+	}
+	event := time.Date(2026, 9, 18, 16, 30, 0, 0, london)
+	sch := ScheduleInformation{
+		WorkingHours: &ScheduleWorkingHours{
+			TimeZone: &ScheduleTimeZone{Name: "Central Standard Time"},
+		},
+	}
+	got := formatAttendeeLocalTime(event, sch)
+	if event.In(chicago).Format("2006-01-02 15:04") == event.In(time.Local).Format("2006-01-02 15:04") {
+		if got != "" {
+			t.Fatalf("expected empty when attendee clock matches local, got %q", got)
+		}
+		return
+	}
+	want := event.In(chicago).Format("15:04 MST")
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if !strings.Contains(got, "10:30") {
+		t.Fatalf("expected 10:30 US Central, got %q", got)
+	}
+}
+
 func TestAvailabilitySymbol(t *testing.T) {
 	cases := map[byte]string{
 		'0': ".",
@@ -352,6 +561,43 @@ func TestCalendarDateTimeGMTStandardTime(t *testing.T) {
 	}.Time().In(loc)
 	if !got.Equal(want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestScheduleInformationJSONTimezones(t *testing.T) {
+	raw := []byte(`{
+		"scheduleId": "benito@example.com",
+		"availabilityView": "00000000000000002200",
+		"scheduleItems": [{
+			"status": "busy",
+			"start": {"dateTime": "2026-09-18T16:00:00.0000000", "timeZone": "Central Standard Time"},
+			"end": {"dateTime": "2026-09-18T17:00:00.0000000", "timeZone": "Central Standard Time"}
+		}],
+		"workingHours": {
+			"daysOfWeek": ["monday"],
+			"startTime": "08:00:00.0000000",
+			"endTime": "17:00:00.0000000",
+			"timeZone": {"name": "Central Standard Time"}
+		}
+	}`)
+	var sch ScheduleInformation
+	if err := json.Unmarshal(raw, &sch); err != nil {
+		t.Fatal(err)
+	}
+	if sch.WorkingHours == nil || sch.WorkingHours.TimeZone == nil || sch.WorkingHours.TimeZone.Name != "Central Standard Time" {
+		t.Fatalf("workingHours.timeZone = %+v", sch.WorkingHours)
+	}
+	if len(sch.ScheduleItems) != 1 || sch.ScheduleItems[0].Status != "busy" {
+		t.Fatalf("scheduleItems = %+v", sch.ScheduleItems)
+	}
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skip("America/Chicago unavailable")
+	}
+	got := sch.ScheduleItems[0].Start.Time().In(chicago)
+	want := time.Date(2026, 9, 18, 16, 0, 0, 0, chicago)
+	if !got.Equal(want) {
+		t.Fatalf("item start = %v, want %v", got, want)
 	}
 }
 

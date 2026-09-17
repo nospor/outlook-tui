@@ -885,7 +885,7 @@ func (gc *GraphClient) MarkAsRead(messageID string, isRead bool) error {
 // CalendarEventAttendee represents a meeting attendee.
 type CalendarEventAttendee struct {
 	EmailAddress EmailAddress `json:"emailAddress"`
-	Type         string       `json:"type"`    // required, optional, resource
+	Type         string       `json:"type"` // required, optional, resource
 	Status       struct {
 		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
 	} `json:"status"`
@@ -893,29 +893,29 @@ type CalendarEventAttendee struct {
 
 // CalendarEvent represents a single Outlook calendar event.
 type CalendarEvent struct {
-	ID               string                  `json:"id"`
-	Subject          string                  `json:"subject"`
-	Start            CalendarDateTime        `json:"start"`
-	End              CalendarDateTime        `json:"end"`
-	Location         struct{ DisplayName string } `json:"location"`
-	Organizer        Recipient               `json:"organizer"`
-	Attendees        []CalendarEventAttendee `json:"attendees"`
-	IsAllDay         bool                    `json:"isAllDay"`
-	IsCancelled      bool                    `json:"isCancelled"`
-	IsOnlineMeeting  bool                    `json:"isOnlineMeeting"`
-	OnlineMeeting    *struct {
+	ID              string                       `json:"id"`
+	Subject         string                       `json:"subject"`
+	Start           CalendarDateTime             `json:"start"`
+	End             CalendarDateTime             `json:"end"`
+	Location        struct{ DisplayName string } `json:"location"`
+	Organizer       Recipient                    `json:"organizer"`
+	Attendees       []CalendarEventAttendee      `json:"attendees"`
+	IsAllDay        bool                         `json:"isAllDay"`
+	IsCancelled     bool                         `json:"isCancelled"`
+	IsOnlineMeeting bool                         `json:"isOnlineMeeting"`
+	OnlineMeeting   *struct {
 		JoinURL string `json:"joinUrl"`
 	} `json:"onlineMeeting"`
-	ShowAs           string                  `json:"showAs"` // free, tentative, busy, oof, workingElsewhere, unknown
-	ResponseRequested bool                   `json:"responseRequested"`
-	WebLink          string                  `json:"webLink"` // Outlook Web (OWA) deep link to the event; opens authenticated in browser
-	ResponseStatus   struct {
+	ShowAs            string `json:"showAs"` // free, tentative, busy, oof, workingElsewhere, unknown
+	ResponseRequested bool   `json:"responseRequested"`
+	WebLink           string `json:"webLink"` // Outlook Web (OWA) deep link to the event; opens authenticated in browser
+	ResponseStatus    struct {
 		Response string `json:"response"` // none, accepted, tentativelyAccepted, declined, notResponded
 	} `json:"responseStatus"`
-	Body             ItemBody `json:"body"`
-	BodyPreview      string   `json:"bodyPreview"`
-	IsReminderOn     bool     `json:"isReminderOn"`
-	ReminderMinutesBeforeStart int `json:"reminderMinutesBeforeStart"`
+	Body                       ItemBody `json:"body"`
+	BodyPreview                string   `json:"bodyPreview"`
+	IsReminderOn               bool     `json:"isReminderOn"`
+	ReminderMinutesBeforeStart int      `json:"reminderMinutesBeforeStart"`
 }
 
 // CalendarDateTime holds an ISO-8601 datetime string and its timezone.
@@ -924,20 +924,31 @@ type CalendarDateTime struct {
 	TimeZone string `json:"timeZone"`
 }
 
-// Time returns the CalendarDateTime parsed as a time.Time in UTC.
-func (cdt CalendarDateTime) Time() time.Time {
-	loc := graphTimeZoneLocation(cdt.TimeZone)
-	formats := []string{
-		"2006-01-02T15:04:05.9999999",
-		"2006-01-02T15:04:05",
-		"2006-01-02T15:04:05Z07:00",
+var graphDateTimeFormats = []string{
+	"2006-01-02T15:04:05.9999999",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04:05Z07:00",
+}
+
+func parseGraphDateTimeIn(dateTime string, loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
 	}
-	for _, f := range formats {
-		if t, err := time.ParseInLocation(f, cdt.DateTime, loc); err == nil {
-			return t.UTC()
+	for _, f := range graphDateTimeFormats {
+		if t, err := time.ParseInLocation(f, dateTime, loc); err == nil {
+			return t
 		}
 	}
 	return time.Time{}
+}
+
+// Time returns the CalendarDateTime parsed as a time.Time in UTC.
+func (cdt CalendarDateTime) Time() time.Time {
+	t := parseGraphDateTimeIn(cdt.DateTime, graphTimeZoneLocation(cdt.TimeZone))
+	if t.IsZero() {
+		return t
+	}
+	return t.UTC()
 }
 
 // windowsTimeZoneToIANA maps common Microsoft Graph Windows timezone names to IANA IDs.
@@ -953,18 +964,28 @@ var windowsTimeZoneToIANA = map[string]string{
 	"Pacific Standard Time":          "America/Los_Angeles",
 }
 
-func graphTimeZoneLocation(tz string) *time.Location {
-	if tz != "" {
-		if loc, err := time.LoadLocation(tz); err == nil {
+// lookupTimeZoneLocation resolves an IANA or Windows timezone name. Returns nil if unknown.
+func lookupTimeZoneLocation(tz string) *time.Location {
+	tz = strings.TrimSpace(tz)
+	if tz == "" {
+		return nil
+	}
+	if loc, err := time.LoadLocation(tz); err == nil {
+		return loc
+	}
+	if iana, ok := windowsTimeZoneToIANA[tz]; ok {
+		if loc, err := time.LoadLocation(iana); err == nil {
 			return loc
 		}
-		if iana, ok := windowsTimeZoneToIANA[tz]; ok {
-			if loc, err := time.LoadLocation(iana); err == nil {
-				return loc
-			}
-		}
 	}
-	if loc, err := time.LoadLocation(localTimeZone()); err == nil {
+	return nil
+}
+
+func graphTimeZoneLocation(tz string) *time.Location {
+	if loc := lookupTimeZoneLocation(tz); loc != nil {
+		return loc
+	}
+	if loc := lookupTimeZoneLocation(localTimeZone()); loc != nil {
 		return loc
 	}
 	return time.UTC
@@ -1014,7 +1035,6 @@ func (gc *GraphClient) GetCalendarEvents(days int) ([]CalendarEvent, error) {
 	end := time.Now().AddDate(0, 0, days).UTC()
 	return gc.GetCalendarEventsForRange(start, end)
 }
-
 
 // EventResponse is one of the allowed response actions for a calendar event.
 type EventResponse string
@@ -1131,7 +1151,7 @@ func FilterValidAttendees(attendees []ParsedAttendee) []ParsedAttendee {
 // RecurrenceSettings holds user-configured recurrence for event creation.
 type RecurrenceSettings struct {
 	Enabled       bool
-	PatternType   string   // daily, weekly, absoluteMonthly, relativeMonthly, absoluteYearly, relativeYearly
+	PatternType   string // daily, weekly, absoluteMonthly, relativeMonthly, absoluteYearly, relativeYearly
 	Interval      int
 	DaysOfWeek    []string // monday..sunday for weekly
 	DayOfMonth    int      // 1-31 for absoluteMonthly/absoluteYearly
@@ -1524,14 +1544,35 @@ func (gc *GraphClient) DeleteCalendarEvent(eventID string) error {
 	return nil
 }
 
+// ScheduleTimeZone is Graph timeZoneBase (Windows or IANA name).
+type ScheduleTimeZone struct {
+	Name string `json:"name"`
+}
+
+// ScheduleWorkingHours is a mailbox's working hours from getSchedule.
+type ScheduleWorkingHours struct {
+	DaysOfWeek []string          `json:"daysOfWeek"`
+	StartTime  string            `json:"startTime"`
+	EndTime    string            `json:"endTime"`
+	TimeZone   *ScheduleTimeZone `json:"timeZone"`
+}
+
+// ScheduleItem is one calendar block from getSchedule. Start/End follow
+// Prefer: outlook.timezone and also carry a timeZone field.
+type ScheduleItem struct {
+	Status    string           `json:"status"`
+	Subject   string           `json:"subject"`
+	IsPrivate bool             `json:"isPrivate"`
+	Start     CalendarDateTime `json:"start"`
+	End       CalendarDateTime `json:"end"`
+}
+
 // ScheduleInformation holds free/busy data for one mailbox from getSchedule.
 type ScheduleInformation struct {
-	ScheduleID       string `json:"scheduleId"`
-	AvailabilityView string `json:"availabilityView"`
-	WorkingHours     *struct {
-		StartTime string `json:"startTime"`
-		EndTime   string `json:"endTime"`
-	} `json:"workingHours"`
+	ScheduleID       string                `json:"scheduleId"`
+	AvailabilityView string                `json:"availabilityView"`
+	ScheduleItems    []ScheduleItem        `json:"scheduleItems"`
+	WorkingHours     *ScheduleWorkingHours `json:"workingHours"`
 }
 
 // GetAttendeeSchedule fetches free/busy via POST /me/calendar/getSchedule.
@@ -1578,6 +1619,8 @@ func (gc *GraphClient) GetAttendeeSchedule(schedules []string, start, end time.T
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+	// availabilityView can be attendee wall-clock; scheduleItems carry real instants.
+	normalizeScheduleAvailability(result.Value, start, end, intervalMin)
 	return result.Value, nil
 }
 
@@ -1764,34 +1807,270 @@ func AvailabilitySymbol(code byte) string {
 
 // CountScheduleConflicts counts attendees busy/OOF during the proposed window.
 // scheduleQueryStart is when availabilityView slot 0 begins (the getSchedule request start).
+// When scheduleItems are present they are used instead of availabilityView.
 func CountScheduleConflicts(schedules []ScheduleInformation, scheduleQueryStart, windowStart, windowEnd time.Time, intervalMin int) int {
-	if intervalMin <= 0 {
-		intervalMin = 30
-	}
-	slotDur := time.Duration(intervalMin) * time.Minute
 	conflicts := 0
 	for _, sch := range schedules {
-		if sch.AvailabilityView == "" {
-			continue
-		}
-		hasConflict := false
-		for i := 0; i < len(sch.AvailabilityView); i++ {
-			slotStart := scheduleQueryStart.Add(time.Duration(i) * slotDur)
-			slotEnd := slotStart.Add(slotDur)
-			if !slotEnd.After(windowStart) || !slotStart.Before(windowEnd) {
-				continue
-			}
-			code := sch.AvailabilityView[i]
-			if code == '2' || code == '3' {
-				hasConflict = true
-				break
-			}
-		}
-		if hasConflict {
+		if scheduleHasConflict(sch, scheduleQueryStart, windowStart, windowEnd, intervalMin) {
 			conflicts++
 		}
 	}
 	return conflicts
+}
+
+func scheduleHasConflict(sch ScheduleInformation, scheduleQueryStart, windowStart, windowEnd time.Time, intervalMin int) bool {
+	if len(sch.ScheduleItems) > 0 {
+		for _, item := range sch.ScheduleItems {
+			code := scheduleItemAvailabilityCode(item.Status)
+			if code != '2' && code != '3' {
+				continue
+			}
+			itemStart := item.Start.Time()
+			itemEnd := item.End.Time()
+			if itemStart.IsZero() || itemEnd.IsZero() {
+				continue
+			}
+			if itemEnd.After(windowStart) && itemStart.Before(windowEnd) {
+				return true
+			}
+		}
+		return false
+	}
+	if intervalMin <= 0 {
+		intervalMin = 30
+	}
+	slotDur := time.Duration(intervalMin) * time.Minute
+	if sch.AvailabilityView == "" {
+		return false
+	}
+	for i := 0; i < len(sch.AvailabilityView); i++ {
+		slotStart := scheduleQueryStart.Add(time.Duration(i) * slotDur)
+		slotEnd := slotStart.Add(slotDur)
+		if !slotEnd.After(windowStart) || !slotStart.Before(windowEnd) {
+			continue
+		}
+		code := sch.AvailabilityView[i]
+		if code == '2' || code == '3' {
+			return true
+		}
+	}
+	return false
+}
+
+func scheduleItemAvailabilityCode(status string) byte {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "tentative":
+		return '1'
+	case "busy":
+		return '2'
+	case "oof", "outofoffice":
+		return '3'
+	case "workingelsewhere":
+		return '4'
+	default:
+		return '0'
+	}
+}
+
+func scheduleAvailabilitySeverity(code byte) int {
+	switch code {
+	case '3':
+		return 4
+	case '2':
+		return 3
+	case '1':
+		return 2
+	case '4':
+		return 1
+	default:
+		return 0
+	}
+}
+
+// normalizeScheduleAvailability aligns free/busy onto the organizer query window.
+// Graph often returns availabilityView (and Prefer-stamped scheduleItems) as attendee
+// wall-clock hours. When workingHours.timeZone differs from the organizer, those
+// clocks are converted; mailbox-labeled scheduleItems are used as real instants.
+func normalizeScheduleAvailability(schedules []ScheduleInformation, queryStart, queryEnd time.Time, intervalMin int) {
+	for i := range schedules {
+		attendeeLoc := attendeeTimeZoneLocation(schedules[i])
+		mailboxDiffers := attendeeLoc != nil && !zonesEquivalent(attendeeLoc, queryStart.Location(), queryStart)
+
+		if mailboxDiffers && scheduleItemsUseMailboxTimeZone(schedules[i].ScheduleItems, attendeeLoc, queryStart) {
+			if view := availabilityViewFromScheduleItems(schedules[i].ScheduleItems, queryStart, queryEnd, intervalMin); view != "" {
+				schedules[i].AvailabilityView = view
+			}
+			continue
+		}
+
+		if mailboxDiffers {
+			original := schedules[i].AvailabilityView
+			schedules[i].ScheduleItems = reinterpretScheduleItemsAsMailboxLocal(schedules[i].ScheduleItems, attendeeLoc)
+			if view := availabilityViewFromScheduleItems(schedules[i].ScheduleItems, queryStart, queryEnd, intervalMin); view != "" {
+				schedules[i].AvailabilityView = view
+			} else if shifted := shiftAvailabilityView(original, queryStart, queryEnd, intervalMin, attendeeLoc); shifted != "" {
+				schedules[i].AvailabilityView = shifted
+			}
+			continue
+		}
+
+		if view := availabilityViewFromScheduleItems(schedules[i].ScheduleItems, queryStart, queryEnd, intervalMin); view != "" {
+			schedules[i].AvailabilityView = view
+		}
+	}
+}
+
+func zonesEquivalent(a, b *time.Location, at time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	_, offA := at.In(a).Zone()
+	_, offB := at.In(b).Zone()
+	return offA == offB
+}
+
+func scheduleItemsUseMailboxTimeZone(items []ScheduleItem, attendeeLoc *time.Location, at time.Time) bool {
+	if attendeeLoc == nil {
+		return false
+	}
+	for _, item := range items {
+		loc := lookupTimeZoneLocation(item.Start.TimeZone)
+		if loc != nil && zonesEquivalent(loc, attendeeLoc, at) {
+			return true
+		}
+	}
+	return false
+}
+
+func reinterpretScheduleItemsAsMailboxLocal(items []ScheduleItem, attendeeLoc *time.Location) []ScheduleItem {
+	if attendeeLoc == nil || len(items) == 0 {
+		return items
+	}
+	out := make([]ScheduleItem, len(items))
+	for i, item := range items {
+		start := parseGraphDateTimeIn(item.Start.DateTime, attendeeLoc)
+		end := parseGraphDateTimeIn(item.End.DateTime, attendeeLoc)
+		if !start.IsZero() {
+			item.Start = CalendarDateTime{DateTime: start.UTC().Format("2006-01-02T15:04:05"), TimeZone: "UTC"}
+		}
+		if !end.IsZero() {
+			item.End = CalendarDateTime{DateTime: end.UTC().Format("2006-01-02T15:04:05"), TimeZone: "UTC"}
+		}
+		out[i] = item
+	}
+	return out
+}
+
+func wallClockInLocation(wall time.Time, loc *time.Location) time.Time {
+	if loc == nil {
+		return wall
+	}
+	y, m, d := wall.Date()
+	h, min, sec := wall.Clock()
+	return time.Date(y, m, d, h, min, sec, wall.Nanosecond(), loc)
+}
+
+func floorDivDuration(d, q time.Duration) int {
+	n := int(d / q)
+	if d < 0 && d%q != 0 {
+		n--
+	}
+	return n
+}
+
+// shiftAvailabilityView treats each availabilityView slot as attendee-local wall-clock
+// matching the request window's clock numbers, then paints it onto the organizer timeline.
+func shiftAvailabilityView(view string, queryStart, queryEnd time.Time, intervalMin int, attendeeLoc *time.Location) string {
+	if view == "" || attendeeLoc == nil {
+		return ""
+	}
+	if intervalMin <= 0 {
+		intervalMin = 30
+	}
+	slotDur := time.Duration(intervalMin) * time.Minute
+	n := int(queryEnd.Sub(queryStart) / slotDur)
+	if n <= 0 {
+		n = len(view)
+	}
+	buf := bytes.Repeat([]byte{'0'}, n)
+	for i := 0; i < len(view); i++ {
+		code := view[i]
+		if code == '0' {
+			continue
+		}
+		wall := queryStart.Add(time.Duration(i) * slotDur)
+		instant := wallClockInLocation(wall, attendeeLoc)
+		j := floorDivDuration(instant.Sub(queryStart), slotDur)
+		if j >= 0 && j < n && scheduleAvailabilitySeverity(code) > scheduleAvailabilitySeverity(buf[j]) {
+			buf[j] = code
+		}
+	}
+	return string(buf)
+}
+
+func availabilityViewFromScheduleItems(items []ScheduleItem, queryStart, queryEnd time.Time, intervalMin int) string {
+	if len(items) == 0 {
+		return ""
+	}
+	if intervalMin <= 0 {
+		intervalMin = 30
+	}
+	slotDur := time.Duration(intervalMin) * time.Minute
+	if !queryEnd.After(queryStart) {
+		return ""
+	}
+	n := int(queryEnd.Sub(queryStart) / slotDur)
+	if n <= 0 {
+		return ""
+	}
+	buf := bytes.Repeat([]byte{'0'}, n)
+	for _, item := range items {
+		code := scheduleItemAvailabilityCode(item.Status)
+		if code == '0' {
+			continue
+		}
+		itemStart := item.Start.Time()
+		itemEnd := item.End.Time()
+		if itemStart.IsZero() || itemEnd.IsZero() {
+			continue
+		}
+		for i := 0; i < n; i++ {
+			slotStart := queryStart.Add(time.Duration(i) * slotDur)
+			slotEnd := slotStart.Add(slotDur)
+			if slotEnd.After(itemStart) && slotStart.Before(itemEnd) {
+				if scheduleAvailabilitySeverity(code) > scheduleAvailabilitySeverity(buf[i]) {
+					buf[i] = code
+				}
+			}
+		}
+	}
+	return string(buf)
+}
+
+// attendeeTimeZoneLocation returns the mailbox timezone from getSchedule workingHours, if known.
+func attendeeTimeZoneLocation(sch ScheduleInformation) *time.Location {
+	if sch.WorkingHours == nil || sch.WorkingHours.TimeZone == nil {
+		return nil
+	}
+	return lookupTimeZoneLocation(sch.WorkingHours.TimeZone.Name)
+}
+
+// formatAttendeeLocalTime formats t in the attendee's mailbox timezone.
+// Empty when the timezone is unknown or matches the organizer's local clock.
+func formatAttendeeLocalTime(t time.Time, sch ScheduleInformation) string {
+	if t.IsZero() {
+		return ""
+	}
+	loc := attendeeTimeZoneLocation(sch)
+	if loc == nil {
+		return ""
+	}
+	at := t.In(loc)
+	org := t.In(time.Local)
+	if at.Format("2006-01-02 15:04") == org.Format("2006-01-02 15:04") {
+		return ""
+	}
+	return at.Format("15:04 MST")
 }
 
 // ParseEventDateTime parses "YYYY-MM-DD HH:MM" in local timezone.
