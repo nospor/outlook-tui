@@ -1,4 +1,15 @@
 
+## [0.8.5] - 2026-09-17
+
+### Bug Fixes
+
+- *(calendar)* Convert attendee busy times into the organizer timezone ([346aa9e](https://github.com/nospor/outlook-tui/commit/346aa9edf86dae6b992559a0312356893dae0bff))
+- *(calendar)* Load attendee availability when opening event edit ([a38d720](https://github.com/nospor/outlook-tui/commit/a38d7207fa616d5d44604831b3b35778c1e83648))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.4 [skip ci] ([520b416](https://github.com/nospor/outlook-tui/commit/520b4169ec9272b1d37f199cf5da8a5f545f7ad6))
+
 ## [0.8.4] - 2026-09-07
 
 ### Bug Fixes
