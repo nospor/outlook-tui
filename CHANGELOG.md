@@ -1,4 +1,14 @@
 
+## [0.8.6] - 2026-09-30
+
+### Bug Fixes
+
+- Update SQLite cache immediately on optimistic message delete ([f134bb1](https://github.com/nospor/outlook-tui/commit/f134bb1087d83cac5953e1f1b1d8454921bcaa00))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.5 [skip ci] ([59ffb93](https://github.com/nospor/outlook-tui/commit/59ffb9355db08d5157e2f7b9ab348b8ebbdd238c))
+
 ## [0.8.5] - 2026-09-17
 
 ### Bug Fixes
