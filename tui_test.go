@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -2216,6 +2217,55 @@ func TestDeleteThreadKeyOpensConfirm(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatal("expected no background resolve command on D")
+	}
+}
+
+func TestRemoveMessagesFromLocalStateClearsSQLiteCache(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	tempDB, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer tempDB.Close()
+
+	inboxID := "inbox-folder"
+	for i := 1; i <= 5; i++ {
+		msg := Message{
+			ID:             fmt.Sprintf("msg-%d", i),
+			ConversationID: "conv-1",
+			Subject:        "Thread",
+			IsRead:         false,
+		}
+		if err := tempDB.UpsertMessage(inboxID, msg); err != nil {
+			t.Fatalf("upsert msg-%d: %v", i, err)
+		}
+	}
+
+	m := &mainModel{
+		db: tempDB,
+		messages: []Message{
+			{ID: "msg-1", ConversationID: "conv-1", Subject: "Thread", IsRead: false},
+			{ID: "msg-2", ConversationID: "conv-1", Subject: "Thread", IsRead: false},
+			{ID: "msg-3", ConversationID: "conv-1", Subject: "Thread", IsRead: false},
+			{ID: "msg-4", ConversationID: "conv-1", Subject: "Thread", IsRead: false},
+			{ID: "msg-5", ConversationID: "conv-1", Subject: "Thread", IsRead: false},
+		},
+	}
+	m.buildThreadGroups()
+
+	removeIDs := []string{"msg-1", "msg-2", "msg-3", "msg-4", "msg-5"}
+	m.removeMessagesFromLocalState(removeIDs)
+
+	if len(m.messages) != 0 {
+		t.Fatalf("expected 0 in-memory messages, got %d", len(m.messages))
+	}
+	cached, err := tempDB.GetMessages(inboxID)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(cached) != 0 {
+		t.Fatalf("expected 0 cached messages after optimistic delete, got %d", len(cached))
 	}
 }
 

@@ -1486,7 +1486,9 @@ func (m *mainModel) buildVirtualList() {
 // updates immediately — before the Graph API call returns. virtualSelected is
 // clamped to stay in-bounds after the removal. The IDs are also added to
 // m.pendingDeleteIDs so that any stale server fetch response does not flash them
-// back into the list before the server-side move is confirmed.
+// back into the list before the server-side move is confirmed. When SQLite is
+// enabled, matching rows are removed from the local cache immediately so
+// external consumers (e.g. status-bar scripts) see an up-to-date unread count.
 func (m *mainModel) removeMessagesFromLocalState(ids []string) {
 	if m.pendingDeleteIDs == nil {
 		m.pendingDeleteIDs = make(map[string]bool)
@@ -1495,6 +1497,12 @@ func (m *mainModel) removeMessagesFromLocalState(ids []string) {
 	for _, id := range ids {
 		idSet[id] = true
 		m.pendingDeleteIDs[id] = true
+	}
+	if m.db != nil {
+		for _, id := range ids {
+			_ = m.db.DeleteMessage(id)
+			_ = m.db.RemoveFromFavorites(id)
+		}
 	}
 	filtered := m.messages[:0]
 	for _, msg := range m.messages {
@@ -1507,6 +1515,20 @@ func (m *mainModel) removeMessagesFromLocalState(ids []string) {
 	if m.virtualSelected >= len(m.virtualList) {
 		m.virtualSelected = max(0, len(m.virtualList)-1)
 	}
+}
+
+// messagesExcludingPendingDeletes returns msgs without IDs in m.pendingDeleteIDs.
+func (m mainModel) messagesExcludingPendingDeletes(msgs []Message) []Message {
+	if len(m.pendingDeleteIDs) == 0 {
+		return msgs
+	}
+	filtered := make([]Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if !m.pendingDeleteIDs[msg.ID] {
+			filtered = append(filtered, msg)
+		}
+	}
+	return filtered
 }
 
 
@@ -2010,6 +2032,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Append newly fetched messages to our list
+		msg.Messages = m.messagesExcludingPendingDeletes(msg.Messages)
 		m.messages = append(m.messages, msg.Messages...)
 		if m.config.UseSQLite == 1 && m.db != nil {
 			_ = m.db.UpsertMessages(msg.FolderID, m.messages)
@@ -2043,10 +2066,6 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Persist messages to SQLite cache (preserving bodies via ON CONFLICT DO UPDATE)
-		if m.config.UseSQLite == 1 && m.db != nil {
-			_ = m.db.UpsertMessages(msg.FolderID, msg.Messages)
-		}
 		// Remember the currently active message ID so we can re-select it
 		currentID := ""
 		if am := m.activeMessage(); am != nil {
@@ -2079,6 +2098,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				msg.Messages = filtered
 			}
+		}
+		// Persist to SQLite after pending-delete filtering so stale Graph responses
+		// cannot re-insert optimistically removed messages into the cache.
+		if m.config.UseSQLite == 1 && m.db != nil {
+			_ = m.db.UpsertMessages(msg.FolderID, msg.Messages)
 		}
 		m.messages = msg.Messages
 		m.statusMsg = fmt.Sprintf("Loaded %d messages", len(m.messages))
