@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -335,11 +336,51 @@ func TestFormatBodyContent(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		actual := formatBodyContent(tt.input)
+		actual := formatBodyContent(tt.input, false)
 		actual = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(actual)
 		if actual != tt.expected {
 			t.Errorf("formatBodyContent(%q) = %q; expected %q", tt.input, actual, tt.expected)
 		}
+	}
+}
+
+func TestFormatBodyContentShowLinkURLs(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "named http link appends href",
+			input:    `<a href="https://github.com">GitHub website</a>`,
+			expected: "\x1b[38;2;137;180;250;4mGitHub website\x1b[24;39m (\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m) ",
+		},
+		{
+			name:     "identical label and href stay a single URL",
+			input:    `<a href="https://github.com">https://github.com</a>`,
+			expected: "\x1b[38;2;137;180;250;4mhttps://github.com\x1b[24;39m",
+		},
+		{
+			name:     "mailto strips scheme in the appended URL",
+			input:    `<a href="mailto:test@example.com">Email Us</a>`,
+			expected: "\x1b[38;2;137;180;250;4mEmail Us\x1b[24;39m (test@example.com) ",
+		},
+		{
+			name:     "cta label shows destination",
+			input:    `<a href="https://example.com/event-link">Enter the event</a>`,
+			expected: "\x1b[38;2;137;180;250;4mEnter the event\x1b[24;39m (\x1b[38;2;137;180;250;4mhttps://example.com/event-link\x1b[24;39m) ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := formatBodyContent(tt.input, true)
+			if actual != tt.expected {
+				t.Errorf("formatBodyContent(%q, true) = %q; expected %q", tt.input, actual, tt.expected)
+			}
+		})
 	}
 }
 
@@ -401,13 +442,12 @@ func TestGreetingPersonalization(t *testing.T) {
 
 	// Test integration with formatBodyContent
 	htmlInput := "Hi, "
-	formatted := formatBodyContent(htmlInput, "Robert")
+	formatted := formatBodyContent(htmlInput, false, "Robert")
 	expectedFormatted := "Hi, Robert"
 	if formatted != expectedFormatted {
 		t.Errorf("formatBodyContent(%q, 'Robert') = %q; expected %q", htmlInput, formatted, expectedFormatted)
 	}
 }
-
 
 func TestStripANSICodes(t *testing.T) {
 	tests := []struct {
@@ -442,10 +482,6 @@ func TestLipglossWrap(t *testing.T) {
 	ansiWrapped := wrapText(ansiText, 20)
 	t.Logf("ANSI Wrapped:\n%q", ansiWrapped)
 }
-
-
-
-
 
 func TestJKNavigation(t *testing.T) {
 	// Initialize a basic mainModel
@@ -2006,6 +2042,70 @@ func TestYankMenuTransitions(t *testing.T) {
 	}
 }
 
+func TestToggleShowLinkURLsKey(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	var body strings.Builder
+	for i := 0; i < 30; i++ {
+		body.WriteString(fmt.Sprintf("<p>Paragraph %d</p>", i))
+	}
+	body.WriteString(`<a href="https://example.com/event-link">Enter the event</a>`)
+
+	msg := &Message{
+		ID:      "123",
+		Subject: "Test Subject",
+		Body: ItemBody{
+			Content: body.String(),
+		},
+	}
+	m := mainModel{
+		state:          stateMain,
+		detailMessage:  msg,
+		detailViewport: viewport.New(80, 10),
+		messages:       []Message{*msg},
+		virtualList: []MessageListItem{
+			{ThreadIdx: 0, MemberIdx: 0, IsHeader: false},
+		},
+		threadGroups: []ThreadGroup{
+			{ConversationID: "abc", Members: []Message{*msg}},
+		},
+	}
+	m.detailViewport.SetContent(m.renderedDetailBody())
+	m.detailViewport.YOffset = 5
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	got := updated.(mainModel)
+	if !got.showLinkURLs {
+		t.Fatal("expected showLinkURLs to be true after pressing h")
+	}
+	if got.statusMsg != "Link URLs shown" {
+		t.Errorf("unexpected status: %q", got.statusMsg)
+	}
+	shown := stripANSICodes(got.renderedDetailBody())
+	if !strings.Contains(shown, "Enter the event (https://example.com/event-link)") {
+		t.Errorf("expected URL next to label, got %q", shown)
+	}
+	if got.detailViewport.YOffset != 5 {
+		t.Errorf("expected scroll position to be preserved, got YOffset=%d", got.detailViewport.YOffset)
+	}
+
+	updated2, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	got2 := updated2.(mainModel)
+	if got2.showLinkURLs {
+		t.Fatal("expected showLinkURLs to be false after pressing h again")
+	}
+	if got2.statusMsg != "Link URLs hidden" {
+		t.Errorf("unexpected status: %q", got2.statusMsg)
+	}
+	hidden := stripANSICodes(got2.renderedDetailBody())
+	if strings.Contains(hidden, "https://example.com/event-link") {
+		t.Errorf("expected URL hidden after second toggle, got %q", hidden)
+	}
+	if got2.detailViewport.YOffset != 5 {
+		t.Errorf("expected scroll position to be preserved after hide, got YOffset=%d", got2.detailViewport.YOffset)
+	}
+}
+
 func TestOverlayLines_StyleLeak(t *testing.T) {
 	base := "hello world"
 	overlay := "POP"
@@ -2145,8 +2245,8 @@ func TestMainKeyHintsMessageActions(t *testing.T) {
 		folders: []MailFolder{
 			{ID: "deleted", DisplayName: "Deleted Items", WellKnownName: "deleteditems"},
 		},
-		selectedFolder: 0,
-		virtualList:    []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}},
+		selectedFolder:  0,
+		virtualList:     []MessageListItem{{ThreadIdx: 0, MemberIdx: -1, IsHeader: true}},
 		virtualSelected: 0,
 		threadGroups: []ThreadGroup{
 			{ConversationID: "conv-1", Members: []Message{msg}},

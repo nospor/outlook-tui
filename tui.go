@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -62,12 +62,12 @@ const (
 	stateDeleteThreadConfirm
 	stateEmptyFolderConfirm
 	stateYankSelect
-	stateCalendar                // calendar popup (requires calendar_enabled = true)
-	stateCalendarDeclineConfirm  // confirmation dialog before declining a calendar event
-	stateCalendarDeleteConfirm   // confirmation dialog before deleting a calendar event
-	stateCalendarCreate          // create new calendar event
+	stateCalendar               // calendar popup (requires calendar_enabled = true)
+	stateCalendarDeclineConfirm // confirmation dialog before declining a calendar event
+	stateCalendarDeleteConfirm  // confirmation dialog before deleting a calendar event
+	stateCalendarCreate         // create new calendar event
 	stateCalendarCreateCancelConfirm
-	stateCalendarRecurrence      // recurrence sub-popup for event creation
+	stateCalendarRecurrence // recurrence sub-popup for event creation
 	stateNotifiedEventsSelect
 	stateMoveFolderSelect
 	stateAttendeeLists
@@ -127,12 +127,12 @@ type (
 		Errors       []error
 	}
 	folderEmptiedMsg struct {
-		FolderID      string
-		DeletedCount  int
-		Errors        []error
+		FolderID     string
+		DeletedCount int
+		Errors       []error
 	}
-	mailRestoredMsg     struct{ MessageID string }
-	mailMovedMsg        struct {
+	mailRestoredMsg struct{ MessageID string }
+	mailMovedMsg    struct {
 		MessageID       string
 		DestinationID   string
 		DestinationName string
@@ -200,21 +200,21 @@ type mainModel struct {
 	spinner        spinner.Model
 
 	// Compose state
-	composeTo         textinput.Model
-	composeCc         textinput.Model
-	composeSubject    textinput.Model
-	composeBody       textarea.Model
-	composeStep       int    // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
-	composeReplyToID  string // non-empty when composing a reply; holds the original message ID
-	composeIsReplyAll bool   // true when replying to all
-	contacts          []Contact
-	filteredContacts  []Contact
-	contactsSelected  int
-	contactsStartIdx  int
-	composedImages    []PastedImage
-	composedFiles     []PendingFile
+	composeTo            textinput.Model
+	composeCc            textinput.Model
+	composeSubject       textinput.Model
+	composeBody          textarea.Model
+	composeStep          int    // 0 = To, 1 = Cc, 2 = Subject, 3 = Body
+	composeReplyToID     string // non-empty when composing a reply; holds the original message ID
+	composeIsReplyAll    bool   // true when replying to all
+	contacts             []Contact
+	filteredContacts     []Contact
+	contactsSelected     int
+	contactsStartIdx     int
+	composedImages       []PastedImage
+	composedFiles        []PendingFile
 	composeReservedNames map[string]bool // attachment names from reply target to avoid collisions
-	filepicker        filepicker.Model
+	filepicker           filepicker.Model
 
 	// Notification tracking
 	inboxKnownIDs map[string]bool
@@ -227,10 +227,11 @@ type mainModel struct {
 	appFocused bool
 
 	// URL select state
-	extractedURLs   []string
-	selectedURLIdx  int
-	selectedYankIdx int
+	extractedURLs         []string
+	selectedURLIdx        int
+	selectedYankIdx       int
 	selectedMoveFolderIdx int
+	showLinkURLs          bool // when true, render hrefs next to <a> labels in the detail pane
 
 	// Thread deletion confirm state
 	deleteThreadMsgIDs         []string
@@ -258,47 +259,47 @@ type mainModel struct {
 	calendarDeleteSubject string
 
 	// Calendar state (only active when config.CalendarEnabled == true)
-	calendarEvents      []CalendarEvent // currently loaded events
-	calendarSelected    int             // index of the selected event in the popup
-	calendarViewport    viewport.Model  // scrollable event detail view
-	calendarLoading     bool            // true while a fetch is in progress
+	calendarEvents          []CalendarEvent // currently loaded events
+	calendarSelected        int             // index of the selected event in the popup
+	calendarViewport        viewport.Model  // scrollable event detail view
+	calendarLoading         bool            // true while a fetch is in progress
 	calendarWeekStart       time.Time       // start of the week currently viewed (Monday 00:00 local time)
 	prevState               appState        // previous app state (for overlays)
 	notifiedEvents          []NotifiedEvent // unread notified events
 	notifiedEventsSelected  int             // selected index in the unread notifications popup
-	pendingCalendarSelectID  string          // pending calendar event ID to select after a fresh fetch
+	pendingCalendarSelectID string          // pending calendar event ID to select after a fresh fetch
 	calendarAutoSelectToday bool            // when true, auto-position cursor on today's first event after load
-	pendingOpenMessageID     string          // message ID we are waiting to open URLs for after a fresh calendar fetch
+	pendingOpenMessageID    string          // message ID we are waiting to open URLs for after a fresh calendar fetch
 
 	// Calendar event creation
-	eventCreateSubject             textinput.Model
-	eventCreateAttendees           textinput.Model
-	eventCreateOptionalAttendees   textinput.Model
-	eventCreateAttendeesStep       int
-	eventCreateStart               DateTimePicker
-	eventCreateEnd                 DateTimePicker
-	eventCreateLocation            textinput.Model
-	eventCreateBody                textarea.Model
-	eventCreateStep                int
-	eventCreateEditingID           string
-	eventCreateAllDay              bool
-	eventCreateTeams               bool
-	eventCreateReminderOn          bool
-	eventCreateShowAs              string
-	eventCreateReminderMin         int
-	eventCreateRecurrence          RecurrenceSettings
-	eventCreateRecurrenceEnabled   bool
-	eventCreateRecurrenceStep      int
-	eventCreateSchedules           []ScheduleInformation
-	eventCreateSuggestions         []MeetingTimeSuggestion
-	eventCreateSuggestionsSelected int
-	eventCreateAvailLoading        bool
-	eventCreateConflictCount       int
-	eventCreateScheduleQueryStart  time.Time
-	eventCreateAvailDebounce       tea.Cmd
-	eventCreateFocusSuggestions    bool
-	eventCreateOptionsStep         int
-	eventCreateReminderMinInput    textinput.Model
+	eventCreateSubject                 textinput.Model
+	eventCreateAttendees               textinput.Model
+	eventCreateOptionalAttendees       textinput.Model
+	eventCreateAttendeesStep           int
+	eventCreateStart                   DateTimePicker
+	eventCreateEnd                     DateTimePicker
+	eventCreateLocation                textinput.Model
+	eventCreateBody                    textarea.Model
+	eventCreateStep                    int
+	eventCreateEditingID               string
+	eventCreateAllDay                  bool
+	eventCreateTeams                   bool
+	eventCreateReminderOn              bool
+	eventCreateShowAs                  string
+	eventCreateReminderMin             int
+	eventCreateRecurrence              RecurrenceSettings
+	eventCreateRecurrenceEnabled       bool
+	eventCreateRecurrenceStep          int
+	eventCreateSchedules               []ScheduleInformation
+	eventCreateSuggestions             []MeetingTimeSuggestion
+	eventCreateSuggestionsSelected     int
+	eventCreateAvailLoading            bool
+	eventCreateConflictCount           int
+	eventCreateScheduleQueryStart      time.Time
+	eventCreateAvailDebounce           tea.Cmd
+	eventCreateFocusSuggestions        bool
+	eventCreateOptionsStep             int
+	eventCreateReminderMinInput        textinput.Model
 	eventCreateRecurrenceIntervalInput textinput.Model
 	eventCreateRecurrenceDaysInput     textinput.Model
 	eventCreateRecurrenceDayInput      textinput.Model
@@ -306,19 +307,19 @@ type mainModel struct {
 	eventCreateRecurrenceCountInput    textinput.Model
 
 	// Attendee lists (calendar)
-	attendeeLists               []AttendeeList
-	attendeeListSelected        int
-	attendeeListEditID              string
-	attendeeListEditName            textinput.Model
-	attendeeListEditMembers         textinput.Model // add-member input
-	attendeeListEditMemberRows      []Contact
-	attendeeListEditMemberSelected  int
+	attendeeLists                    []AttendeeList
+	attendeeListSelected             int
+	attendeeListEditID               string
+	attendeeListEditName             textinput.Model
+	attendeeListEditMembers          textinput.Model // add-member input
+	attendeeListEditMemberRows       []Contact
+	attendeeListEditMemberSelected   int
 	attendeeListEditMembersListFocus bool
-	attendeeListEditStep            int
-	attendeeListDeleteID        string
-	attendeeListDeleteName      string
-	attendeeSuggestions         []AttendeeSuggestion
-	attendeeSuggestionsSelected int
+	attendeeListEditStep             int
+	attendeeListDeleteID             string
+	attendeeListDeleteName           string
+	attendeeSuggestions              []AttendeeSuggestion
+	attendeeSuggestionsSelected      int
 }
 
 func initialModel() mainModel {
@@ -560,8 +561,6 @@ func getDayOffset(t, weekStart time.Time) int {
 	wsDate := time.Date(wsLocal.Year(), wsLocal.Month(), wsLocal.Day(), 0, 0, 0, 0, time.UTC)
 	return int(tDate.Sub(wsDate).Hours() / 24)
 }
-
-
 
 // calendarRespondCmd sends an accept/tentative/decline response to an event.
 func calendarRespondCmd(gc *GraphClient, eventID string, response EventResponse) tea.Cmd {
@@ -1220,7 +1219,7 @@ func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
 	sb.WriteString("\n" + strings.Repeat("-", 80) + "\n\n")
 
 	// Message body content formatted (with HTML stripped, ANSI stripped)
-	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content, m.getRecipientName(m.detailMessage)))
+	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content, false, m.getRecipientName(m.detailMessage)))
 	plainBody = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(plainBody)
 	sb.WriteString(plainBody)
 	sb.WriteString("\n")
@@ -1531,7 +1530,6 @@ func (m mainModel) messagesExcludingPendingDeletes(msgs []Message) []Message {
 	return filtered
 }
 
-
 // activeMessage returns the Message currently indicated by virtualSelected,
 // or nil if list is empty.
 func (m mainModel) activeMessage() *Message {
@@ -1668,7 +1666,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		m.detailMessage = am
 		m.attachments = am.Attachments
 		m = m.updateViewportSize()
-		m.detailViewport.SetContent(wrapText(formatBodyContent(am.Body.Content, m.getRecipientName(am)), m.detailViewport.Width))
+		m.detailViewport.SetContent(m.renderedDetailBody())
 		m.detailViewport.GotoTop()
 
 		hasInline := am.Body.ContentType == "html" && regexp.MustCompile(`(?i)src\s*=\s*['"]?cid:`).MatchString(am.Body.Content)
@@ -1704,7 +1702,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 			m.detailMessage = cached
 			m.attachments = cached.Attachments
 			m = m.updateViewportSize()
-			m.detailViewport.SetContent(wrapText(formatBodyContent(cached.Body.Content, m.getRecipientName(cached)), m.detailViewport.Width))
+			m.detailViewport.SetContent(m.renderedDetailBody())
 			m.detailViewport.GotoTop()
 
 			// Update in-memory collections so they have the loaded body and attachments too
@@ -1810,9 +1808,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.updateViewportSize()
-		if m.detailMessage != nil {
-			m.detailViewport.SetContent(wrapText(formatBodyContent(m.detailMessage.Body.Content, m.getRecipientName(m.detailMessage)), m.detailViewport.Width))
-		}
+		m = m.refreshDetailViewport()
 		if m.state == stateHelp {
 			m.helpViewport.SetContent(m.renderHelpContent())
 		}
@@ -2155,7 +2151,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedAttach = 0
 
 			m = m.updateViewportSize()
-			m.detailViewport.SetContent(wrapText(formatBodyContent(msg.Message.Body.Content, m.getRecipientName(msg.Message)), m.detailViewport.Width))
+			m.detailViewport.SetContent(m.renderedDetailBody())
 			m.detailViewport.GotoTop()
 
 			// Mark as read and cache body in local UI — update in messages slice and thread groups
@@ -3305,6 +3301,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m, cmd = m.handleOpenURLs(false)
 			return m, cmd
+		case "h":
+			if m.detailMessage == nil || m.detailMessage.Body.Content == "" {
+				m.statusMsg = "No message loaded"
+				break
+			}
+			m.showLinkURLs = !m.showLinkURLs
+			if m.showLinkURLs {
+				m.statusMsg = "Link URLs shown"
+			} else {
+				m.statusMsg = "Link URLs hidden"
+			}
+			m = m.refreshDetailViewport()
 		case "ctrl+g":
 			am := m.activeMessage()
 			if am == nil {
@@ -4470,7 +4478,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 		quotedBody.WriteString(fmt.Sprintf("On %s, %s wrote:\n", formattedTime, senderAddr))
 	}
 
-	plainBody := stripANSICodes(formatBodyContent(bodyText, m.getRecipientName(origMsgPtr)))
+	plainBody := stripANSICodes(formatBodyContent(bodyText, false, m.getRecipientName(origMsgPtr)))
 	plainBody = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(plainBody)
 	lines := strings.Split(plainBody, "\n")
 	for _, line := range lines {
@@ -5915,7 +5923,7 @@ func (m mainModel) renderDayContent(dayDate time.Time, width int, height int) []
 	} else {
 		headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true)
 	}
-	lines = append(lines, " " + headerStyle.Render(headerText))
+	lines = append(lines, " "+headerStyle.Render(headerText))
 
 	maxEvents := height - 1
 	if maxEvents < 1 {
@@ -5952,7 +5960,7 @@ func (m mainModel) renderDayContent(dayDate time.Time, width int, height int) []
 
 		if item.idx == m.calendarSelected {
 			paddedLine := selectedItemStyle.Copy().Width(contentWidth).Render(lineText)
-			lines = append(lines, " " + paddedLine)
+			lines = append(lines, " "+paddedLine)
 		} else {
 			lineText = " " + lineText
 			if item.ev.IsCancelled {
@@ -6105,7 +6113,7 @@ func (m mainModel) renderCalendarView() string {
 		}
 
 		colWidth := (leftWidth - 7) / 2
-		contentWidth := colWidth * 2 + 3
+		contentWidth := colWidth*2 + 3
 		leftWidth = contentWidth + 4
 		detailWidth = m.width - leftWidth - 6
 		if detailWidth < 20 {
@@ -6183,7 +6191,7 @@ func (m mainModel) renderCalendarView() string {
 			line := fmt.Sprintf(" %s\n %s", subj, dimStyle.Render(timeStr))
 
 			if i == m.calendarSelected {
-				listBuf.WriteString(selectedItemStyle.Copy().Width(listWidth - 2).Render(line) + "\n")
+				listBuf.WriteString(selectedItemStyle.Copy().Width(listWidth-2).Render(line) + "\n")
 			} else {
 				listBuf.WriteString(line + "\n")
 			}
@@ -6352,6 +6360,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [m]                 Move message to specified folder",
 		"  [a]                 Open attachments pane (if any)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
+		"  [h]                 Toggle showing URLs next to link labels",
 		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
 		"  [Ctrl+g]            View message in external editor",
 		"  [c]                 Open Calendar popup (if calendar_enabled)",
@@ -7692,7 +7701,7 @@ func (m mainModel) executeYank(key string) mainModel {
 
 func extractCleanText(htmlContent string, excludeQuoting bool) string {
 	htmlContent = strings.ReplaceAll(htmlContent, "\r", "")
-	res := replaceAnchorTags(htmlContent, false)
+	res := replaceAnchorTags(htmlContent, false, false)
 
 	// Replace <img> tags with a simple "[image]" placeholder or "[image: alt/cid]"
 	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
@@ -7869,8 +7878,9 @@ func (m mainModel) renderMetaBlock(width int) string {
 	return s.String()
 }
 
-// formatBodyContent strips/cleans up HTML email bodies to readable plain text
-func formatBodyContent(htmlContent string, recipientName ...string) string {
+// formatBodyContent strips/cleans up HTML email bodies to readable plain text.
+// When showLinkURLs is true, named <a> labels are followed by their href in parentheses.
+func formatBodyContent(htmlContent string, showLinkURLs bool, recipientName ...string) string {
 	var rName string
 	if len(recipientName) > 0 {
 		rName = recipientName[0]
@@ -7891,7 +7901,7 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	res = regexp.MustCompile(`(?i)</code>`).ReplaceAllString(res, "\x01CODE_END\x01")
 
 	// First, replace <a> tags so that URLs are preserved before tag stripping
-	res = replaceAnchorTags(res, true)
+	res = replaceAnchorTags(res, true, showLinkURLs)
 
 	// Replace <img> tags with a styled "[image]" placeholder
 	res = regexp.MustCompile(`(?i)<img\b[^>]*>`).ReplaceAllStringFunc(res, func(match string) string {
@@ -8118,6 +8128,23 @@ func formatBodyContent(htmlContent string, recipientName ...string) string {
 	return strings.Join(cleaned, "\n")
 }
 
+// renderedDetailBody formats the currently loaded message body for the detail
+// viewport, honoring the show-link-URLs toggle.
+func (m mainModel) renderedDetailBody() string {
+	if m.detailMessage == nil {
+		return ""
+	}
+	return wrapText(formatBodyContent(m.detailMessage.Body.Content, m.showLinkURLs, m.getRecipientName(m.detailMessage)), m.detailViewport.Width)
+}
+
+// refreshDetailViewport re-renders the detail pane in place (scroll position is kept).
+func (m mainModel) refreshDetailViewport() mainModel {
+	if m.detailMessage != nil {
+		m.detailViewport.SetContent(m.renderedDetailBody())
+	}
+	return m
+}
+
 // shouldRenderAsHTMLTable determines whether an HTML <table> fragment should be
 // rendered as a Unicode box-drawing ASCII table. It returns false for code blocks,
 // diff tables (from platforms like GitLab, GitHub, Bitbucket), or nested layout tables,
@@ -8185,7 +8212,7 @@ func renderHTMLTable(tableHTML string) string {
 		}, s)
 		s = html.UnescapeString(s)
 		s = strings.ReplaceAll(s, "\u00a0", " ")
-		
+
 		// Split by \n, then trim space and collapse internal spaces on each line
 		lines := strings.Split(s, "\n")
 		var cleanLines []string
@@ -8207,13 +8234,13 @@ func renderHTMLTable(tableHTML string) string {
 	}
 
 	type htmlCell struct {
-		text   string
-		isHead bool
-		attrs  string
-		align  string
-		hasFg  bool
+		text          string
+		isHead        bool
+		attrs         string
+		align         string
+		hasFg         bool
 		fgR, fgG, fgB int
-		hasBg  bool
+		hasBg         bool
 		bgR, bgG, bgB int
 	}
 	type htmlRow struct {
@@ -8256,7 +8283,7 @@ func renderHTMLTable(tableHTML string) string {
 			tagName := strings.ToLower(cellMatch[1])
 			attrs := cellMatch[2]
 			content := cellMatch[3]
-			
+
 			// Detect alignment from attributes and cell content
 			combined := attrs + " " + content
 			align := "left"
@@ -8269,8 +8296,8 @@ func renderHTMLTable(tableHTML string) string {
 			}
 
 			// Bold headers or cells containing <b> / <strong> tags
-			isHead := tagName == "th" || 
-				regexp.MustCompile(`(?i)<b\b`).MatchString(content) || 
+			isHead := tagName == "th" ||
+				regexp.MustCompile(`(?i)<b\b`).MatchString(content) ||
 				regexp.MustCompile(`(?i)<strong\b`).MatchString(content)
 
 			cellFg, cellBg := rowFg, rowBg
@@ -8325,7 +8352,7 @@ func renderHTMLTable(tableHTML string) string {
 			if cellFg != "" {
 				fgR, fgG, fgB, hasFg = cssColorToRGB(cellFg)
 			}
-			
+
 			if cellFg == "" && !hasFg {
 				ansiColorRx := regexp.MustCompile(`\x1b\[38;2;(\d+);(\d+);(\d+)m`)
 				ansiMatches := ansiColorRx.FindStringSubmatch(content)
@@ -8421,17 +8448,17 @@ func renderHTMLTable(tableHTML string) string {
 	}
 
 	type gridCell struct {
-		text      string
-		isHead    bool
-		rowSpan   int
-		colSpan   int
-		isSpanned bool
-		rootRow   int
-		rootCol   int
-		align     string
-		hasFg     bool
+		text          string
+		isHead        bool
+		rowSpan       int
+		colSpan       int
+		isSpanned     bool
+		rootRow       int
+		rootCol       int
+		align         string
+		hasFg         bool
 		fgR, fgG, fgB int
-		hasBg     bool
+		hasBg         bool
 		bgR, bgG, bgB int
 	}
 
@@ -8689,17 +8716,39 @@ func renderHTMLTable(tableHTML string) string {
 
 	// Helper for getting box-drawing characters based on connections (Up, Down, Left, Right)
 	getBoxChar := func(up, down, left, right bool) string {
-		if up && down && left && right { return "┼" }
-		if up && down && left { return "┤" }
-		if up && down && right { return "├" }
-		if up && left && right { return "┴" }
-		if down && left && right { return "┬" }
-		if left && right { return "─" }
-		if up && down { return "│" }
-		if up && left { return "┘" }
-		if up && right { return "└" }
-		if down && left { return "┐" }
-		if down && right { return "┌" }
+		if up && down && left && right {
+			return "┼"
+		}
+		if up && down && left {
+			return "┤"
+		}
+		if up && down && right {
+			return "├"
+		}
+		if up && left && right {
+			return "┴"
+		}
+		if down && left && right {
+			return "┬"
+		}
+		if left && right {
+			return "─"
+		}
+		if up && down {
+			return "│"
+		}
+		if up && left {
+			return "┘"
+		}
+		if up && right {
+			return "└"
+		}
+		if down && left {
+			return "┐"
+		}
+		if down && right {
+			return "┌"
+		}
 		return " "
 	}
 
@@ -8727,7 +8776,7 @@ func renderHTMLTable(tableHTML string) string {
 			if cell == nil || cell.isSpanned {
 				continue
 			}
-			
+
 			// Calculate total width of horizontal span
 			totalWidth := 0
 			for cc := c; cc < c+cell.colSpan; cc++ {
@@ -8809,7 +8858,7 @@ func renderHTMLTable(tableHTML string) string {
 		if r < numRows-1 {
 			sb.WriteString("\n")
 			// Determine connection states for each intersection on this row boundary (between r and r+1)
-			
+
 			// Left corner
 			upLeft := true
 			downLeft := true
@@ -8947,12 +8996,13 @@ func cleanFilename(s string) string {
 // replaceAnchorTags finds <a> tags with hrefs and replaces them in-place.
 // If forDisplay is true:
 //   - If the text and URL are the same, returns the URL wrapped in blue/cyan link styling.
-//   - If they are different, returns the text wrapped in blue/cyan link styling, hiding the URL.
+//   - If they are different, returns the text wrapped in blue/cyan link styling.
+//     When showLinkURLs is also true, appends " (url)" after the styled text.
 //
 // If forDisplay is false:
 //   - Returns "text (url)" if text and url are substantially different.
 //   - Returns "url" if they are the same or if text is empty.
-func replaceAnchorTags(htmlContent string, forDisplay bool) string {
+func replaceAnchorTags(htmlContent string, forDisplay bool, showLinkURLs bool) string {
 	anchorRx := regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)</a>`)
 	return anchorRx.ReplaceAllStringFunc(htmlContent, func(match string) string {
 		submatches := anchorRx.FindStringSubmatch(match)
@@ -9001,6 +9051,9 @@ func replaceAnchorTags(htmlContent string, forDisplay bool) string {
 		}
 
 		if forDisplay {
+			if showLinkURLs {
+				return "\x01" + text + "\x02 (" + displayURL + ") "
+			}
 			return "\x01" + text + "\x02 "
 		}
 
@@ -9376,7 +9429,7 @@ func isForwarded(subject string, htmlContent string) bool {
 // original message blocks/quoted blocks.
 func extractURLs(htmlContent string, allBody bool) []string {
 	// 1. Replace anchor tags to make href values visible.
-	res := replaceAnchorTags(htmlContent, false)
+	res := replaceAnchorTags(htmlContent, false, false)
 
 	// 2. Convert HTML line breaks to real newlines to preserve message structure.
 	res = regexp.MustCompile(`(?i)<br(?:\s*\/)?>`).ReplaceAllString(res, "\n")
@@ -10350,6 +10403,7 @@ func (m mainModel) mainKeyHints() []string {
 			"[m] Move",
 			"[R] Read",
 			"[y] Yank",
+			"[h] URLs",
 			"[o] Open TUI",
 			"[Ctrl+g] Editor",
 		)
