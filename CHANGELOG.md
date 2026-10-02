@@ -1,4 +1,15 @@
 
+## [0.8.7] - 2026-10-02
+
+### Features
+
+- *(tui)* Toggle showing hrefs next to named links with h ([f692417](https://github.com/nospor/outlook-tui/commit/f692417bd07c640903ef4238bac65e2f03fc3893))
+- *(tui)* Open GitHub links in github-tui when available ([d14df57](https://github.com/nospor/outlook-tui/commit/d14df576c3e9771ec84ff8aba01a844dbd6db64f))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.6 [skip ci] ([df8dc76](https://github.com/nospor/outlook-tui/commit/df8dc76aeace071623bf183f2de496905d994439))
+
 ## [0.8.6] - 2026-09-30
 
 ### Bug Fixes
