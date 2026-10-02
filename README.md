@@ -176,7 +176,7 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
 | `a`                            | View and select attachments on the current email                                                                                                                                                                                                                       |
 | `y`                            | Open the Yank menu/combinations to copy content to the clipboard (displays a selection dropdown):<br>• `ym`: Copy original message (without quoting)<br>• `ya`: Copy all message (with quoting)<br>• `yu`: Yank URL(s) from message body<br>• `ys`: Copy email subject |
 | `h`                            | Toggle showing href URLs next to their link labels in the message body (e.g. `Enter the event (https://…)`). Press again to hide. Session-only; does not affect reply quoting or the external editor view. |
-| `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack and GitLab URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. When `calendar_enabled` is true, it also matches the message to any calendar event (by subject and time, or by Teams/Zoom URL) and includes options to directly view the calendar event or join the meeting. |
+| `o`                            | Extract URLs from the selected message and open them (shows a selection popup if multiple unique URLs exist). YouTrack, GitLab, and GitHub URLs are opened in their respective TUI apps (`yt-tui` / `gitlab-tui` / `github-tui`) if installed, and fall back to opening in the browser (via the configured `browser_command`) otherwise. All other links are opened directly in the browser. When `calendar_enabled` is true, it also matches the message to any calendar event (by subject and time, or by Teams/Zoom URL) and includes options to directly view the calendar event or join the meeting. |
 | `c`                            | Open the **Calendar popup** showing upcoming events for the next 30 days (only available when `calendar_enabled: true` in the config). See [Calendar](#calendar) section below for details.                                                                            |
 | `Ctrl+e`                       | Open the unread event reminders popup to select a reminder and jump to that event in the Calendar view.                                                                                                                                                                 |
 | `?`                            | Toggle help popup describing app functionality and shortcuts                                                                                                                                                                                                           |
@@ -324,14 +324,14 @@ export EDITOR='nvim -u NONE'   # open without user config
 
 Add the `export` line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to make it permanent.
 
-## URL Opening & TUI Integrations (`yt-tui` & `gitlab-tui`)
+## URL Opening & TUI Integrations (`yt-tui`, `gitlab-tui` & `github-tui`)
 
 Outlook TUI lets you quickly open URLs found in messages:
 - Press **`o`** on a message containing URLs.
 - If there is a single URL, it opens directly.
-- If there are multiple unique URLs, a popup dialog will display a list for you to select from (recognized GitLab and YouTrack URLs are automatically sorted to the top of the list).
+- If there are multiple unique URLs, a popup dialog will display a list for you to select from (recognized GitLab, GitHub, and YouTrack URLs are automatically sorted to the top of the list).
 - **TUI Integrations**:
-  - GitLab Merge Request/Pipeline/Job URLs and YouTrack Issue URLs will automatically attempt to open in the external [gitlab-tui](https://github.com/nospor/gitlab-tui) or [yt-tui](https://github.com/nospor/yt-tui) apps, respectively, if they are available in your system `PATH`.
+  - GitLab Merge Request/Pipeline/Job URLs, GitHub repository/Pull Request/Issue/Actions URLs, and YouTrack Issue URLs will automatically attempt to open in the external [gitlab-tui](https://github.com/nospor/gitlab-tui), `github-tui`, or [yt-tui](https://github.com/nospor/yt-tui) apps, respectively, if they are available in your system `PATH`.
   - If the specialized TUI app is not found in your system `PATH`, these URLs will fall back to opening in your standard web browser.
 - **Browser Fallback / Other Links**:
   - General links and TUI links (without their TUI apps installed) are opened in the browser using the configured `browser_command` (which defaults to `"xdg-open"` but can be changed in `config.json`).

@@ -1272,6 +1272,18 @@ func openGitLabTuiCmd(urlStr string) tea.Cmd {
 	})
 }
 
+type githubTuiFinishedMsg struct {
+	Err error
+}
+
+// openGitHubTuiCmd launches the external github-tui command with the given URL.
+func openGitHubTuiCmd(urlStr string) tea.Cmd {
+	c := exec.Command("github-tui", urlStr)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return githubTuiFinishedMsg{Err: err}
+	})
+}
+
 type browserFinishedMsg struct {
 	Err error
 }
@@ -2645,6 +2657,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case githubTuiFinishedMsg:
+		m.state = stateMain
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("github-tui finished with error: %v", msg.Err)
+		} else {
+			m.statusMsg = "github-tui closed"
+		}
+		return m, nil
+
 	case browserFinishedMsg:
 		m.state = stateMain
 		if msg.Err != nil {
@@ -3704,6 +3725,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.state = stateLoading
 						m.statusMsg = "Launching gitlab-tui..."
 						return m, openGitLabTuiCmd(normURL)
+					}
+				} else if urlType == "github" {
+					if _, err := exec.LookPath("github-tui"); err == nil {
+						m.state = stateLoading
+						m.statusMsg = "Launching github-tui..."
+						return m, openGitHubTuiCmd(normURL)
 					}
 				} else if urlType == "youtrack" {
 					if _, err := exec.LookPath("yt-tui"); err == nil {
@@ -5370,9 +5397,19 @@ func (m mainModel) View() string {
 		// Calculate modal size
 		longestURL := 0
 		for _, urlStr := range m.extractedURLs {
-			prefix := "[YouTrack] "
-			if strings.Contains(urlStr, "/merge_requests/") || strings.Contains(urlStr, "/pipelines/") || strings.Contains(urlStr, "/jobs/") {
+			urlType, _ := classifyURL(urlStr)
+			prefix := "[Link]     "
+			switch urlType {
+			case "gitlab":
 				prefix = "[GitLab]   "
+			case "github":
+				prefix = "[GitHub]   "
+			case "youtrack":
+				prefix = "[YouTrack] "
+			case "calendar":
+				prefix = "[Calendar] "
+			case "meeting":
+				prefix = "[Meeting]  "
 			}
 			lineLen := len(prefix) + len(urlStr)
 			if lineLen > longestURL {
@@ -6361,7 +6398,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [a]                 Open attachments pane (if any)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [h]                 Toggle showing URLs next to link labels",
-		"  [o]                 Open YouTrack issue or GitLab MR in TUI",
+		"  [o]                 Open YouTrack / GitLab / GitHub links in TUI",
 		"  [Ctrl+g]            View message in external editor",
 		"  [c]                 Open Calendar popup (if calendar_enabled)",
 	}
@@ -9612,6 +9649,99 @@ func extractGitLabURLs(htmlContent string, subject string) []string {
 	return gitlabURLs
 }
 
+func isGitHubHost(host string) bool {
+	host = strings.ToLower(host)
+	if host == "gist.github.com" {
+		return false
+	}
+	return host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasPrefix(host, "github.")
+}
+
+func pathNumericID(s string) string {
+	if s == "" {
+		return ""
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return s
+}
+
+// classifyGitHubURL returns ("github", normalizedURL) for repositories, pull
+// requests, issues, and Actions runs that github-tui can open. Repository and
+// issue URLs require a GitHub-like host so GitLab project/issue URLs are not
+// misclassified. /pull/N and /actions/runs/N are GitHub-specific and match any
+// host (including GitHub Enterprise).
+func classifyGitHubURL(parsed *url.URL) (string, string) {
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", ""
+	}
+	owner := parts[0]
+	repo := strings.TrimSuffix(parts[1], ".git")
+	if repo == "" {
+		return "", ""
+	}
+	scheme := parsed.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := parsed.Host
+
+	if len(parts) == 2 {
+		if !isGitHubHost(parsed.Hostname()) {
+			return "", ""
+		}
+		return "github", fmt.Sprintf("%s://%s/%s/%s", scheme, host, owner, repo)
+	}
+
+	if len(parts) < 4 {
+		return "", ""
+	}
+
+	switch parts[2] {
+	case "pull":
+		n := pathNumericID(parts[3])
+		if n == "" {
+			return "", ""
+		}
+		return "github", fmt.Sprintf("%s://%s/%s/%s/pull/%s", scheme, host, owner, repo, n)
+	case "issues":
+		if !isGitHubHost(parsed.Hostname()) {
+			return "", ""
+		}
+		n := pathNumericID(parts[3])
+		if n == "" {
+			return "", ""
+		}
+		return "github", fmt.Sprintf("%s://%s/%s/%s/issues/%s", scheme, host, owner, repo, n)
+	case "actions":
+		if len(parts) >= 5 && parts[3] == "runs" {
+			n := pathNumericID(parts[4])
+			if n == "" {
+				return "", ""
+			}
+			return "github", fmt.Sprintf("%s://%s/%s/%s/actions/runs/%s", scheme, host, owner, repo, n)
+		}
+	}
+	return "", ""
+}
+
+func extractGitHubURLs(htmlContent string, subject string) []string {
+	allURLs := extractURLsFromMainMessage(htmlContent, subject)
+	var githubURLs []string
+	seen := make(map[string]bool)
+	for _, uStr := range allURLs {
+		if urlType, normalized := classifyURL(uStr); urlType == "github" && !seen[normalized] {
+			seen[normalized] = true
+			githubURLs = append(githubURLs, normalized)
+		}
+	}
+	return githubURLs
+}
+
 func classifyURL(uStr string) (string, string) {
 	if strings.HasPrefix(uStr, "calendar-event://") {
 		return "calendar", uStr
@@ -9661,6 +9791,11 @@ func classifyURL(uStr string) (string, string) {
 		}
 	}
 
+	// 3. Check GitHub (repos, PRs, issues, Actions runs)
+	if ghType, ghURL := classifyGitHubURL(parsed); ghType != "" {
+		return ghType, ghURL
+	}
+
 	return "normal", uStr
 }
 
@@ -9677,7 +9812,7 @@ func extractAllURLsForOpen(htmlContent string, subject string) []string {
 		urlType, normalized := classifyURL(uStr)
 		if !seen[normalized] {
 			seen[normalized] = true
-			if urlType == "gitlab" || urlType == "youtrack" {
+			if urlType == "gitlab" || urlType == "github" || urlType == "youtrack" {
 				recognized = append(recognized, normalized)
 			} else {
 				others = append(others, normalized)
@@ -9733,6 +9868,8 @@ func (m mainModel) renderExternalURLDropdown(width int) string {
 		displayURL := urlStr
 		if urlType == "gitlab" {
 			prefix = "[GitLab]   "
+		} else if urlType == "github" {
+			prefix = "[GitHub]   "
 		} else if urlType == "youtrack" {
 			prefix = "[YouTrack] "
 		} else if urlType == "calendar" {
@@ -10576,6 +10713,12 @@ func (m mainModel) handleOpenURLs(skipFetch bool) (mainModel, tea.Cmd) {
 				m.state = stateLoading
 				m.statusMsg = "Launching gitlab-tui..."
 				return m, openGitLabTuiCmd(normURL)
+			}
+		} else if urlType == "github" {
+			if _, err := exec.LookPath("github-tui"); err == nil {
+				m.state = stateLoading
+				m.statusMsg = "Launching github-tui..."
+				return m, openGitHubTuiCmd(normURL)
 			}
 		} else if urlType == "youtrack" {
 			if _, err := exec.LookPath("yt-tui"); err == nil {

@@ -1009,6 +1009,60 @@ func TestClassifyURL(t *testing.T) {
 			expectedType: "youtrack",
 			expectedNorm: "https://youtrack.example.com/issue/PROJ-123",
 		},
+		{
+			name:         "GitHub Pull Request URL",
+			urlStr:       "https://github.com/cli/cli/pull/1234",
+			expectedType: "github",
+			expectedNorm: "https://github.com/cli/cli/pull/1234",
+		},
+		{
+			name:         "GitHub Pull Request URL with files path and query",
+			urlStr:       "https://github.com/cli/cli/pull/1234/files?diff=split",
+			expectedType: "github",
+			expectedNorm: "https://github.com/cli/cli/pull/1234",
+		},
+		{
+			name:         "GitHub Issue URL",
+			urlStr:       "https://github.com/cli/cli/issues/9",
+			expectedType: "github",
+			expectedNorm: "https://github.com/cli/cli/issues/9",
+		},
+		{
+			name:         "GitHub Actions run URL",
+			urlStr:       "https://github.com/cli/cli/actions/runs/42",
+			expectedType: "github",
+			expectedNorm: "https://github.com/cli/cli/actions/runs/42",
+		},
+		{
+			name:         "GitHub Enterprise pull request URL",
+			urlStr:       "https://ghe.company.com/cli/cli/pull/7",
+			expectedType: "github",
+			expectedNorm: "https://ghe.company.com/cli/cli/pull/7",
+		},
+		{
+			name:         "GitHub repository URL",
+			urlStr:       "https://github.com/nospor/teams-tui-go",
+			expectedType: "github",
+			expectedNorm: "https://github.com/nospor/teams-tui-go",
+		},
+		{
+			name:         "GitHub repository URL with trailing slash",
+			urlStr:       "https://github.com/cli/cli/",
+			expectedType: "github",
+			expectedNorm: "https://github.com/cli/cli",
+		},
+		{
+			name:         "GitHub blob URL is not a TUI resource",
+			urlStr:       "https://github.com/cli/cli/blob/main/README.md",
+			expectedType: "normal",
+			expectedNorm: "https://github.com/cli/cli/blob/main/README.md",
+		},
+		{
+			name:         "GitLab project URL is not classified as GitHub",
+			urlStr:       "https://gitlab.example.com/group/project",
+			expectedType: "normal",
+			expectedNorm: "https://gitlab.example.com/group/project",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1029,10 +1083,12 @@ func TestExtractAllURLsForOpen(t *testing.T) {
 		And some normal link: https://news.ycombinator.com
 		Check this GitLab MR: https://gitlab.example.com/foo/bar/merge_requests/123
 		And YouTrack: https://youtrack.adwanted.com/issue/MTEL-999
+		And GitHub PR: https://github.com/cli/cli/pull/1234/files
 	`
 	expected := []string{
 		"https://gitlab.example.com/foo/bar/-/merge_requests/123",
 		"https://youtrack.adwanted.com/issue/MTEL-999",
+		"https://github.com/cli/cli/pull/1234",
 		"https://news.ycombinator.com",
 	}
 
@@ -1319,6 +1375,79 @@ func TestExtractGitLabURLs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual := extractGitLabURLs(tt.input, "")
+			if len(actual) != len(tt.expected) {
+				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
+			}
+			for i := range actual {
+				if actual[i] != tt.expected[i] {
+					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], actual[i])
+				}
+			}
+		})
+	}
+}
+
+func TestExtractGitHubURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "No GitHub resource URLs",
+			input:    "Hello world, check https://google.com and https://github.com",
+			expected: nil,
+		},
+		{
+			name:     "One GitHub repository URL",
+			input:    "Repo: https://github.com/nospor/teams-tui-go",
+			expected: []string{"https://github.com/nospor/teams-tui-go"},
+		},
+		{
+			name:     "One GitHub PR URL",
+			input:    "Please review: https://github.com/cli/cli/pull/1234. Thanks!",
+			expected: []string{"https://github.com/cli/cli/pull/1234"},
+		},
+		{
+			name:     "GitHub PR URL with files path and query",
+			input:    "Diff: https://github.com/cli/cli/pull/1234/files?diff=split",
+			expected: []string{"https://github.com/cli/cli/pull/1234"},
+		},
+		{
+			name:     "One GitHub issue URL",
+			input:    "See https://github.com/cli/cli/issues/9 for details.",
+			expected: []string{"https://github.com/cli/cli/issues/9"},
+		},
+		{
+			name:     "One GitHub Actions run URL",
+			input:    "Failed run: https://github.com/cli/cli/actions/runs/42",
+			expected: []string{"https://github.com/cli/cli/actions/runs/42"},
+		},
+		{
+			name: "Multiple GitHub URLs with duplicates and a GitLab issue that must not match",
+			input: `
+				Check:
+				1. https://github.com/cli/cli/pull/1234
+				2. https://github.com/cli/cli/pull/1234/files?diff=split
+				3. https://github.com/cli/cli/issues/9
+				4. https://github.com/cli/cli/actions/runs/42?check_suite_focus=true
+				5. https://gitlab.example.com/group/project/-/issues/12
+				6. https://ghe.company.com/acme/app/pull/7
+				7. https://github.com/nospor/teams-tui-go
+			`,
+			expected: []string{
+				"https://github.com/cli/cli/pull/1234",
+				"https://github.com/cli/cli/issues/9",
+				"https://github.com/cli/cli/actions/runs/42",
+				"https://ghe.company.com/acme/app/pull/7",
+				"https://github.com/nospor/teams-tui-go",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := extractGitHubURLs(tt.input, "")
 			if len(actual) != len(tt.expected) {
 				t.Fatalf("expected %d urls, got %d: %v", len(tt.expected), len(actual), actual)
 			}
