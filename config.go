@@ -8,28 +8,33 @@ import (
 	"strings"
 )
 
+// defaultNotificationSoundFile is the Linux freedesktop message sound used by paplay.
+const defaultNotificationSoundFile = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
+
 type Config struct {
-	ClientID        string   `json:"client_id"`
-	TenantID        string   `json:"tenant_id"`        // defaults to "common"
-	RefreshTimeMin  int      `json:"refresh_time_min"` // defaults to 5
-	Layout          int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
-	UseSQLite       int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
-	ExcludedFolders  []string `json:"excluded_folders"`
-	ProtectedFolders []string `json:"protected_folders"` // folders blocked from "empty folder" (E); defaults to Inbox and Sent Items
-	ScrollLines     int      `json:"scroll_lines"` // defaults to 1
-	ImageViewer     string   `json:"image_viewer"`
-	AttachmentDir   string   `json:"attachment_dir"`
-	TerminalBell    int      `json:"terminal_bell"`   // 0 = disabled, 1 = enabled (default)
-	Theme           string   `json:"theme"`           // "catppuccin" (default) or "teams"
-	BrowserCommand  string   `json:"browser_command"` // defaults to "xdg-open"
-	CalendarEnabled   bool     `json:"calendar_enabled"` // false (default) — enables calendar view (c) and event responses; requires Calendars.ReadWrite re-auth
-	CalendarView      string   `json:"calendar_view"`    // "list" (default) or "week"
-	CalendarOpenMode  string   `json:"calendar_open_mode"` // "join" (default) = raw meeting URL, or "owa" = open event in Outlook Web (logged-in session)
-	EventsReminderMin []int    `json:"events_reminder_min"`
-	CalendarDefaultDurationMin int `json:"calendar_default_duration_min"` // default meeting length in minutes (default 60)
-	CalendarDefaultReminderMin int `json:"calendar_default_reminder_min"` // default reminder before event (default 15)
-	CalendarWorkStartHour      int `json:"calendar_work_start_hour"`      // busy timeline start hour (default 8)
-	CalendarWorkEndHour        int `json:"calendar_work_end_hour"`        // busy timeline end hour (default 18)
+	ClientID                   string   `json:"client_id"`
+	TenantID                   string   `json:"tenant_id"`        // defaults to "common"
+	RefreshTimeMin             int      `json:"refresh_time_min"` // defaults to 5
+	Layout                     int      `json:"layout"`           // 1 = side-by-side (default), 2 = folders above messages
+	UseSQLite                  int      `json:"use_sqlite"`       // 0 = disabled (default), 1 = cache messages in ~/.cache/outlook-tui/db.db
+	ExcludedFolders            []string `json:"excluded_folders"`
+	ProtectedFolders           []string `json:"protected_folders"` // folders blocked from "empty folder" (E); defaults to Inbox and Sent Items
+	ScrollLines                int      `json:"scroll_lines"`      // defaults to 1
+	ImageViewer                string   `json:"image_viewer"`
+	AttachmentDir              string   `json:"attachment_dir"`
+	TerminalBell               int      `json:"terminal_bell"`              // 0 = disabled, 1 = enabled (default)
+	NotificationSoundEnabled   bool     `json:"notification_sound_enabled"` // Linux only; play paplay with desktop toasts (default false)
+	NotificationSoundFile      string   `json:"notification_sound_file"`    // path for paplay; empty skips playback
+	Theme                      string   `json:"theme"`                      // "catppuccin" (default) or "teams"
+	BrowserCommand             string   `json:"browser_command"`            // defaults to "xdg-open"
+	CalendarEnabled            bool     `json:"calendar_enabled"`           // false (default) — enables calendar view (c) and event responses; requires Calendars.ReadWrite re-auth
+	CalendarView               string   `json:"calendar_view"`              // "list" (default) or "week"
+	CalendarOpenMode           string   `json:"calendar_open_mode"`         // "join" (default) = raw meeting URL, or "owa" = open event in Outlook Web (logged-in session)
+	EventsReminderMin          []int    `json:"events_reminder_min"`
+	CalendarDefaultDurationMin int      `json:"calendar_default_duration_min"` // default meeting length in minutes (default 60)
+	CalendarDefaultReminderMin int      `json:"calendar_default_reminder_min"` // default reminder before event (default 15)
+	CalendarWorkStartHour      int      `json:"calendar_work_start_hour"`      // busy timeline start hour (default 8)
+	CalendarWorkEndHour        int      `json:"calendar_work_end_hour"`        // busy timeline end hour (default 18)
 }
 
 func GetConfigDir() (string, error) {
@@ -58,21 +63,23 @@ func LoadConfig() (Config, error) {
 			defaultAttachmentDir = "."
 		}
 		cfg := Config{
-			ClientID:        "",
-			TenantID:        "common",
-			RefreshTimeMin:  5,
-			Layout:          1,
-			UseSQLite:       0,
-			ScrollLines:     1,
-			AttachmentDir:   defaultAttachmentDir,
-			TerminalBell:    1,
-			Theme:           "catppuccin",
-			BrowserCommand:  "xdg-open",
-			CalendarEnabled:   false,
-			CalendarView:      "list",
-			CalendarOpenMode:  "join",
-			EventsReminderMin: []int{30, 15, 1},
-			ProtectedFolders:  []string{"Inbox", "Sent Items"},
+			ClientID:                   "",
+			TenantID:                   "common",
+			RefreshTimeMin:             5,
+			Layout:                     1,
+			UseSQLite:                  0,
+			ScrollLines:                1,
+			AttachmentDir:              defaultAttachmentDir,
+			TerminalBell:               1,
+			NotificationSoundEnabled:   false,
+			NotificationSoundFile:      defaultNotificationSoundFile,
+			Theme:                      "catppuccin",
+			BrowserCommand:             "xdg-open",
+			CalendarEnabled:            false,
+			CalendarView:               "list",
+			CalendarOpenMode:           "join",
+			EventsReminderMin:          []int{30, 15, 1},
+			ProtectedFolders:           []string{"Inbox", "Sent Items"},
 			CalendarDefaultDurationMin: 60,
 			CalendarDefaultReminderMin: 15,
 			CalendarWorkStartHour:      8,
@@ -83,15 +90,17 @@ func LoadConfig() (Config, error) {
 	}
 
 	cfg := Config{
-		TenantID:       "common",
-		RefreshTimeMin: 5,
-		Layout:         1,
-		UseSQLite:      0,
-		ScrollLines:    1,
-		TerminalBell:   1,
-		Theme:          "catppuccin",
-		BrowserCommand: "xdg-open",
-		CalendarView:   "list",
+		TenantID:                 "common",
+		RefreshTimeMin:           5,
+		Layout:                   1,
+		UseSQLite:                0,
+		ScrollLines:              1,
+		TerminalBell:             1,
+		NotificationSoundEnabled: false,
+		NotificationSoundFile:    defaultNotificationSoundFile,
+		Theme:                    "catppuccin",
+		BrowserCommand:           "xdg-open",
+		CalendarView:             "list",
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
@@ -178,7 +187,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "protected_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "calendar_open_mode") || !strings.Contains(string(data), "events_reminder_min") {
+	if !strings.Contains(string(data), "use_sqlite") || !strings.Contains(string(data), "excluded_folders") || !strings.Contains(string(data), "protected_folders") || !strings.Contains(string(data), "scroll_lines") || !strings.Contains(string(data), "image_viewer") || !strings.Contains(string(data), "attachment_dir") || !strings.Contains(string(data), "terminal_bell") || !strings.Contains(string(data), "notification_sound_enabled") || !strings.Contains(string(data), "notification_sound_file") || !strings.Contains(string(data), "theme") || !strings.Contains(string(data), "browser_command") || !strings.Contains(string(data), "calendar_enabled") || !strings.Contains(string(data), "calendar_view") || !strings.Contains(string(data), "calendar_open_mode") || !strings.Contains(string(data), "events_reminder_min") {
 		_ = SaveConfig(cfg)
 	}
 

@@ -105,6 +105,8 @@ Configuration settings are stored in `~/.config/outlook-tui/config.json`. The su
 * `terminal_bell`: Whether to sound the terminal bell (`\a`) when a new message notification is triggered (defaults to `1` — enabled).
   - **`0`** — Disabled.
   - **`1` (default)** — Enabled.
+* `notification_sound_enabled`: Linux only. Set to `true` to play a sound with `paplay` when a new-mail or calendar-reminder desktop notification is sent. Requires `paplay` (PulseAudio or PipeWire). Ignored on macOS and Windows. Defaults to `false`.
+* `notification_sound_file`: Path to the `.oga`/`.ogg`/`.wav` file played by `paplay`. Default is `/usr/share/sounds/freedesktop/stereo/message-new-instant.oga`. `~/` is expanded. An empty path skips playback.
 * `theme`: The UI color theme (defaults to `"catppuccin"`).
   - **`"catppuccin"` (default)** — A gorgeous theme based on Catppuccin Mocha colors.
   - **`"teams"`** — A theme mimicking teams-tui-go palette
@@ -137,6 +139,8 @@ Example `~/.config/outlook-tui/config.json` to use Layout 2 with SQLite caching,
   "image_viewer": "sxiv",
   "attachment_dir": "~/Downloads/attachments",
   "terminal_bell": 1,
+  "notification_sound_enabled": true,
+  "notification_sound_file": "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
   "theme": "teams",
   "browser_command": "xdg-open",
   "calendar_view": "list",

@@ -39,6 +39,12 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.TerminalBell != 1 {
 		t.Errorf("expected default TerminalBell to be 1, got %d", cfg.TerminalBell)
 	}
+	if cfg.NotificationSoundEnabled {
+		t.Errorf("expected default NotificationSoundEnabled to be false, got %v", cfg.NotificationSoundEnabled)
+	}
+	if cfg.NotificationSoundFile != defaultNotificationSoundFile {
+		t.Errorf("expected default NotificationSoundFile to be %q, got %q", defaultNotificationSoundFile, cfg.NotificationSoundFile)
+	}
 	if cfg.ImageViewer != "" {
 		t.Errorf("expected default ImageViewer to be empty, got %q", cfg.ImageViewer)
 	}
@@ -97,6 +103,12 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.TerminalBell != 1 {
 		t.Errorf("expected populated TerminalBell to be 1, got %d", cfg.TerminalBell)
 	}
+	if cfg.NotificationSoundEnabled {
+		t.Errorf("expected populated NotificationSoundEnabled to be false, got %v", cfg.NotificationSoundEnabled)
+	}
+	if cfg.NotificationSoundFile != defaultNotificationSoundFile {
+		t.Errorf("expected populated NotificationSoundFile to be %q, got %q", defaultNotificationSoundFile, cfg.NotificationSoundFile)
+	}
 	if cfg.Theme != "catppuccin" {
 		t.Errorf("expected populated Theme to be 'catppuccin', got %q", cfg.Theme)
 	}
@@ -134,6 +146,14 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("expected saved config to have TerminalBell 1, got %d", savedCfg.TerminalBell)
 	}
 
+	if savedCfg.NotificationSoundEnabled {
+		t.Errorf("expected saved config to have NotificationSoundEnabled false, got %v", savedCfg.NotificationSoundEnabled)
+	}
+
+	if savedCfg.NotificationSoundFile != defaultNotificationSoundFile {
+		t.Errorf("expected saved config to have NotificationSoundFile %q, got %q", defaultNotificationSoundFile, savedCfg.NotificationSoundFile)
+	}
+
 	if savedCfg.ImageViewer != "" {
 		t.Errorf("expected saved config to have ImageViewer '', got %q", savedCfg.ImageViewer)
 	}
@@ -159,6 +179,8 @@ func TestConfigDefaults(t *testing.T) {
 	cfg.ImageViewer = "sxiv"
 	cfg.AttachmentDir = "/custom/download/dir"
 	cfg.TerminalBell = 0
+	cfg.NotificationSoundEnabled = true
+	cfg.NotificationSoundFile = "/custom/notify.oga"
 	cfg.Theme = "teams"
 	cfg.BrowserCommand = "google-chrome"
 	err = SaveConfig(cfg)
@@ -194,6 +216,12 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.TerminalBell != 0 {
 		t.Errorf("expected custom TerminalBell to be 0, got %d", cfg.TerminalBell)
+	}
+	if !cfg.NotificationSoundEnabled {
+		t.Errorf("expected custom NotificationSoundEnabled to be true, got %v", cfg.NotificationSoundEnabled)
+	}
+	if cfg.NotificationSoundFile != "/custom/notify.oga" {
+		t.Errorf("expected custom NotificationSoundFile to be %q, got %q", "/custom/notify.oga", cfg.NotificationSoundFile)
 	}
 	if cfg.Theme != "teams" {
 		t.Errorf("expected custom Theme to be 'teams', got %q", cfg.Theme)
@@ -264,5 +292,30 @@ func TestCalendarOpenMode(t *testing.T) {
 	}
 	if saved["calendar_open_mode"] != "owa" {
 		t.Errorf("expected saved calendar_open_mode 'owa', got %v", saved["calendar_open_mode"])
+	}
+}
+
+func TestNotificationSoundFileEmptyPreserved(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	configDir := filepath.Join(tempDir, ".config", "outlook-tui")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"notification_sound_enabled": true, "notification_sound_file": ""}`), 0600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if !cfg.NotificationSoundEnabled {
+		t.Errorf("expected NotificationSoundEnabled true, got %v", cfg.NotificationSoundEnabled)
+	}
+	if cfg.NotificationSoundFile != "" {
+		t.Errorf("expected empty NotificationSoundFile to be preserved, got %q", cfg.NotificationSoundFile)
 	}
 }

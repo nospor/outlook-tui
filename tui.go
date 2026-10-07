@@ -1371,7 +1371,7 @@ func (m mainModel) checkCalendarRemindersCmd() tea.Cmd {
 					}
 
 					playBell := m.config.TerminalBell != 0
-					SendCalendarEventReminder(ev.Subject, ev.Start.DateTime, reminderMin, playBell)
+					SendCalendarEventReminder(ev.Subject, ev.Start.DateTime, reminderMin, playBell, m.config.NotificationSoundEnabled, m.config.NotificationSoundFile)
 
 					_ = m.db.MarkReminderAsSent(ev.ID, reminderMin)
 					_ = addNotifiedEventToFile(ev)
@@ -2272,7 +2272,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, em := range msg.Messages {
 			if !m.inboxKnownIDs[em.ID] {
 				if !em.IsRead {
-					SendSystemNotification(em, m.config.TerminalBell != 0)
+					SendSystemNotification(em, m.config.TerminalBell != 0, m.config.NotificationSoundEnabled, m.config.NotificationSoundFile)
 				}
 				m.inboxKnownIDs[em.ID] = true
 			}

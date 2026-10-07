@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -148,10 +149,30 @@ func parseEventTime(dateTimeStr string) (time.Time, error) {
 	return time.Parse(time.RFC3339, dateTimeStr)
 }
 
+// playLinuxNotificationSound plays a notification sound with paplay.
+// Linux only; other platforms and missing paplay/files are ignored.
+func playLinuxNotificationSound(enabled bool, soundFile string) {
+	if !enabled || runtime.GOOS != "linux" {
+		return
+	}
+	soundFile = strings.TrimSpace(soundFile)
+	if soundFile == "" {
+		return
+	}
+	if strings.HasPrefix(soundFile, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			soundFile = filepath.Join(home, soundFile[2:])
+		}
+	}
+	if _, err := exec.LookPath("paplay"); err != nil {
+		return
+	}
+	_ = exec.Command("paplay", soundFile).Start()
+}
 
 // SendSystemNotification triggers a system desktop notification using notify-send.
 // If playBell is true, it also outputs a terminal bell character (\a).
-func SendSystemNotification(msg Message, playBell bool) {
+func SendSystemNotification(msg Message, playBell bool, soundEnabled bool, soundFile string) {
 	sender := msg.From.EmailAddress.Name
 	if sender == "" {
 		sender = msg.From.EmailAddress.Address
@@ -177,13 +198,15 @@ func SendSystemNotification(msg Message, playBell bool) {
 	cmd := exec.Command("notify-send", "-a", "Outlook TUI", title, body)
 	_ = cmd.Run()
 
+	playLinuxNotificationSound(soundEnabled, soundFile)
+
 	if playBell {
 		fmt.Print("\a")
 	}
 }
 
 // SendCalendarEventReminder triggers a system desktop notification for an upcoming calendar event.
-func SendCalendarEventReminder(eventSubject string, startOriginal string, minutesLeft int, playBell bool) {
+func SendCalendarEventReminder(eventSubject string, startOriginal string, minutesLeft int, playBell bool, soundEnabled bool, soundFile string) {
 	formattedTime := formatCalendarTime(startOriginal)
 	var title, body string
 	if minutesLeft == 0 {
@@ -197,6 +220,8 @@ func SendCalendarEventReminder(eventSubject string, startOriginal string, minute
 	// Trigger system notification using notify-send.
 	cmd := exec.Command("notify-send", "-a", "Outlook TUI", title, body)
 	_ = cmd.Run()
+
+	playLinuxNotificationSound(soundEnabled, soundFile)
 
 	if playBell {
 		fmt.Print("\a")
@@ -224,4 +249,3 @@ func formatCalendarTime(dateTimeStr string) string {
 	}
 	return dateTimeStr
 }
-
