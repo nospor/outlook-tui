@@ -1,4 +1,14 @@
 
+## [0.8.8] - 2026-10-07
+
+### Features
+
+- *(notifications)* Play an optional Linux paplay sound with desktop toasts ([c3ec4c2](https://github.com/nospor/outlook-tui/commit/c3ec4c2658da479746e42264b0da968bfb65f481))
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.7 [skip ci] ([1c0ac1c](https://github.com/nospor/outlook-tui/commit/1c0ac1c28b354e2d097c8b67e948ed0f123fbbbe))
+
 ## [0.8.7] - 2026-10-02
 
 ### Features
