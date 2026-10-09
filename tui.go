@@ -216,6 +216,14 @@ type mainModel struct {
 	composeReservedNames map[string]bool // attachment names from reply target to avoid collisions
 	filepicker           filepicker.Model
 
+	// Zoxide directory jump overlay (nested on stateFileBrowse)
+	filePickerZoxideMode     bool
+	filePickerZoxideLoading  bool
+	filePickerZoxideSelected int
+	filePickerZoxidePaths    []string
+	filePickerZoxideError    string
+	zoxideInput              textinput.Model
+
 	// Notification tracking
 	inboxKnownIDs map[string]bool
 	userEmail     string
@@ -353,6 +361,11 @@ func initialModel() mainModel {
 	}
 	fp.Styles = filepicker.DefaultStyles()
 
+	zi := textinput.New()
+	zi.Placeholder = "Filter zoxide directories..."
+	zi.CharLimit = 200
+	zi.Width = 40
+
 	evs, _ := loadNotifiedEventsFromFile()
 
 	return mainModel{
@@ -361,6 +374,7 @@ func initialModel() mainModel {
 		spinner:           s,
 		configStep:        0,
 		filepicker:        fp,
+		zoxideInput:       zi,
 		config:            cfg,
 		appFocused:        true,
 		calendarWeekStart: getStartOfWeek(time.Now()),
@@ -1870,6 +1884,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Requesting device code..."
 			return m, fetchDeviceCodeCmd(m.config.ClientID, m.config.TenantID, m.config.CalendarEnabled)
 		}
+
+	case zoxideDirsLoadedMsg:
+		m = m.applyZoxideDirsLoaded(msg)
 
 	case errMsg:
 		m.statusMsg = fmt.Sprintf("Error: %v", msg)
@@ -3446,6 +3463,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearComposeState()
 			}
 		case "ctrl+f":
+			m = m.closeFilePickerZoxide()
 			m.state = stateFileBrowse
 			sortBy, sortOrder, lastDir := LoadFilepickerSettings()
 			if lastDir != "" {
@@ -4075,10 +4093,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
+		if m.filePickerZoxideMode {
+			var cmd tea.Cmd
+			m, cmd = m.handleFilePickerZoxideKey(key)
+			return m, cmd
+		}
+
 		switch key.String() {
 		case "esc", "q":
+			m = m.closeFilePickerZoxide()
 			m.state = stateCompose
 			return m, nil
+		case "z":
+			return m.openFilePickerZoxide()
 		}
 
 		var cmd tea.Cmd
@@ -4090,6 +4117,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
 			_ = SaveFilepickerSettings(m.filepicker.SortBy.String(), m.filepicker.SortOrder.String(), m.filepicker.CurrentDirectory)
+			m = m.closeFilePickerZoxide()
 			m.state = stateCompose
 			return m, tea.Batch(cmd, attachFileFromFilepathCmd(path))
 		}
@@ -5057,7 +5085,7 @@ func (m mainModel) View() string {
 		s.WriteString("   " + dimStyle.Render("[Esc/q/?] Close Help  |  [Up/Down/j/k] Scroll  |  [Ctrl+C] Quit") + "\n")
 
 	case stateFileBrowse:
-		s.WriteString(m.renderFilePickerPopup(m.width-4, m.height-10))
+		s.WriteString(m.renderFilePickerOverlay(m.width-4, m.height-10))
 
 	case stateCalendar, stateCalendarDeclineConfirm, stateCalendarDeleteConfirm:
 		s.WriteString(m.renderCalendarView())
@@ -5806,7 +5834,7 @@ func (m mainModel) renderFilePickerPopup(w, h int) string {
 	// Render the filepicker component
 	lines = append(lines, m.filepicker.View())
 
-	footer := dimStyle.Italic(true).Render("j/k or ↑/↓: Navigate • s: Change Sort • o: Change Order • Enter: Attach • Esc / q: Cancel")
+	footer := dimStyle.Italic(true).Render("j/k or ↑/↓: Navigate • s: Change Sort • o: Change Order • z: zoxide jump • Enter: Attach • Esc / q: Cancel")
 	lines = append(lines, "", footer)
 
 	return lipgloss.NewStyle().
@@ -6410,6 +6438,8 @@ func (m mainModel) renderHelpContent() string {
 		"",
 		"  [Tab] / [Shift+Tab] Navigate compose fields (To, Cc, Subject, Body)",
 		"  [Ctrl+v]            Paste image from clipboard",
+		"  [Ctrl+f]            Attach a local file (file picker)",
+		"  [z]                 Jump to a zoxide directory (in file picker; requires zoxide)",
 		"  [Ctrl+g]            Open external editor ($EDITOR / $VISUAL / vi)",
 		"  [Ctrl+s] / [Ctrl+x] Send email",
 		"  [Up] / [Down]       Navigate autocomplete suggestions",

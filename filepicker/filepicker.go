@@ -317,6 +317,22 @@ func (m *Model) SetHeight(height int) {
 	}
 }
 
+// JumpToDirectory sets CurrentDirectory and resets cursor/scroll for a fresh listing.
+func (m *Model) JumpToDirectory(path string) {
+	m.CurrentDirectory = path
+	m.Path = ""
+	m.selected = 0
+	m.min = 0
+	if m.Height > 0 {
+		m.max = m.Height - 1
+	} else {
+		m.max = 0
+	}
+	m.selectedStack = newStack()
+	m.minStack = newStack()
+	m.maxStack = newStack()
+}
+
 // Update handles user interactions within the file picker model.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
