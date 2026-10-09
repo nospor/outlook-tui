@@ -1,4 +1,17 @@
 
+## [0.8.9] - 2026-10-09
+
+### Features
+
+- *(filepicker)* Jump to zoxide directories from the attach file picker ([e01c7a3](https://github.com/nospor/outlook-tui/commit/e01c7a335d08e2a879b37627912daa7ae6ff390a))
+
+            Press z in the Ctrl+F browser to filter `zoxide query -l` results and
+            open a frequent folder without walking the tree.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.8 [skip ci] ([c9b7bae](https://github.com/nospor/outlook-tui/commit/c9b7bae5131c3c38627a4bba09793d077173f86f))
+
 ## [0.8.8] - 2026-10-07
 
 ### Features
