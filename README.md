@@ -340,7 +340,7 @@ Outlook TUI lets you quickly open URLs found in messages:
   - If the specialized TUI app is not found in your system `PATH`, these URLs will fall back to opening in your standard web browser.
 - **Browser Fallback / Other Links**:
   - General links and TUI links (without their TUI apps installed) are opened in the browser using the configured `browser_command` (which defaults to `"xdg-open"` but can be changed in `config.json`).
-  - When `calendar_enabled` is `true` in your config, pressing **`o`** will automatically search for a matching calendar event (by matching Teams/Zoom meeting join URLs, or by matching subject and date/time proximity within a 24-hour window). If no match is found, the app will automatically trigger a background calendar refresh to look for recent updates and retry matching.
+  - When `calendar_enabled` is `true` in your config, pressing **`o`** will automatically search for a matching calendar event among loaded calendar data (by Teams/Zoom join URL in the message body or preview, or by normalized subject). Meeting invites with an empty Graph `body` still work via `bodyPreview`. If no match is found, the app triggers a background calendar refresh and retries matching.
   - If a match is found, two additional options will be prepended to the selection list:
     - **`[Calendar] View event: <Subject>`**: Selecting this and pressing `Enter` will switch the TUI to the Calendar view (`c`) and automatically focus/select the matching event (and center/navigate to the correct week if in week view).
     - **`[Meeting] Join online meeting (Teams/Zoom)`**: Selecting this and pressing `Enter` will directly open the online meeting's join URL in your browser.

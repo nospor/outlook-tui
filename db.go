@@ -197,10 +197,11 @@ func parseAttachments(s string) []Attachment {
 	return as
 }
 
-// UpsertMessage inserts or replaces a message in the cache.
+// UpsertMessage inserts or updates a message in the cache. An empty body from Graph
+// does not overwrite a previously cached body (same rule as UpsertMessages).
 func (d *DB) UpsertMessage(folderID string, msg Message) error {
 	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO messages (
+		INSERT INTO messages (
 			id, folder_id, conversation_id, subject, body_preview,
 			received_datetime, is_read, has_attachments,
 			from_name, from_address,
@@ -208,7 +209,23 @@ func (d *DB) UpsertMessage(folderID string, msg Message) error {
 			body_content_type, body_content,
 			attachments,
 			fetched_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			folder_id = excluded.folder_id,
+			conversation_id = excluded.conversation_id,
+			subject = excluded.subject,
+			body_preview = excluded.body_preview,
+			received_datetime = excluded.received_datetime,
+			is_read = excluded.is_read,
+			has_attachments = excluded.has_attachments,
+			from_name = excluded.from_name,
+			from_address = excluded.from_address,
+			to_recipients = excluded.to_recipients,
+			cc_recipients = excluded.cc_recipients,
+			attachments = excluded.attachments,
+			fetched_at = excluded.fetched_at,
+			body_content_type = CASE WHEN excluded.body_content != '' THEN excluded.body_content_type ELSE body_content_type END,
+			body_content = CASE WHEN excluded.body_content != '' THEN excluded.body_content ELSE body_content END`,
 		msg.ID,
 		folderID,
 		msg.ConversationID,

@@ -1145,7 +1145,7 @@ func TestFindMatchingCalendarEvent(t *testing.T) {
 		{
 			ID:      "ev2",
 			Subject: "1to1 sync",
-			Start:   CalendarDateTime{DateTime: now.Add(25 * time.Hour).Format("2006-01-02T15:04:05")}, // too far
+			Start:   CalendarDateTime{DateTime: now.Add(25 * time.Hour).Format("2006-01-02T15:04:05")},
 		},
 		{
 			ID:      "ev3",
@@ -1181,6 +1181,50 @@ func TestFindMatchingCalendarEvent(t *testing.T) {
 	matched2 := findMatchingCalendarEvent(msg2, events2, []string{teamsURL})
 	if matched2 == nil || matched2.ID != "ev4" {
 		t.Errorf("Expected matching event ev4 by URL, got %v", matched2)
+	}
+
+	// Advance invite: subject matches an event far in the future (no 24h window).
+	msg3 := &Message{
+		Subject:          "Halloween Social!",
+		ReceivedDateTime: now,
+	}
+	events3 := []CalendarEvent{
+		{
+			ID:      "ev-halloween",
+			Subject: "Halloween Social!",
+			Start:   CalendarDateTime{DateTime: now.Add(30 * 24 * time.Hour).Format("2006-01-02T15:04:05")},
+		},
+	}
+	matched3 := findMatchingCalendarEvent(msg3, events3, nil)
+	if matched3 == nil || matched3.ID != "ev-halloween" {
+		t.Errorf("Expected matching future event ev-halloween, got %v", matched3)
+	}
+}
+
+func TestCalendarFetchIsWideRange(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	if calendarFetchIsWideRange(start, start.AddDate(0, 0, 5)) {
+		t.Error("expected 5-day week fetch to be narrow")
+	}
+	if !calendarFetchIsWideRange(start, start.AddDate(0, 0, 30)) {
+		t.Error("expected 30-day fetch to be wide")
+	}
+}
+
+func TestMessageTextForParsing(t *testing.T) {
+	withBody := &Message{
+		Body:        ItemBody{Content: "<p>full body</p>"},
+		BodyPreview: "preview only",
+	}
+	if got := messageTextForParsing(withBody); got != "<p>full body</p>" {
+		t.Errorf("expected full body, got %q", got)
+	}
+	invite := &Message{
+		Body:        ItemBody{Content: ""},
+		BodyPreview: "Join the party https://teams.microsoft.com/meet/abc",
+	}
+	if got := messageTextForParsing(invite); got != invite.BodyPreview {
+		t.Errorf("expected body preview fallback, got %q", got)
 	}
 }
 

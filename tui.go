@@ -267,7 +267,8 @@ type mainModel struct {
 	calendarDeleteSubject string
 
 	// Calendar state (only active when config.CalendarEnabled == true)
-	calendarEvents          []CalendarEvent // currently loaded events
+	calendarEvents          []CalendarEvent // events for the current calendar UI (may be a single week)
+	calendarEventsMatch     []CalendarEvent // wider window (30 days) for matching mail invites to events
 	calendarSelected        int             // index of the selected event in the popup
 	calendarViewport        viewport.Model  // scrollable event detail view
 	calendarLoading         bool            // true while a fetch is in progress
@@ -454,21 +455,24 @@ func (m mainModel) fetchCalendarCmd() tea.Cmd {
 
 func (m *mainModel) loadCalendarWithCache() tea.Cmd {
 	var cached []CalendarEvent
+	var cacheStart, cacheEnd time.Time
+	if m.config.CalendarView == "week" {
+		cacheStart = m.calendarWeekStart.UTC()
+		cacheEnd = m.calendarWeekStart.AddDate(0, 0, 5).UTC()
+	} else {
+		now := time.Now()
+		cacheStart = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
+		cacheEnd = time.Now().AddDate(0, 0, 30).UTC()
+	}
 	if m.config.UseSQLite == 1 && m.db != nil {
-		var start, end time.Time
-		if m.config.CalendarView == "week" {
-			start = m.calendarWeekStart.UTC()
-			end = m.calendarWeekStart.AddDate(0, 0, 5).UTC()
-		} else {
-			now := time.Now()
-			start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
-			end = time.Now().AddDate(0, 0, 30).UTC()
-		}
-		cached, _ = m.db.GetCalendarEvents(start, end)
+		cached, _ = m.db.GetCalendarEvents(cacheStart, cacheEnd)
 	}
 
 	if len(cached) > 0 {
 		m.calendarEvents = cached
+		if calendarFetchIsWideRange(cacheStart, cacheEnd) {
+			m.calendarEventsMatch = cached
+		}
 		m.calendarLoading = false
 		m.statusMsg = fmt.Sprintf("Loaded %d calendar events from cache", len(cached))
 		if m.pendingCalendarSelectID != "" {
@@ -1233,7 +1237,7 @@ func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
 	sb.WriteString("\n" + strings.Repeat("-", 80) + "\n\n")
 
 	// Message body content formatted (with HTML stripped, ANSI stripped)
-	plainBody := stripANSICodes(formatBodyContent(m.detailMessage.Body.Content, false, m.getRecipientName(m.detailMessage)))
+	plainBody := stripANSICodes(formatBodyContent(messageTextForParsing(m.detailMessage), false, m.getRecipientName(m.detailMessage)))
 	plainBody = strings.NewReplacer("__OUTLOOK_TUI_TABLE_START__", "", "__OUTLOOK_TUI_TABLE_END__", "\n").Replace(plainBody)
 	sb.WriteString(plainBody)
 	sb.WriteString("\n")
@@ -1959,6 +1963,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				end := time.Now().AddDate(0, 0, 30).UTC()
 				if cached, err := m.db.GetCalendarEvents(start, end); err == nil && len(cached) > 0 {
 					m.calendarEvents = cached
+					m.calendarEventsMatch = cached
 				}
 			}
 			startCmds = append(startCmds, fetchCalendarEventsCmd(m.graphClient))
@@ -2695,6 +2700,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case calendarFetchedMsg:
 		m.calendarLoading = false
 		m.calendarEvents = msg.Events
+		if calendarFetchIsWideRange(msg.Start, msg.End) {
+			m.calendarEventsMatch = msg.Events
+		}
 		if m.config.UseSQLite == 1 && m.db != nil {
 			_ = m.db.UpsertCalendarEvents(msg.Events, msg.Start, msg.End)
 		}
@@ -3340,7 +3348,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, cmd = m.handleOpenURLs(false)
 			return m, cmd
 		case "h":
-			if m.detailMessage == nil || m.detailMessage.Body.Content == "" {
+			if !m.messageDetailReady(m.activeMessage()) {
 				m.statusMsg = "No message loaded"
 				break
 			}
@@ -3357,7 +3365,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "No message selected"
 				break
 			}
-			if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+			if !m.messageDetailReady(am) {
 				m.statusMsg = "Message details loading, please try again..."
 				break
 			}
@@ -3758,26 +3766,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				} else if urlType == "calendar" {
 					if u, err := url.Parse(normURL); err == nil {
-						eventID := u.Host
-						foundIdx := -1
-						for i, ev := range m.calendarEvents {
-							if ev.ID == eventID {
-								foundIdx = i
-								break
-							}
-						}
-						if foundIdx != -1 {
-							m.state = stateCalendar
-							m.calendarSelected = foundIdx
-							eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
-							m.calendarWeekStart = getStartOfWeek(eventDate)
-							m = m.updateViewportSize()
-							m.statusMsg = "Opened calendar event"
-							return m, nil
-						} else {
-							m.statusMsg = "Event not found in loaded calendar events"
-							break
-						}
+						return m.openCalendarAtEvent(u.Host)
 					}
 				} else if urlType == "meeting" {
 					actualURL := strings.TrimPrefix(normURL, "online-meeting://")
@@ -4412,7 +4401,7 @@ func (m *mainModel) initiateReply(replyAll bool) {
 	receivedTime := origMsg.ReceivedDateTime
 
 	if m.detailMessage != nil && m.detailMessage.ID == origMsg.ID {
-		bodyText = m.detailMessage.Body.Content
+		bodyText = messageTextForParsing(m.detailMessage)
 		if m.detailMessage.From.EmailAddress.Address != "" {
 			senderName = m.detailMessage.From.EmailAddress.Name
 			senderAddr = m.detailMessage.From.EmailAddress.Address
@@ -7711,7 +7700,7 @@ func (m mainModel) executeYank(key string) mainModel {
 
 	switch key {
 	case "m":
-		text := extractCleanText(m.detailMessage.Body.Content, true)
+		text := extractCleanText(messageTextForParsing(m.detailMessage), true)
 		if text == "" {
 			m.statusMsg = "Original message body is empty"
 		} else if err := clipboard.WriteAll(text); err != nil {
@@ -7722,7 +7711,7 @@ func (m mainModel) executeYank(key string) mainModel {
 		m.state = stateMain
 
 	case "a":
-		text := extractCleanText(m.detailMessage.Body.Content, false)
+		text := extractCleanText(messageTextForParsing(m.detailMessage), false)
 		if text == "" {
 			m.statusMsg = "Message body is empty"
 		} else if err := clipboard.WriteAll(text); err != nil {
@@ -7733,7 +7722,7 @@ func (m mainModel) executeYank(key string) mainModel {
 		m.state = stateMain
 
 	case "u":
-		urls := extractURLsFromMainMessage(m.detailMessage.Body.Content, m.detailMessage.Subject)
+		urls := extractURLsFromMainMessage(messageTextForParsing(m.detailMessage), m.detailMessage.Subject)
 		if len(urls) == 0 {
 			m.statusMsg = "No URLs found in the main message"
 			m.state = stateMain
@@ -8201,7 +8190,7 @@ func (m mainModel) renderedDetailBody() string {
 	if m.detailMessage == nil {
 		return ""
 	}
-	return wrapText(formatBodyContent(m.detailMessage.Body.Content, m.showLinkURLs, m.getRecipientName(m.detailMessage)), m.detailViewport.Width)
+	return wrapText(formatBodyContent(messageTextForParsing(m.detailMessage), m.showLinkURLs, m.getRecipientName(m.detailMessage)), m.detailViewport.Width)
 }
 
 // refreshDetailViewport re-renders the detail pane in place (scroll position is kept).
@@ -9997,13 +9986,9 @@ func (m mainModel) calendarGHint() string {
 	return "[g] Join meeting"
 }
 
-func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedURLs []string) *CalendarEvent {
-	if msg == nil {
-		return nil
-	}
-
-	// Normalize email subject (remove Re:, Fwd:, etc. and trim spaces)
-	cleanSubj := strings.ToLower(strings.TrimSpace(msg.Subject))
+// normalizeMailSubject lowercases and strips common reply/forward prefixes.
+func normalizeMailSubject(subject string) string {
+	cleanSubj := strings.ToLower(strings.TrimSpace(subject))
 	for {
 		old := cleanSubj
 		cleanSubj = strings.TrimPrefix(cleanSubj, "re:")
@@ -10014,7 +9999,80 @@ func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedUR
 			break
 		}
 	}
+	return cleanSubj
+}
 
+// messageTextForParsing returns HTML or plain text for URL extraction and display
+// when the Graph API body is empty (common for meeting invites).
+func messageTextForParsing(msg *Message) string {
+	if msg == nil {
+		return ""
+	}
+	if strings.TrimSpace(msg.Body.Content) != "" {
+		return msg.Body.Content
+	}
+	return msg.BodyPreview
+}
+
+func (m mainModel) messageDetailReady(am *Message) bool {
+	return am != nil && m.detailMessage != nil && m.detailMessage.ID == am.ID
+}
+
+// calendarFetchIsWideRange reports whether a calendar fetch covers the default
+// matching window (~30 days), as opposed to a single-week UI fetch.
+func calendarFetchIsWideRange(start, end time.Time) bool {
+	return end.Sub(start) > 6*24*time.Hour
+}
+
+func (m mainModel) calendarEventsForMatching() []CalendarEvent {
+	if len(m.calendarEventsMatch) > 0 {
+		return m.calendarEventsMatch
+	}
+	return m.calendarEvents
+}
+
+func (m mainModel) findCalendarEventByID(eventID string) *CalendarEvent {
+	for i := range m.calendarEvents {
+		if m.calendarEvents[i].ID == eventID {
+			return &m.calendarEvents[i]
+		}
+	}
+	for i := range m.calendarEventsMatch {
+		if m.calendarEventsMatch[i].ID == eventID {
+			return &m.calendarEventsMatch[i]
+		}
+	}
+	return nil
+}
+
+func (m mainModel) openCalendarAtEvent(eventID string) (mainModel, tea.Cmd) {
+	ev := m.findCalendarEventByID(eventID)
+	if ev == nil {
+		m.statusMsg = "Event not found in loaded calendar events"
+		return m, nil
+	}
+	m.state = stateCalendar
+	m.calendarWeekStart = getStartOfWeek(ev.Start.Time().Local())
+	for i, e := range m.calendarEvents {
+		if e.ID == eventID {
+			m.calendarSelected = i
+			m = m.updateViewportSize()
+			m.statusMsg = "Opened calendar event"
+			return m, nil
+		}
+	}
+	m.pendingCalendarSelectID = eventID
+	m = m.updateViewportSize()
+	m.statusMsg = "Opened calendar event"
+	return m, m.loadCalendarWithCache()
+}
+
+func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedURLs []string) *CalendarEvent {
+	if msg == nil {
+		return nil
+	}
+
+	cleanSubj := normalizeMailSubject(msg.Subject)
 	if cleanSubj == "" {
 		return nil
 	}
@@ -10037,34 +10095,39 @@ func findMatchingCalendarEvent(msg *Message, events []CalendarEvent, extractedUR
 		}
 	}
 
-	// Second pass: try matching by subject and date proximity (within 24 hours)
+	// Second pass: match by normalized subject among loaded calendar events.
+	var subjectMatches []*CalendarEvent
 	for i := range events {
 		ev := &events[i]
-		evSubj := strings.ToLower(strings.TrimSpace(ev.Subject))
-		for {
-			old := evSubj
-			evSubj = strings.TrimPrefix(evSubj, "re:")
-			evSubj = strings.TrimPrefix(evSubj, "fwd:")
-			evSubj = strings.TrimPrefix(evSubj, "fw:")
-			evSubj = strings.TrimSpace(evSubj)
-			if evSubj == old {
-				break
-			}
+		if normalizeMailSubject(ev.Subject) != cleanSubj {
+			continue
 		}
-
-		if evSubj == cleanSubj {
-			// Check if event start time is within 24 hours of message received time
-			diff := ev.Start.Time().Sub(msg.ReceivedDateTime)
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff <= 24*time.Hour {
-				return ev
-			}
+		subjectMatches = append(subjectMatches, ev)
+	}
+	if len(subjectMatches) == 0 {
+		return nil
+	}
+	if len(subjectMatches) == 1 {
+		return subjectMatches[0]
+	}
+	// Multiple events share the subject — pick start time closest to when the invite arrived.
+	best := subjectMatches[0]
+	bestDiff := absDuration(best.Start.Time().Sub(msg.ReceivedDateTime))
+	for _, ev := range subjectMatches[1:] {
+		d := absDuration(ev.Start.Time().Sub(msg.ReceivedDateTime))
+		if d < bestDiff {
+			best = ev
+			bestDiff = d
 		}
 	}
+	return best
+}
 
-	return nil
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 var cssColors = map[string][3]int{
@@ -10701,14 +10764,15 @@ func (m mainModel) handleOpenURLs(skipFetch bool) (mainModel, tea.Cmd) {
 		m.statusMsg = "No message selected"
 		return m, nil
 	}
-	if m.detailMessage == nil || m.detailMessage.ID != am.ID || m.detailMessage.Body.Content == "" {
+	if !m.messageDetailReady(am) {
 		m.statusMsg = "Message details loading, please try again..."
 		return m, nil
 	}
-	allURLs := extractAllURLsForOpen(m.detailMessage.Body.Content, m.detailMessage.Subject)
+	bodyText := messageTextForParsing(m.detailMessage)
+	allURLs := extractAllURLsForOpen(bodyText, m.detailMessage.Subject)
 
 	if m.config.CalendarEnabled {
-		matchedEv := findMatchingCalendarEvent(m.detailMessage, m.calendarEvents, allURLs)
+		matchedEv := findMatchingCalendarEvent(m.detailMessage, m.calendarEventsForMatching(), allURLs)
 		if matchedEv != nil {
 			// 1. Add view calendar event link
 			eventURL := fmt.Sprintf("calendar-event://%s?subject=%s", matchedEv.ID, url.QueryEscape(matchedEv.Subject))
@@ -10724,7 +10788,10 @@ func (m mainModel) handleOpenURLs(skipFetch bool) (mainModel, tea.Cmd) {
 			// If not found and we haven't fetched yet, trigger a refresh!
 			m.pendingOpenMessageID = m.detailMessage.ID
 			m.statusMsg = "Refreshing calendar events to check for event..."
-			return m, m.fetchCalendarCmd()
+			if m.graphClient == nil {
+				return m, nil
+			}
+			return m, fetchCalendarEventsCmd(m.graphClient)
 		}
 	}
 
@@ -10758,23 +10825,7 @@ func (m mainModel) handleOpenURLs(skipFetch bool) (mainModel, tea.Cmd) {
 			}
 		} else if urlType == "calendar" {
 			if u, err := url.Parse(normURL); err == nil {
-				eventID := u.Host
-				foundIdx := -1
-				for i, ev := range m.calendarEvents {
-					if ev.ID == eventID {
-						foundIdx = i
-						break
-					}
-				}
-				if foundIdx != -1 {
-					m.state = stateCalendar
-					m.calendarSelected = foundIdx
-					eventDate := m.calendarEvents[foundIdx].Start.Time().Local()
-					m.calendarWeekStart = getStartOfWeek(eventDate)
-					m = m.updateViewportSize()
-					m.statusMsg = "Opened calendar event"
-					return m, nil
-				}
+				return m.openCalendarAtEvent(u.Host)
 			}
 		} else if urlType == "meeting" {
 			actualURL := strings.TrimPrefix(normURL, "online-meeting://")

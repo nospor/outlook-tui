@@ -148,6 +148,49 @@ func TestDBCache(t *testing.T) {
 	}
 }
 
+func TestUpsertMessagePreservesBody(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	db, err := OpenDB()
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+	defer db.Close()
+
+	msg := Message{
+		ID:               "invite-1",
+		Subject:          "Halloween Social!",
+		BodyPreview:      "When: Friday...",
+		ReceivedDateTime: time.Now(),
+		Body: ItemBody{
+			ContentType: "html",
+			Content:     "<p>Original invite HTML</p>",
+		},
+	}
+	if err := db.UpsertMessage("inbox", msg); err != nil {
+		t.Fatalf("upsert with body: %v", err)
+	}
+
+	emptyBody := msg
+	emptyBody.Body = ItemBody{ContentType: "html", Content: ""}
+	emptyBody.IsRead = true
+	if err := db.UpsertMessage("inbox", emptyBody); err != nil {
+		t.Fatalf("upsert empty body: %v", err)
+	}
+
+	cached, err := db.GetMessage("invite-1")
+	if err != nil {
+		t.Fatalf("get message: %v", err)
+	}
+	if cached.Body.Content != "<p>Original invite HTML</p>" {
+		t.Errorf("expected cached body preserved, got %q", cached.Body.Content)
+	}
+	if !cached.IsRead {
+		t.Error("expected is_read updated from second upsert")
+	}
+}
+
 func TestDBUpsertMessagesTransaction(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
