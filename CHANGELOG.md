@@ -1,4 +1,18 @@
 
+## [0.9.0] - 2026-10-12
+
+### Bug Fixes
+
+- *(tui)* Open calendar invites from mail after week view and empty bodies ([402581c](https://github.com/nospor/outlook-tui/commit/402581c477cc690f596b753843a57430610101ae))
+
+            Use bodyPreview when Graph body is empty so o and Ctrl+g work on meeting
+            invites; match events on a 30-day pool so week calendar fetches do not
+            break o; preserve cached message bodies on detail upsert.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.8.9 [skip ci] ([008d4fe](https://github.com/nospor/outlook-tui/commit/008d4fec366e4b14220a861c10ce94ddaa2abbbc))
+
 ## [0.8.9] - 2026-10-09
 
 ### Features
