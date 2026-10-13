@@ -100,8 +100,10 @@ func (gc *GraphClient) GetFolders() ([]MailFolder, error) {
 	return result.Value, nil
 }
 
+const messageListSelect = "id,conversationId,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients"
+
 func (gc *GraphClient) GetMessagesPage(folderID string, skip int) ([]Message, error) {
-	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=id,conversationId,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,from,toRecipients,ccRecipients&$top=50&$skip=%d&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID), skip)
+	reqURL := fmt.Sprintf("%s/me/mailFolders/%s/messages?$select=%s&$top=50&$skip=%d&$orderby=receivedDateTime%%20desc", graphBaseURL, url.PathEscape(folderID), messageListSelect, skip)
 	resp, err := gc.client.Get(reqURL)
 	if err != nil {
 		return nil, err
@@ -128,6 +130,7 @@ func (gc *GraphClient) GetMessages(folderID string) ([]Message, error) {
 }
 
 const messagePageSize = 50
+const searchPageSize = 25
 const deleteConcurrency = 10
 const maxFolderScanPages = 200
 const maxConversationDeleteWaves = 3
@@ -165,6 +168,54 @@ func (gc *GraphClient) GetMessageIDsPage(folderID string, skip int) ([]string, e
 
 func escapeODataString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
+}
+
+// formatGraphSearchQuery wraps a user phrase for Microsoft Graph $search.
+// Graph requires the $search value to be enclosed in double quotes.
+func formatGraphSearchQuery(q string) string {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return ""
+	}
+	if len(q) >= 2 && strings.HasPrefix(q, `"`) && strings.HasSuffix(q, `"`) {
+		return q
+	}
+	q = strings.ReplaceAll(q, `"`, "")
+	return `"` + q + `"`
+}
+
+func searchMessagesURL(folderID, query string) (string, error) {
+	q := formatGraphSearchQuery(query)
+	if q == "" {
+		return "", fmt.Errorf("search query is empty")
+	}
+	if strings.TrimSpace(folderID) == "" {
+		return "", fmt.Errorf("search folder is empty")
+	}
+	params := url.Values{}
+	params.Set("$search", q)
+	params.Set("$select", messageListSelect)
+	params.Set("$top", fmt.Sprintf("%d", searchPageSize))
+	encoded := strings.ReplaceAll(params.Encode(), "+", "%20")
+	return fmt.Sprintf("%s/me/mailFolders/%s/messages?%s", graphBaseURL, url.PathEscape(folderID), encoded), nil
+}
+
+// SearchMessages runs a KQL $search against a mail folder (Exchange search).
+// Results are ranked by relevance; $orderby is not supported with $search.
+func (gc *GraphClient) SearchMessages(folderID, query string) (messageListPage, error) {
+	reqURL, err := searchMessagesURL(folderID, query)
+	if err != nil {
+		return messageListPage{}, err
+	}
+	return gc.getMessageListPage(reqURL)
+}
+
+// SearchMessagesNext fetches the next page of a $search result via @odata.nextLink.
+func (gc *GraphClient) SearchMessagesNext(nextLink string) (messageListPage, error) {
+	if strings.TrimSpace(nextLink) == "" {
+		return messageListPage{}, nil
+	}
+	return gc.getMessageListPage(nextLink)
 }
 
 type messageListPage struct {

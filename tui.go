@@ -62,6 +62,7 @@ const (
 	stateDeleteThreadConfirm
 	stateEmptyFolderConfirm
 	stateYankSelect
+	stateSearch                 // mail search prompt overlay
 	stateCalendar               // calendar popup (requires calendar_enabled = true)
 	stateCalendarDeclineConfirm // confirmation dialog before declining a calendar event
 	stateCalendarDeleteConfirm  // confirmation dialog before deleting a calendar event
@@ -224,6 +225,14 @@ type mainModel struct {
 	filePickerZoxideError    string
 	zoxideInput              textinput.Model
 
+	// Mail search (Graph $search in the current folder; local filter for Favorites)
+	searchInput    textinput.Model
+	searchQuery    string // non-empty while showing search results
+	searchFolderID string
+	searchNextLink string
+	searchLoading  bool
+	searchSeq      int // incremented to ignore stale in-flight search responses
+
 	// Notification tracking
 	inboxKnownIDs map[string]bool
 	userEmail     string
@@ -376,6 +385,7 @@ func initialModel() mainModel {
 		configStep:        0,
 		filepicker:        fp,
 		zoxideInput:       zi,
+		searchInput:       newSearchInput(),
 		config:            cfg,
 		appFocused:        true,
 		calendarWeekStart: getStartOfWeek(time.Now()),
@@ -1790,6 +1800,7 @@ func (m mainModel) selectFolder(idx int) (mainModel, tea.Cmd) {
 	if idx < 0 || idx >= len(m.folders) {
 		return m, nil
 	}
+	m = m.clearSearchState()
 	m.selectedFolder = idx
 	m.virtualSelected = 0
 	m.detailMessage = nil
@@ -1892,6 +1903,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case zoxideDirsLoadedMsg:
 		m = m.applyZoxideDirsLoaded(msg)
 
+	case searchFetchedMsg:
+		return m.applySearchFetched(msg)
+
 	case errMsg:
 		m.statusMsg = fmt.Sprintf("Error: %v", msg)
 		if m.emptyingFolderID != "" {
@@ -1973,7 +1987,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case foldersFetchedMsg:
 		sortedFolders := sortFolders(msg, m.config.ExcludedFolders, m.db)
-		if m.state != stateMain {
+		if m.state == stateLoading {
 			// Initial load: set up navigation state
 			m.folders = sortedFolders
 			m.state = stateMain
@@ -2034,6 +2048,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case nextMessagesFetchedMsg:
+		if m.suppressFolderMessageRefresh() {
+			break
+		}
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
 		}
@@ -2071,6 +2088,9 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buildThreadGroups()
 
 	case messagesFetchedMsg:
+		if m.suppressFolderMessageRefresh() {
+			break
+		}
 		if len(m.folders) == 0 || m.folders[m.selectedFolder].ID != msg.FolderID {
 			break
 		}
@@ -2799,7 +2819,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Fetch current folder messages
 			if len(m.folders) > 0 {
 				folderID := m.folders[m.selectedFolder].ID
-				if folderID != "favorites" && folderID != m.emptyingFolderID {
+				if folderID != "favorites" && folderID != m.emptyingFolderID && !m.suppressFolderMessageRefresh() {
 					bgCmds = append(bgCmds, func() tea.Msg {
 						msgs, err := m.graphClient.GetMessages(folderID)
 						if err == nil {
@@ -2881,6 +2901,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "q":
 			return m, tea.Batch(clearKittyImagesCmd(), tea.Quit)
+		case "esc":
+			if m.inSearchMode() || m.searchLoading {
+				return m.exitSearchMode()
+			}
+		case "/":
+			return m.openSearchPrompt()
 		case "1":
 			m.activePane = paneFolders
 		case "2":
@@ -3204,7 +3230,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.updateFavoritesFolderCounts()
 					if m.folders[m.selectedFolder].ID == "favorites" {
-						m, _ = m.loadCachedFolderMessages()
+						if m.inSearchMode() {
+							m = m.applyFavoriteSearchAfterToggle()
+						} else {
+							m, _ = m.loadCachedFolderMessages()
+						}
 						// Adjust selection if we removed the last item
 						if m.virtualSelected >= len(m.virtualList) {
 							m.virtualSelected = max(0, len(m.virtualList)-1)
@@ -3240,7 +3270,10 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateEmptyFolderConfirm
 			}
 		case "r":
-			// Reload selected folder
+			// Reload selected folder (also exits search results)
+			if m.inSearchMode() || m.searchLoading {
+				return m.exitSearchMode()
+			}
 			if len(m.folders) > 0 {
 				if m.folders[m.selectedFolder].ID == "favorites" {
 					m, _ = m.loadCachedFolderMessages()
@@ -3251,7 +3284,15 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "M":
-			// Load more messages for the selected folder
+			// Load more messages for the selected folder, or the next search page
+			if m.inSearchMode() {
+				var cmd tea.Cmd
+				m, cmd = m.loadMoreSearchResults()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				break
+			}
 			if len(m.folders) > 0 {
 				if m.folders[m.selectedFolder].ID == "favorites" {
 					m.statusMsg = "No more messages to load"
@@ -3399,6 +3440,17 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.statusMsg = "No unread event reminders"
 			}
+		}
+
+	case stateSearch:
+		key, ok := msg.(tea.KeyMsg)
+		if !ok {
+			break
+		}
+		var cmd tea.Cmd
+		m, cmd = m.handleSearchKey(key)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 
 	case stateCompose:
@@ -4206,6 +4258,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "y", "Y":
 			m.state = stateMain
+			m = m.clearSearchState()
 			folderID := m.emptyFolderConfirmID
 			folderName := m.emptyFolderConfirmName
 			hardDelete := m.isDeletedItemsFolder(folderID)
@@ -4952,7 +5005,7 @@ func (m mainModel) View() string {
 	case stateLoading:
 		s.WriteString("\n\n   " + m.spinner.View() + " " + m.statusMsg + "\n")
 
-	case stateMain, stateYankSelect, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateEmptyFolderConfirm, stateAttachments, stateNotifiedEventsSelect, stateMoveFolderSelect:
+	case stateMain, stateYankSelect, stateSearch, stateURLSelect, stateExternalURLSelect, stateDeleteThreadConfirm, stateEmptyFolderConfirm, stateAttachments, stateNotifiedEventsSelect, stateMoveFolderSelect:
 		if m.state == stateNotifiedEventsSelect && m.prevState == stateCalendar {
 			s.WriteString(m.renderCalendarView())
 		} else {
@@ -5093,12 +5146,18 @@ func (m mainModel) View() string {
 	}
 
 	// Bottom Status/Keybinds Bar
-	if m.state == stateMain || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect || m.state == stateAttendeeLists || m.state == stateAttendeeListEdit || m.state == stateAttendeeListDeleteConfirm {
+	if m.state == stateMain || m.state == stateYankSelect || m.state == stateSearch || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateCalendarCreate || m.state == stateCalendarCreateCancelConfirm || m.state == stateCalendarRecurrence || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect || m.state == stateAttendeeLists || m.state == stateAttendeeListEdit || m.state == stateAttendeeListDeleteConfirm {
 		s.WriteString("\n")
 
 		var keysText string
 		if m.state == stateYankSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select | [Enter] Confirm | [m] original | [a] all | [u] URLs | [s] subject"
+		} else if m.state == stateSearch {
+			if m.currentFolderID() == "favorites" {
+				keysText = "  [Enter] Search favorites locally | [Esc] Cancel"
+			} else {
+				keysText = "  [Enter] Search current folder via Graph | [Esc] Cancel"
+			}
 		} else if m.state == stateMoveFolderSelect {
 			keysText = "  [Esc/q] Cancel | [Up/Down/j/k] Select Folder | [Enter] Move Message"
 		} else if m.state == stateURLSelect {
@@ -5155,7 +5214,26 @@ func (m mainModel) View() string {
 	}
 
 	baseView := s.String()
-	if m.state == stateYankSelect {
+	if m.state == stateSearch {
+		modalWidth := 64
+		if modalWidth > m.width-6 {
+			modalWidth = m.width - 6
+		}
+		if modalWidth < 36 {
+			modalWidth = 36
+		}
+		dropdownView := m.renderSearchPopup(modalWidth)
+		modalHeight := 10
+		x := (m.width - modalWidth) / 2
+		y := (m.height - modalHeight) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		baseView = overlayLines(baseView, dropdownView, x, y)
+	} else if m.state == stateYankSelect {
 		modalWidth := 46
 		modalHeight := 7
 		dropdownView := m.renderYankDropdown(modalWidth)
@@ -5577,7 +5655,7 @@ func (m mainModel) View() string {
 
 	// Guarantee exactly m.height - 1 output lines so BubbleTea's cursor tracking
 	// is never off and doesn't scroll the terminal. Clip if too tall, pad with blank lines if too short.
-	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
+	if m.height > 0 && (m.state == stateMain || m.state == stateHelp || m.state == stateFileBrowse || m.state == stateYankSelect || m.state == stateSearch || m.state == stateURLSelect || m.state == stateExternalURLSelect || m.state == stateDeleteThreadConfirm || m.state == stateEmptyFolderConfirm || m.state == stateAttachments || m.state == stateCalendar || m.state == stateCalendarDeclineConfirm || m.state == stateCalendarDeleteConfirm || m.state == stateNotifiedEventsSelect || m.state == stateMoveFolderSelect) {
 		lines := strings.Split(baseView, "\n")
 		targetHeight := m.height - 1
 		for len(lines) < targetHeight {
@@ -5870,7 +5948,7 @@ func (m mainModel) renderLayout1() string {
 	dView := dStyle.Width(m.width - 62).Height(paneHeight).Render(cropLines(detailView, paneHeight))
 
 	fView = applyPaneTitle(fView, "[1] FOLDERS", m.activePane == paneFolders)
-	mView = applyPaneTitle(mView, "[2] MESSAGES", m.activePane == paneMessages)
+	mView = applyPaneTitle(mView, m.messagesPaneTitle(), m.activePane == paneMessages)
 	dView = applyPaneTitle(dView, "[3] MESSAGE DETAIL", m.activePane == paneDetail)
 
 	fView = cropLines(fView, paneHeight+2)
@@ -5931,7 +6009,7 @@ func (m mainModel) renderLayout2() string {
 	mView := mStyle.Width(leftColInner).Height(messagesHeight).Render(cropLines(messagesView, messagesHeight))
 
 	fView = applyPaneTitle(fView, "[1] FOLDERS", m.activePane == paneFolders)
-	mView = applyPaneTitle(mView, "[2] MESSAGES", m.activePane == paneMessages)
+	mView = applyPaneTitle(mView, m.messagesPaneTitle(), m.activePane == paneMessages)
 
 	fView = cropLines(fView, foldersHeight+2)
 	mView = cropLines(mView, messagesHeight+2)
@@ -6396,6 +6474,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [Space]             Toggle collapse/expand thread",
 		"  [r]                 Reload current folder",
 		"  [M]                 Load more messages (paginate)",
+		"  [/]                 Search current folder via Microsoft Graph",
 		"  [E]                 Empty folder (Folders pane only)",
 	}
 
@@ -6603,7 +6682,7 @@ func (m mainModel) renderMessagesViewWide(availHeight, availWidth int) string {
 	var s strings.Builder
 
 	if len(m.virtualList) == 0 {
-		s.WriteString(dimStyle.Render(" No messages"))
+		s.WriteString(dimStyle.Render(m.messagesEmptyText()))
 		return s.String()
 	}
 
@@ -6810,7 +6889,7 @@ func (m mainModel) renderMessagesView(availHeight int) string {
 	var s strings.Builder
 
 	if len(m.virtualList) == 0 {
-		s.WriteString(dimStyle.Render(" No messages"))
+		s.WriteString(dimStyle.Render(m.messagesEmptyText()))
 		return s.String()
 	}
 
@@ -10599,6 +10678,7 @@ func (m mainModel) mainKeyHints() []string {
 			"[J/K] Messages",
 			"[r] Reload",
 			"[M] More",
+			"[/] Search",
 		)
 		if len(m.folders) > 0 {
 			f := m.folders[m.selectedFolder]
@@ -10616,11 +10696,13 @@ func (m mainModel) mainKeyHints() []string {
 			"[Space] Thread",
 			"[r] Reload",
 			"[M] More",
+			"[/] Search",
 		)
 	case paneDetail:
 		hints = append(hints,
 			"[j/k/↑/↓] Scroll",
 			"[PgUp/Dn] Half Page",
+			"[/] Search",
 		)
 	}
 
@@ -10643,6 +10725,10 @@ func (m mainModel) mainKeyHints() []string {
 		if len(m.attachments) > 0 {
 			hints = append(hints, "[a] Attach")
 		}
+	}
+
+	if m.inSearchMode() {
+		hints = append(hints, "[Esc] Exit search")
 	}
 
 	hints = append(hints, "[n] Compose")

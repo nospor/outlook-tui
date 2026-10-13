@@ -15,6 +15,103 @@ func TestEscapeODataString(t *testing.T) {
 	}
 }
 
+func TestFormatGraphSearchQuery(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"  invoice  ", `"invoice"`},
+		{`"already quoted"`, `"already quoted"`},
+		{`from:bob subject:"x"`, `"from:bob subject:x"`},
+	}
+	for _, tt := range tests {
+		if got := formatGraphSearchQuery(tt.in); got != tt.want {
+			t.Errorf("formatGraphSearchQuery(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSearchMessagesURL(t *testing.T) {
+	got, err := searchMessagesURL("inbox-id", "invoice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "/me/mailFolders/inbox-id/messages?") {
+		t.Errorf("path = %q, want folder messages path", got)
+	}
+	if !strings.Contains(got, "$search=%22invoice%22") && !strings.Contains(got, "%24search=%22invoice%22") {
+		t.Errorf("missing encoded $search: %q", got)
+	}
+	if strings.Contains(got, "$orderby") || strings.Contains(got, "%24orderby") {
+		t.Errorf("search URL must not include $orderby: %q", got)
+	}
+	if _, err := searchMessagesURL("", "invoice"); err == nil {
+		t.Error("expected error for empty folder")
+	}
+	if _, err := searchMessagesURL("inbox", "  "); err == nil {
+		t.Error("expected error for empty query")
+	}
+}
+
+func TestSearchMessages(t *testing.T) {
+	folderID := "inbox-folder"
+	requestCount := 0
+	var nextPageURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			if !strings.Contains(r.URL.Path, "/mailFolders/"+folderID+"/messages") {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			if !strings.Contains(r.URL.RawQuery, "search") {
+				t.Fatalf("expected $search in query: %s", r.URL.RawQuery)
+			}
+			if strings.Contains(r.URL.RawQuery, "orderby") {
+				t.Fatalf("$search must not include $orderby: %s", r.URL.RawQuery)
+			}
+		}
+		value := []Message{{ID: "hit-1", Subject: "Invoice"}, {ID: "hit-2", Subject: "Billing"}}
+		payload := map[string]interface{}{"value": value}
+		if requestCount == 1 {
+			payload["@odata.nextLink"] = nextPageURL
+			value = []Message{{ID: "hit-1", Subject: "Invoice"}}
+			payload["value"] = value
+		} else {
+			payload["value"] = []Message{{ID: "hit-2", Subject: "Billing"}}
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+	nextPageURL = server.URL + "/me/mailFolders/" + folderID + "/messages?page=2"
+
+	oldBase := graphBaseURL
+	graphBaseURL = server.URL
+	t.Cleanup(func() { graphBaseURL = oldBase })
+
+	gc := NewGraphClient(server.Client())
+	page, err := gc.SearchMessages(folderID, "invoice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].ID != "hit-1" {
+		t.Fatalf("first page = %+v", page.Messages)
+	}
+	if page.NextLink != nextPageURL {
+		t.Fatalf("nextLink = %q, want %q", page.NextLink, nextPageURL)
+	}
+
+	next, err := gc.SearchMessagesNext(page.NextLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Messages) != 1 || next.Messages[0].ID != "hit-2" {
+		t.Fatalf("second page = %+v", next.Messages)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requestCount = %d, want 2", requestCount)
+	}
+}
+
 func TestMessageMatchesConversation(t *testing.T) {
 	msg := Message{ID: "solo-id", ConversationID: ""}
 	if !messageMatchesConversation(msg, "solo-id") {
