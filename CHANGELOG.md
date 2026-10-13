@@ -1,4 +1,17 @@
 
+## [0.9.1] - 2026-10-13
+
+### Features
+
+- *(tui)* Search the current folder via Microsoft Graph ([9645ee5](https://github.com/nospor/outlook-tui/commit/9645ee55aae57bf52349e7afdc6142b52f38eac9))
+
+            Local cache only holds loaded pages, so phrase search uses Graph $search
+            instead of SQLite.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.0 [skip ci] ([1396baa](https://github.com/nospor/outlook-tui/commit/1396baa1b4d192c79983f7f1f941a583f2b49b2b))
+
 ## [0.9.0] - 2026-10-12
 
 ### Bug Fixes
