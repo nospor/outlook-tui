@@ -1,4 +1,18 @@
 
+## [0.9.2] - 2026-10-14
+
+### Bug Fixes
+
+- *(tui)* Give pasted images a unique content id ([2e7d989](https://github.com/nospor/outlook-tui/commit/2e7d98998c7bd26b4c34b157c21890c520f85991))
+
+            Outlook caches inline images by cid, so reusing image1 showed an earlier
+            paste. Each paste now uses a millisecond id for both the placeholder and
+            the attachment contentId.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.1 [skip ci] ([b13954c](https://github.com/nospor/outlook-tui/commit/b13954c5a43ff82b63775ce3131fc5e880ef275d))
+
 ## [0.9.1] - 2026-10-13
 
 ### Features
