@@ -215,6 +215,7 @@ type mainModel struct {
 	composedImages       []PastedImage
 	composedFiles        []PendingFile
 	composeReservedNames map[string]bool // attachment names from reply target to avoid collisions
+	pastedImageSeq       int64           // highest inline image id issued this session
 	filepicker           filepicker.Model
 
 	// Zoxide directory jump overlay (nested on stateFileBrowse)
@@ -3561,12 +3562,16 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err == nil && len(imgBytes) > 0 {
 					taken := collectComposeAttachmentNames(m.composedFiles, m.composedImages, m.composeReservedNames)
 					name := uniquePastedImageName(contentType, taken)
+					usedIDs := collectPastedImageIDs(m.composeBody.Value(), m.composedImages)
+					id := nextPastedImageID(time.Now().UnixMilli(), m.pastedImageSeq, usedIDs)
+					m.pastedImageSeq = id
 					m.composedImages = append(m.composedImages, PastedImage{
 						Bytes:       imgBytes,
 						ContentType: contentType,
 						Name:        name,
+						ID:          id,
 					})
-					placeholder := fmt.Sprintf("[Image %d]", len(m.composedImages))
+					placeholder := pastedImagePlaceholder(id)
 					m.composeBody.InsertString(placeholder)
 					m.statusMsg = "Image pasted from clipboard"
 					return m, nil

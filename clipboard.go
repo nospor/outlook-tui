@@ -15,6 +15,7 @@ type PastedImage struct {
 	Bytes       []byte
 	ContentType string // e.g. "image/png", "image/jpeg"
 	Name        string // assigned at paste time; used when sending
+	ID          int64  // unique inline id; [Image ID] and cid:imageID
 }
 
 // GetClipboardImage tries to read an image from the clipboard.

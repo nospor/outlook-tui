@@ -744,7 +744,7 @@ func TestUniquePastedImageName(t *testing.T) {
 func TestMakeImageAttachmentsAvoidsReservedNames(t *testing.T) {
 	reserved := map[string]bool{"pasted-image-1.png": true}
 	images := []PastedImage{
-		{Bytes: []byte("img1"), ContentType: "image/png"},
+		{Bytes: []byte("img1"), ContentType: "image/png", ID: 1700000000001},
 	}
 	atts := makeImageAttachments(images, reserved)
 	if len(atts) != 1 {
@@ -753,8 +753,58 @@ func TestMakeImageAttachmentsAvoidsReservedNames(t *testing.T) {
 	if atts[0].Name != "pasted-image-2.png" {
 		t.Errorf("attachment name = %q, want pasted-image-2.png", atts[0].Name)
 	}
-	if atts[0].ContentId != "image1" {
-		t.Errorf("contentId = %q, want image1", atts[0].ContentId)
+	if atts[0].ContentId != "image1700000000001" {
+		t.Errorf("contentId = %q, want image1700000000001", atts[0].ContentId)
+	}
+}
+
+func TestNextPastedImageID(t *testing.T) {
+	now := int64(1700000000000)
+	if got := nextPastedImageID(now, 0, nil); got != now {
+		t.Errorf("nextPastedImageID = %d, want %d", got, now)
+	}
+	used := map[int64]bool{now: true}
+	if got := nextPastedImageID(now, 0, used); got != now+1 {
+		t.Errorf("nextPastedImageID with used id = %d, want %d", got, now+1)
+	}
+	if got := nextPastedImageID(now, now, nil); got != now+1 {
+		t.Errorf("nextPastedImageID after lastIssued = %d, want %d", got, now+1)
+	}
+}
+
+func TestCollectPastedImageIDs(t *testing.T) {
+	body := "see [Image 1700000000001] and [image 1700000000003]"
+	images := []PastedImage{{ID: 1700000000002}}
+	used := collectPastedImageIDs(body, images)
+	for _, id := range []int64{1700000000001, 1700000000002, 1700000000003} {
+		if !used[id] {
+			t.Errorf("expected id %d to be used", id)
+		}
+	}
+}
+
+func TestReplacePastedImagePlaceholders(t *testing.T) {
+	got := replacePastedImagePlaceholders("before [Image 1700000000001] after")
+	want := `before <img src="cid:image1700000000001" /> after`
+	if got != want {
+		t.Errorf("replacePastedImagePlaceholders = %q, want %q", got, want)
+	}
+}
+
+func TestMakeImageAttachmentsUsesStableIDs(t *testing.T) {
+	images := []PastedImage{
+		{Bytes: []byte("a"), ContentType: "image/png", ID: 1700000000001},
+		{Bytes: []byte("b"), ContentType: "image/jpeg", ID: 1700000000009},
+	}
+	atts := makeImageAttachments(images, nil)
+	if len(atts) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(atts))
+	}
+	if atts[0].ContentId != "image1700000000001" {
+		t.Errorf("first contentId = %q, want image1700000000001", atts[0].ContentId)
+	}
+	if atts[1].ContentId != "image1700000000009" {
+		t.Errorf("second contentId = %q, want image1700000000009", atts[1].ContentId)
 	}
 }
 

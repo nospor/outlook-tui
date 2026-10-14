@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -537,6 +538,61 @@ func pastedImageExt(contentType string) string {
 	return "png"
 }
 
+// pastedImagePlaceholderRe matches compose placeholders such as [Image 1728902176123].
+// The captured digits are the inline Content-ID suffix (cid:image<digits>).
+var pastedImagePlaceholderRe = regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
+
+func pastedImageContentID(id int64) string {
+	return fmt.Sprintf("image%d", id)
+}
+
+func pastedImagePlaceholder(id int64) string {
+	return fmt.Sprintf("[Image %d]", id)
+}
+
+// collectPastedImageIDs returns inline image ids already used in this draft.
+func collectPastedImageIDs(body string, images []PastedImage) map[int64]bool {
+	used := make(map[int64]bool)
+	for _, img := range images {
+		if img.ID > 0 {
+			used[img.ID] = true
+		}
+	}
+	for _, match := range pastedImagePlaceholderRe.FindAllStringSubmatch(body, -1) {
+		n, err := strconv.ParseInt(match[1], 10, 64)
+		if err == nil && n > 0 {
+			used[n] = true
+		}
+	}
+	return used
+}
+
+// nextPastedImageID picks a unique inline-image id. nowMillis is Unix time in
+// milliseconds. lastIssued is the highest id already handed out in this process
+// (0 if none), so two pastes in the same millisecond stay distinct even when
+// the clock does not move.
+func nextPastedImageID(nowMillis, lastIssued int64, used map[int64]bool) int64 {
+	id := nowMillis
+	if id <= lastIssued {
+		id = lastIssued + 1
+	}
+	for used[id] {
+		id++
+	}
+	return id
+}
+
+// replacePastedImagePlaceholders turns [Image N] into an inline cid reference.
+func replacePastedImagePlaceholders(htmlBody string) string {
+	return pastedImagePlaceholderRe.ReplaceAllStringFunc(htmlBody, func(match string) string {
+		sub := pastedImagePlaceholderRe.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
+	})
+}
+
 func uniquePastedImageName(contentType string, taken map[string]bool) string {
 	ext := pastedImageExt(contentType)
 	for n := 1; ; n++ {
@@ -584,7 +640,7 @@ func makeImageAttachments(images []PastedImage, reservedNames map[string]bool) [
 	if taken == nil {
 		taken = make(map[string]bool)
 	}
-	for i, img := range images {
+	for _, img := range images {
 		name := img.Name
 		if name == "" || taken[name] {
 			name = uniquePastedImageName(img.ContentType, taken)
@@ -596,7 +652,7 @@ func makeImageAttachments(images []PastedImage, reservedNames map[string]bool) [
 			Name:         name,
 			ContentType:  img.ContentType,
 			ContentBytes: base64.StdEncoding.EncodeToString(img.Bytes),
-			ContentId:    fmt.Sprintf("image%d", i+1),
+			ContentId:    pastedImageContentID(img.ID),
 			IsInline:     true,
 		})
 	}
@@ -647,15 +703,7 @@ func (gc *GraphClient) SendMessage(subject, bodyText, recipientAddress, ccAddres
 		escaped := html.EscapeString(bodyText)
 		htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
 
-		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-			sub := reImg.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-		})
-		bodyContent = htmlBody
+		bodyContent = replacePastedImagePlaceholders(htmlBody)
 	}
 
 	sendReq.Message.Body = ItemBody{
@@ -713,14 +761,7 @@ func (gc *GraphClient) ReplyMessage(messageID, bodyText, toAddress string, image
 	htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
 
 	if len(images) > 0 {
-		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-			sub := reImg.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-		})
+		htmlBody = replacePastedImagePlaceholders(htmlBody)
 	}
 
 	replyReq.Message.Body = &ItemBody{
@@ -775,14 +816,7 @@ func (gc *GraphClient) ReplyAllMessage(messageID, bodyText, toAddress, ccAddress
 	htmlBody := strings.ReplaceAll(escaped, "\n", "<br />")
 
 	if len(images) > 0 {
-		reImg := regexp.MustCompile(`(?i)\[image\s+(\d+)\]`)
-		htmlBody = reImg.ReplaceAllStringFunc(htmlBody, func(match string) string {
-			sub := reImg.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			return fmt.Sprintf(`<img src="cid:image%s" />`, sub[1])
-		})
+		htmlBody = replacePastedImagePlaceholders(htmlBody)
 	}
 
 	replyReq.Message.Body = &ItemBody{
