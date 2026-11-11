@@ -1,4 +1,17 @@
 
+## [0.9.3] - 2026-11-11
+
+### Bug Fixes
+
+- *(tui)* Draw Outlook data tables whose cells say "code" ([fbeb8a0](https://github.com/nospor/outlook-tui/commit/fbeb8a0a942fd0af328a95562a24d5b6e2c1baca))
+
+            Scan class and id for GitHub/GitLab diff markers, and render the
+            innermost table so a layout wrapper leaves the grid intact.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.2 [skip ci] ([ba59995](https://github.com/nospor/outlook-tui/commit/ba599952eaa642b2354696fb2a9d12f2a6cfd441))
+
 ## [0.9.2] - 2026-10-14
 
 ### Bug Fixes
