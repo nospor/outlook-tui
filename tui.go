@@ -8081,16 +8081,17 @@ func formatBodyContent(htmlContent string, showLinkURLs bool, recipientName ...s
 	res = strings.ReplaceAll(res, "\x01CODE_END\x01", "\x1b[39m")
 
 	// Render data <table>…</table> blocks as ASCII box tables before tag stripping.
-	// We use sentinel markers (\x02TABLE\x02…\x02ENDTABLE\x02) so the rest of
-	// the pipeline (tag stripper, whitespace collapser) leaves rendered rows intact.
+	// We use sentinel markers so the rest of the pipeline (tag stripper,
+	// whitespace collapser) leaves rendered rows intact.
 	// Code/diff tables from platforms like GitLab/GitHub are excluded so that
 	// syntax highlighting and diff colors (red/green) are preserved line-by-line.
-	res = regexp.MustCompile(`(?is)<table(?:\s+[^>]*)?>(.+?)</table>`).ReplaceAllStringFunc(res, func(match string) string {
-		if !shouldRenderAsHTMLTable(match) {
-			return match
-		}
-		return "__OUTLOOK_TUI_TABLE_START__" + renderHTMLTable(match) + "__OUTLOOK_TUI_TABLE_END__"
-	})
+	//
+	// Match innermost tables only, once. A non-greedy match from the first
+	// <table> to the first </table> swallows an Outlook layout wrapper together
+	// with the data grid inside it, and the grid is never tried again. The
+	// wrapper is left for the tag stripper. Go's regexp has no lookahead, so
+	// pairing is done by a tag stack in replaceInnermostDataTables.
+	res = replaceInnermostDataTables(res)
 
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
@@ -8298,12 +8299,14 @@ func shouldRenderAsHTMLTable(tableHTML string) bool {
 		return false
 	}
 
-	// Check for diff or code class/id/attributes
-	if regexp.MustCompile(`(?i)\b(?:diff|code|blob-code|syntax|highlight|file-content|line_holder|file-holder|email-diff|commit|diff-table|diff-tr|diff-line|line-num)\b`).MatchString(tableHTML) {
+	// Diff/code tokens on class or id only. Cell text such as "NAICS Code" stays
+	// a data table; GitHub/GitLab put these tokens on the table or its cells.
+	if tableClassOrIDSignalsCodeDiff(tableHTML) {
 		return false
 	}
 
-	// Check for nested tables (opening <table within tableHTML)
+	// Innermost-table matching should already exclude wrappers. This remains a
+	// guard when a fragment still contains another <table>.
 	if strings.Count(strings.ToLower(tableHTML), "<table") > 1 {
 		return false
 	}
@@ -8316,6 +8319,71 @@ func shouldRenderAsHTMLTable(tableHTML string) bool {
 	}
 
 	return true
+}
+
+// replaceInnermostDataTables draws data tables that contain no nested table.
+// Outlook layout wrappers stay in the HTML for the tag stripper. Code and diff
+// tables are left unchanged so later passes can color them line by line.
+func replaceInnermostDataTables(html string) string {
+	tagRe := regexp.MustCompile(`(?i)<table(?:\s+[^>]*)?>|</table\s*>`)
+	matches := tagRe.FindAllStringIndex(html, -1)
+	if len(matches) == 0 {
+		return html
+	}
+
+	type span struct{ start, end int }
+	type frame struct {
+		start    int
+		children int
+	}
+	var stack []frame
+	var innermost []span
+	for _, m := range matches {
+		tok := strings.ToLower(html[m[0]:m[1]])
+		if strings.HasPrefix(tok, "</") {
+			if len(stack) == 0 {
+				continue
+			}
+			fr := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if fr.children == 0 {
+				innermost = append(innermost, span{start: fr.start, end: m[1]})
+			}
+			if len(stack) > 0 {
+				stack[len(stack)-1].children++
+			}
+			continue
+		}
+		stack = append(stack, frame{start: m[0]})
+	}
+
+	for i := len(innermost) - 1; i >= 0; i-- {
+		sp := innermost[i]
+		frag := html[sp.start:sp.end]
+		if !shouldRenderAsHTMLTable(frag) {
+			continue
+		}
+		html = html[:sp.start] + "__OUTLOOK_TUI_TABLE_START__" + renderHTMLTable(frag) + "__OUTLOOK_TUI_TABLE_END__" + html[sp.end:]
+	}
+	return html
+}
+
+// tableClassOrIDSignalsCodeDiff reports whether a table fragment carries a
+// GitHub, GitLab, or Bitbucket code/diff class or id. The scan ignores cell
+// text and style attributes such as mso-highlight.
+func tableClassOrIDSignalsCodeDiff(tableHTML string) bool {
+	attrRe := regexp.MustCompile(`(?i)\b(?:class|id)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+))`)
+	keywordRe := regexp.MustCompile(`(?i)\b(?:diff|code|blob-code|syntax|highlight|file-content|line_holder|file-holder|email-diff|commit|diff-table|diff-tr|diff-line|line-num)\b`)
+	for _, m := range attrRe.FindAllStringSubmatch(tableHTML, -1) {
+		val := ""
+		for i := 1; i < len(m); i++ {
+			val += m[i]
+		}
+		if keywordRe.MatchString(val) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderHTMLTable(tableHTML string) string {

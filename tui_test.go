@@ -298,6 +298,28 @@ func TestFormatBodyContent(t *testing.T) {
 			expected: "\x1b[38;2;203;166;247m 21 23  ) { \x1b[39m\n\x1b[38;2;166;227;161m 26  + /**\x1b[39m",
 		},
 		{
+			input:    `<table class="blob-code"><tr><td class="blob-num">1</td><td class="blob-code">keep</td></tr></table>`,
+			expected: " 1 keep",
+		},
+		{
+			input:    `<table id='diff-table'><tr><td>left</td><td>right</td></tr></table>`,
+			expected: " left right",
+		},
+		{
+			input: `<table><tr><td><p class="MsoNormal">2017 NAICS Code</p></td><td><p class="MsoNormal">2017 NAICS Title</p></td></tr><tr><td style="mso-highlight:lime">511110</td><td>Newspaper Publishers</td></tr></table>`,
+			expected: "┌" + strings.Repeat("─", 17) + "┬" + strings.Repeat("─", 22) + "┐\n" +
+				"│ 2017 NAICS Code │ 2017 NAICS Title     │\n" +
+				"├" + strings.Repeat("─", 17) + "┼" + strings.Repeat("─", 22) + "┤\n" +
+				"│ 511110          │ Newspaper Publishers │\n" +
+				"└" + strings.Repeat("─", 17) + "┴" + strings.Repeat("─", 22) + "┘\n",
+		},
+		{
+			input: `<div>Thanks</div><table class="MsoNormalTable"><tr><td>note about the code</td></tr><tr><td><table><tr><td style="mso-highlight:lime"><p class="MsoNormal">2017 NAICS Code</p></td><td><p class="MsoNormal">511110</p></td></tr></table></td></tr></table>`,
+			expected: "Thanks\n\n note about the code\n ┌" + strings.Repeat("─", 17) + "┬" + strings.Repeat("─", 8) + "┐\n" +
+				"│ 2017 NAICS Code │ 511110 │\n" +
+				"└" + strings.Repeat("─", 17) + "┴" + strings.Repeat("─", 8) + "┘\n",
+		},
+		{
 			input:    "<table><tr><td>Col1<br>Sub1</td><td>Col2</td></tr></table>",
 			expected: "┌──────┬──────┐\n│ Col1 │ Col2 │\n│ Sub1 │      │\n└──────┴──────┘\n",
 		},
