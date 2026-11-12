@@ -1,4 +1,17 @@
 
+## [0.9.4] - 2026-11-12
+
+### Bug Fixes
+
+- *(tui)* Keep Outlook web bullets on a single line ([0ffd753](https://github.com/nospor/outlook-tui/commit/0ffd753f1bac8b5084d55ee9780a3f19b7a251d7))
+
+            Outlook wraps each item in <li><div>, and those wrapper divs were
+            expanded into extra newlines between bullets.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.3 [skip ci] ([341ba42](https://github.com/nospor/outlook-tui/commit/341ba42c597d86b9576897acedc80c2767fa4dbb))
+
 ## [0.9.3] - 2026-11-11
 
 ### Bug Fixes
