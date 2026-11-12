@@ -8093,6 +8093,12 @@ func formatBodyContent(htmlContent string, showLinkURLs bool, recipientName ...s
 	// pairing is done by a tag stack in replaceInnermostDataTables.
 	res = replaceInnermostDataTables(res)
 
+	// Outlook on the web wraps each bullet in <li><div>…</div></li> and sets
+	// list margin to 0. Flatten those lists before <div>/<p> become newlines,
+	// or the bullet lands on its own line with a blank line between items.
+	// Paragraph divs outside lists are left untouched.
+	res = flattenHTMLLists(res)
+
 	// Simple tags stripping
 	// In a complete implementation, a real HTML-to-text parser would be used.
 	// We'll replace simple tags to preserve readability.
@@ -8267,6 +8273,93 @@ func formatBodyContent(htmlContent string, showLinkURLs bool, recipientName ...s
 		cleaned[len(cleaned)-1] += pendingANSI
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// htmlListTagRe matches opening and closing <ul>/<ol> tags. Attribute values
+// in mail we see are quoted, so '>' ends the tag.
+var htmlListTagRe = regexp.MustCompile(`(?i)<(?:ul|ol)(?:\s[^>]*)?>|</(?:ul|ol)\s*>`)
+
+// htmlListItemRe captures the inner HTML of one <li>. Used only on a list that
+// contains no nested list, so the first </li> closes this item.
+var htmlListItemRe = regexp.MustCompile(`(?is)<li(?:\s[^>]*)?>(.*?)</li>`)
+
+// listItemBlockTagRe matches block tags whose only job inside a list item is
+// to separate lines. <div> and <p> outside lists are not rewritten here.
+var listItemBlockTagRe = regexp.MustCompile(`(?i)</?(?:div|p|ul|ol|h[1-6])(?:\s[^>]*)?>`)
+
+// flattenHTMLLists rewrites each <ul>/<ol> to one "• " line per item, joined
+// by single newlines. Innermost lists are rewritten first so a nested list
+// becomes text before its parent item is collapsed. The list itself adds no
+// blank line; an explicit <div><br></div> around it still separates paragraphs.
+func flattenHTMLLists(html string) string {
+	for guard := 0; guard < 32; guard++ {
+		matches := htmlListTagRe.FindAllStringIndex(html, -1)
+		if len(matches) == 0 {
+			return html
+		}
+
+		type frame struct {
+			start, contentStart int
+			children            int
+		}
+		var stack []frame
+		type span struct {
+			start, contentStart, closeStart, end int
+		}
+		var innermost []span
+		for _, m := range matches {
+			tok := strings.ToLower(html[m[0]:m[1]])
+			if strings.HasPrefix(tok, "</") {
+				if len(stack) == 0 {
+					continue
+				}
+				fr := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if fr.children == 0 {
+					innermost = append(innermost, span{
+						start:        fr.start,
+						contentStart: fr.contentStart,
+						closeStart:   m[0],
+						end:          m[1],
+					})
+				}
+				if len(stack) > 0 {
+					stack[len(stack)-1].children++
+				}
+				continue
+			}
+			stack = append(stack, frame{start: m[0], contentStart: m[1]})
+		}
+		if len(innermost) == 0 {
+			return html
+		}
+
+		for i := len(innermost) - 1; i >= 0; i-- {
+			sp := innermost[i]
+			inner := html[sp.contentStart:sp.closeStart]
+			var lines []string
+			for _, item := range htmlListItemRe.FindAllStringSubmatch(inner, -1) {
+				text := collapseListItemBlocks(item[1])
+				if text == "" {
+					continue
+				}
+				lines = append(lines, "• "+text)
+			}
+			html = html[:sp.start] + strings.Join(lines, "\n") + html[sp.end:]
+		}
+	}
+	return html
+}
+
+// collapseListItemBlocks turns wrapper <div>/<p>/<br> inside one <li> into
+// single newlines so the bullet stays on the same line as the first text.
+func collapseListItemBlocks(inner string) string {
+	inner = regexp.MustCompile(`(?i)<br(?:\s*/?)>`).ReplaceAllString(inner, "\n")
+	inner = listItemBlockTagRe.ReplaceAllString(inner, "\n")
+	inner = regexp.MustCompile(`[ \t]+\n`).ReplaceAllString(inner, "\n")
+	inner = regexp.MustCompile(`\n[ \t]+`).ReplaceAllString(inner, "\n")
+	inner = regexp.MustCompile(`\n{2,}`).ReplaceAllString(inner, "\n")
+	return strings.TrimSpace(inner)
 }
 
 // renderedDetailBody formats the currently loaded message body for the detail

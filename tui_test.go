@@ -222,6 +222,42 @@ func TestFormatBodyContent(t *testing.T) {
 			expected: "• Item 1\n• Item 2",
 		},
 		{
+			input:    `<ul style="margin-top:0px; margin-bottom:0px"><li style="margin-top:0px"><div class="elementToProof" role="presentation">Group M</div></li><li><div class="elementToProof">KSM</div></li></ul>`,
+			expected: "• Group M\n• KSM",
+		},
+		{
+			input:    "<ul><li><p>Item 1</p></li><li><p>Item 2</p></li></ul>",
+			expected: "• Item 1\n• Item 2",
+		},
+		{
+			input:    "<ol><li><div>First</div></li><li><div>Second</div></li></ol>",
+			expected: "• First\n• Second",
+		},
+		{
+			input:    "<ul><li><div><b>KSM</b></div></li></ul>",
+			expected: "• \x1b[1mKSM\x1b[22m",
+		},
+		{
+			input:    "<ul><li><div>Parent</div><ul><li><div>Child</div></li></ul></li></ul>",
+			expected: "• Parent\n• Child",
+		},
+		{
+			input:    "<ul><li><div>Line 1</div><div>Line 2</div></li></ul>",
+			expected: "• Line 1\nLine 2",
+		},
+		{
+			input:    "<div>soon:</div><ul><li><div>Minority</div></li><li><div>Nielsen</div></li></ul><div><br></div><div>There is no.</div>",
+			expected: "soon:\n• Minority\n• Nielsen\n\nThere is no.\n",
+		},
+		{
+			input:    "<div>Intro.</div><div><br></div><ul><li><div>Group M</div></li><li><div>KSM</div></li></ul><div><br></div><div>Next:</div>",
+			expected: "Intro.\n\n• Group M\n• KSM\n\nNext:\n",
+		},
+		{
+			input:    "<div>A</div><div><br></div><div>B</div>",
+			expected: "A\n\nB\n",
+		},
+		{
 			input:    "<h1>My Header</h1>Some content",
 			expected: "My Header\n\nSome content",
 		},
