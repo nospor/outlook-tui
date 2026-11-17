@@ -70,6 +70,48 @@ type Attachment struct {
 	ContentBytes string `json:"contentBytes"` // Base64 encoded payload
 }
 
+// orderAttachments returns file attachments before inline parts (CID images
+// and remote images). Order within each group is preserved. The input slice
+// is returned unchanged when it is already grouped that way.
+func orderAttachments(atts []Attachment) []Attachment {
+	if len(atts) < 2 {
+		return atts
+	}
+	seenInline := false
+	for _, att := range atts {
+		if att.IsInline {
+			seenInline = true
+			continue
+		}
+		if seenInline {
+			regular := make([]Attachment, 0, len(atts))
+			inline := make([]Attachment, 0, len(atts))
+			for _, a := range atts {
+				if a.IsInline {
+					inline = append(inline, a)
+				} else {
+					regular = append(regular, a)
+				}
+			}
+			return append(regular, inline...)
+		}
+	}
+	return atts
+}
+
+// fileAttachmentPrefix is the number of leading non-inline attachments.
+// After orderAttachments, it is the boundary before the inline group.
+func fileAttachmentPrefix(atts []Attachment) int {
+	n := 0
+	for _, att := range atts {
+		if att.IsInline {
+			break
+		}
+		n++
+	}
+	return n
+}
+
 type GraphClient struct {
 	client *http.Client
 }

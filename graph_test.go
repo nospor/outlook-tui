@@ -741,6 +741,50 @@ func TestUniquePastedImageName(t *testing.T) {
 	}
 }
 
+func TestOrderAttachmentsFilesBeforeInline(t *testing.T) {
+	in := []Attachment{
+		{Name: "image001.png", IsInline: true},
+		{Name: "nas.csv"},
+		{Name: "image006.png", IsInline: true},
+		{Name: "bc_rates.csv"},
+	}
+	got := orderAttachments(in)
+	want := []string{"nas.csv", "bc_rates.csv", "image001.png", "image006.png"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("got[%d] = %q, want %q", i, got[i].Name, name)
+		}
+	}
+	if in[0].Name != "image001.png" {
+		t.Fatal("orderAttachments mutated its input")
+	}
+	if fileAttachmentPrefix(got) != 2 {
+		t.Errorf("fileAttachmentPrefix = %d, want 2", fileAttachmentPrefix(got))
+	}
+}
+
+func TestOrderAttachmentsAlreadyGrouped(t *testing.T) {
+	in := []Attachment{
+		{Name: "a.csv"},
+		{Name: "b.csv"},
+		{Name: "image.png", IsInline: true},
+	}
+	got := orderAttachments(in)
+	if len(got) != len(in) || &got[0] != &in[0] {
+		t.Fatal("expected the original slice when already grouped")
+	}
+	if fileAttachmentPrefix(in) != 2 {
+		t.Errorf("fileAttachmentPrefix = %d, want 2", fileAttachmentPrefix(in))
+	}
+	onlyInline := []Attachment{{Name: "image.png", IsInline: true}}
+	if fileAttachmentPrefix(onlyInline) != 0 {
+		t.Errorf("inline-only prefix = %d, want 0", fileAttachmentPrefix(onlyInline))
+	}
+}
+
 func TestMakeImageAttachmentsAvoidsReservedNames(t *testing.T) {
 	reserved := map[string]bool{"pasted-image-1.png": true}
 	images := []PastedImage{

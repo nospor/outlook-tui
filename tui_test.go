@@ -2172,6 +2172,53 @@ func TestComposeEscapeConfirmation(t *testing.T) {
 	}
 }
 
+func TestFormatAttachmentListingFilesThenInline(t *testing.T) {
+	atts := []Attachment{
+		{Name: "nas.csv", ContentType: "application/octet-stream", Size: 830882},
+		{Name: "image001.png", ContentType: "image/png", Size: 8092, IsInline: true},
+		{Name: "bc_rates.csv", ContentType: "application/octet-stream", Size: 3883451},
+	}
+	got := formatAttachmentListing(atts)
+	want := "" +
+		"Attachments (📎 2):\n" +
+		"  - nas.csv (application/octet-stream, 830882 bytes)\n" +
+		"  - bc_rates.csv (application/octet-stream, 3883451 bytes)\n" +
+		"\n" +
+		"Inline (1):\n" +
+		"  - image001.png (image/png, 8092 bytes)\n"
+	if got != want {
+		t.Fatalf("listing:\n%s\nwant:\n%s", got, want)
+	}
+	if label := attachmentSummaryLabel(atts); label != "Attachments (📎 2) · Inline (1): " {
+		t.Fatalf("summary = %q", label)
+	}
+	if label := attachmentSummaryLabel(atts[1:2]); label != "Inline (📎 1): " {
+		t.Fatalf("inline summary = %q", label)
+	}
+}
+
+func TestAttachmentWindowShowsInlineSplit(t *testing.T) {
+	atts := []Attachment{
+		{Name: "a.csv"},
+		{Name: "b.csv"},
+		{Name: "image.png", IsInline: true},
+		{Name: "remote.png", IsInline: true},
+	}
+	if !attachmentWindowShowsInlineSplit(atts, 0, 4) {
+		t.Fatal("expected the inline divider inside the full window")
+	}
+	if attachmentWindowShowsInlineSplit(atts, 0, 2) {
+		t.Fatal("divider should stay hidden while only files are visible")
+	}
+	if !attachmentWindowShowsInlineSplit(atts, 2, 4) {
+		t.Fatal("expected the divider when the inline group starts the window")
+	}
+	start, end := attachmentListWindow(len(atts), 0, 10)
+	if start != 0 || end != 4 {
+		t.Fatalf("window = %d,%d want 0,4", start, end)
+	}
+}
+
 func TestAttachmentSavedState(t *testing.T) {
 	m := mainModel{
 		state: stateAttachments,

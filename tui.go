@@ -691,6 +691,7 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string, shouldMarkAsRead bool)
 			remoteAtts := extractRemoteImages(msg.Body.Content)
 			atts = append(atts, remoteAtts...)
 		}
+		atts = orderAttachments(atts)
 
 		msg.Attachments = atts
 		if len(atts) > 0 {
@@ -1186,6 +1187,54 @@ func openEditorCmd(currentBody string) tea.Cmd {
 	})
 }
 
+// formatAttachmentListing writes file attachments first, then inline and remote
+// images, as separate sections when both groups are present.
+func formatAttachmentListing(atts []Attachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	atts = orderAttachments(atts)
+	split := fileAttachmentPrefix(atts)
+	var sb strings.Builder
+	write := func(group []Attachment) {
+		for _, att := range group {
+			fmt.Fprintf(&sb, "  - %s (%s, %d bytes)\n", att.Name, att.ContentType, att.Size)
+		}
+	}
+	if split > 0 {
+		fmt.Fprintf(&sb, "Attachments (📎 %d):\n", split)
+		write(atts[:split])
+	}
+	if split < len(atts) {
+		if split > 0 {
+			sb.WriteByte('\n')
+		}
+		fmt.Fprintf(&sb, "Inline (%d):\n", len(atts)-split)
+		write(atts[split:])
+	}
+	return sb.String()
+}
+
+// attachmentSummaryLabel is the detail-pane attachments line.
+func attachmentSummaryLabel(atts []Attachment) string {
+	files, inline := 0, 0
+	for _, att := range atts {
+		if att.IsInline {
+			inline++
+		} else {
+			files++
+		}
+	}
+	switch {
+	case files > 0 && inline > 0:
+		return fmt.Sprintf("Attachments (📎 %d) · Inline (%d): ", files, inline)
+	case inline > 0:
+		return fmt.Sprintf("Inline (📎 %d): ", inline)
+	default:
+		return fmt.Sprintf("Attachments (📎 %d): ", files)
+	}
+}
+
 // viewMessageInEditorCmd formats the current detailed message with headers,
 // attachments, and stripped plain body, writes it to a temp file, and opens it
 // in the user's preferred $EDITOR (falling back to $VISUAL, then vi).
@@ -1238,11 +1287,8 @@ func (m mainModel) viewMessageInEditorCmd() tea.Cmd {
 	}
 	sb.WriteString("Date:    " + dateStr + "\n")
 
-	if len(m.attachments) > 0 {
-		sb.WriteString(fmt.Sprintf("Attachments (📎 %d):\n", len(m.attachments)))
-		for _, att := range m.attachments {
-			sb.WriteString(fmt.Sprintf("  - %s (%s, %d bytes)\n", att.Name, att.ContentType, att.Size))
-		}
+	if listing := formatAttachmentListing(m.attachments); listing != "" {
+		sb.WriteString(listing)
 	}
 
 	sb.WriteString("\n" + strings.Repeat("-", 80) + "\n\n")
@@ -1690,6 +1736,29 @@ func (m *mainModel) updateFolderUnreadCount(messageID string, isRead bool, wasRe
 	m.updateFavoritesFolderCounts()
 }
 
+// storeOrderedAttachments groups file attachments before inline parts and
+// writes that slice onto the in-memory copies of msgID.
+func (m *mainModel) storeOrderedAttachments(msgID string, atts []Attachment) []Attachment {
+	ordered := orderAttachments(atts)
+	for i := range m.messages {
+		if m.messages[i].ID == msgID {
+			m.messages[i].Attachments = ordered
+			break
+		}
+	}
+	for ti := range m.threadGroups {
+		for mi := range m.threadGroups[ti].Members {
+			if m.threadGroups[ti].Members[mi].ID == msgID {
+				m.threadGroups[ti].Members[mi].Attachments = ordered
+			}
+		}
+	}
+	if m.detailMessage != nil && m.detailMessage.ID == msgID {
+		m.detailMessage.Attachments = ordered
+	}
+	return ordered
+}
+
 // loadMessageDetail loads the message detail (including body and attachments).
 // If the message body is already cached in the database or in memory, it renders it instantly.
 // If the message is unread, it still triggers fetchMessageDetailCmd to mark it as read.
@@ -1705,7 +1774,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	// 1. Check if the body content is already loaded in the memory model
 	if am.Body.Content != "" {
 		m.detailMessage = am
-		m.attachments = am.Attachments
+		m.attachments = m.storeOrderedAttachments(am.ID, am.Attachments)
 		m = m.updateViewportSize()
 		m.detailViewport.SetContent(m.renderedDetailBody())
 		m.detailViewport.GotoTop()
@@ -1741,7 +1810,9 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		}
 		if err == nil && cached != nil && cached.Body.Content != "" {
 			m.detailMessage = cached
-			m.attachments = cached.Attachments
+			ordered := orderAttachments(cached.Attachments)
+			cached.Attachments = ordered
+			m.attachments = ordered
 			m = m.updateViewportSize()
 			m.detailViewport.SetContent(m.renderedDetailBody())
 			m.detailViewport.GotoTop()
@@ -1750,7 +1821,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 			for i, msg := range m.messages {
 				if msg.ID == am.ID {
 					m.messages[i].Body = cached.Body
-					m.messages[i].Attachments = cached.Attachments
+					m.messages[i].Attachments = ordered
 					break
 				}
 			}
@@ -1758,7 +1829,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 				for mi := range m.threadGroups[ti].Members {
 					if m.threadGroups[ti].Members[mi].ID == am.ID {
 						m.threadGroups[ti].Members[mi].Body = cached.Body
-						m.threadGroups[ti].Members[mi].Attachments = cached.Attachments
+						m.threadGroups[ti].Members[mi].Attachments = ordered
 						break
 					}
 				}
@@ -2074,7 +2145,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
-					msg.Messages[i].Attachments = cached.Attachments
+					msg.Messages[i].Attachments = orderAttachments(cached.Attachments)
 				}
 			}
 		}
@@ -2112,7 +2183,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
-					msg.Messages[i].Attachments = cached.Attachments
+					msg.Messages[i].Attachments = orderAttachments(cached.Attachments)
 				}
 			}
 		}
@@ -2201,6 +2272,8 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messageDetailFetchedMsg:
 		// Make sure it matches selected message
 		if am := m.activeMessage(); am != nil && am.ID == msg.Message.ID {
+			msg.Attachments = orderAttachments(msg.Attachments)
+			msg.Message.Attachments = msg.Attachments
 			m.detailMessage = msg.Message
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
@@ -2253,6 +2326,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				remoteAtts := extractRemoteImages(m.detailMessage.Body.Content)
 				msg.Attachments = append(msg.Attachments, remoteAtts...)
 			}
+			msg.Attachments = orderAttachments(msg.Attachments)
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
 			m = m.updateViewportSize()
@@ -5398,28 +5472,16 @@ func (m mainModel) View() string {
 
 		maxVisible := 10
 		totalAttach := len(m.attachments)
-		visibleCount := totalAttach
-		if visibleCount > maxVisible {
-			visibleCount = maxVisible
-		}
+		startIdx, endIdx := attachmentListWindow(totalAttach, m.selectedAttach, maxVisible)
 
-		startIdx := 0
-		if totalAttach > maxVisible {
-			startIdx = m.selectedAttach - maxVisible/2
-			if startIdx < 0 {
-				startIdx = 0
-			}
-			endIdx := startIdx + maxVisible
-			if endIdx > totalAttach {
-				startIdx = totalAttach - maxVisible
-			}
-		}
-
-		contentLines := 2 + visibleCount // Header + empty spacer + visible items
+		contentLines := 2 + (endIdx - startIdx) // Header + empty spacer + visible items
 		if startIdx > 0 {
 			contentLines++
 		}
-		if startIdx+visibleCount < totalAttach {
+		if endIdx < totalAttach {
+			contentLines++
+		}
+		if attachmentWindowShowsInlineSplit(m.attachments, startIdx, endIdx) {
 			contentLines++
 		}
 		modalHeight := contentLines + 2 // borders
@@ -6496,7 +6558,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [D]                 Move entire thread to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
 		"  [m]                 Move message to specified folder",
-		"  [a]                 Open attachments pane (if any)",
+		"  [a]                 Open attachments (files, then inline)",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [h]                 Toggle showing URLs next to link labels",
 		"  [o]                 Open YouTrack / GitLab / GitHub links in TUI",
@@ -7601,6 +7663,30 @@ func (m mainModel) renderComposeCancelConfirmPopup(width int) string {
 	return popupStyle.Render(joined)
 }
 
+func attachmentListWindow(total, selected, maxVisible int) (start, end int) {
+	if total <= maxVisible {
+		return 0, total
+	}
+	start = selected - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end = start + maxVisible
+	if end > total {
+		end = total
+		start = end - maxVisible
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start, end
+}
+
+func attachmentWindowShowsInlineSplit(atts []Attachment, start, end int) bool {
+	split := fileAttachmentPrefix(atts)
+	return split > 0 && split < len(atts) && split >= start && split < end
+}
+
 func (m mainModel) renderAttachmentsDropdown(width int) string {
 	dropdownWidth := width - 4
 	if dropdownWidth < 20 {
@@ -7617,21 +7703,8 @@ func (m mainModel) renderAttachmentsDropdown(width int) string {
 
 	maxVisible := 10
 	totalAttach := len(m.attachments)
-
-	startIdx := 0
-	endIdx := totalAttach
-
-	if totalAttach > maxVisible {
-		startIdx = m.selectedAttach - maxVisible/2
-		if startIdx < 0 {
-			startIdx = 0
-		}
-		endIdx = startIdx + maxVisible
-		if endIdx > totalAttach {
-			endIdx = totalAttach
-			startIdx = endIdx - maxVisible
-		}
-	}
+	startIdx, endIdx := attachmentListWindow(totalAttach, m.selectedAttach, maxVisible)
+	split := fileAttachmentPrefix(m.attachments)
 
 	if startIdx > 0 {
 		upText := "  ▲ ... more attachments above ..."
@@ -7642,6 +7715,13 @@ func (m mainModel) renderAttachmentsDropdown(width int) string {
 	}
 
 	for i := startIdx; i < endIdx; i++ {
+		if i == split && attachmentWindowShowsInlineSplit(m.attachments, startIdx, endIdx) {
+			sep := "  ── inline ──"
+			if len(sep) < dropdownWidth-2 {
+				sep = sep + strings.Repeat(" ", dropdownWidth-2-len(sep))
+			}
+			rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color(ColorOverlay)).Render(sep))
+		}
 		att := m.attachments[i]
 		indicator := "  "
 		if i == m.selectedAttach {
@@ -8007,7 +8087,7 @@ func (m mainModel) renderMetaBlock(width int) string {
 	s.WriteString(wrapText(lipgloss.NewStyle().Bold(true).Render("Date:    ")+dateStr, width) + "\n")
 
 	if len(m.attachments) > 0 {
-		attStr := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(fmt.Sprintf("Attachments (📎 %d): ", len(m.attachments))) +
+		attStr := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorViolet)).Render(attachmentSummaryLabel(m.attachments)) +
 			dimStyle.Render("Press [a] to view/download attachments")
 		s.WriteString(wrapText(attStr, width) + "\n")
 	}
