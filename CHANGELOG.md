@@ -1,4 +1,17 @@
 
+## [0.9.5] - 2026-11-17
+
+### Features
+
+- *(tui)* List file attachments before inline images ([92e0a6d](https://github.com/nospor/outlook-tui/commit/92e0a6d5dd01d13ee416ca0fe7aed7a66e909c3f))
+
+            Signature and CID images were mixed in with real files, so the
+            attachment pane and the editor header were harder to scan.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.4 [skip ci] ([78e156c](https://github.com/nospor/outlook-tui/commit/78e156ce97f35a59e4eec0846895265738ad29c0))
+
 ## [0.9.4] - 2026-11-12
 
 ### Bug Fixes
