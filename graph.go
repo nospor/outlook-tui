@@ -112,6 +112,199 @@ func fileAttachmentPrefix(atts []Attachment) int {
 	return n
 }
 
+// attachmentNotInBody sorts inline parts that the HTML never references
+// after every image that does appear.
+const attachmentNotInBody = 1 << 30
+
+var (
+	htmlHeadPattern    = regexp.MustCompile(`(?is)<head(?:\s+[^>]*)?>.*?</head>`)
+	htmlStylePattern   = regexp.MustCompile(`(?is)<style(?:\s+[^>]*)?>.*?</style>`)
+	htmlScriptPattern  = regexp.MustCompile(`(?is)<script(?:\s+[^>]*)?>.*?</script>`)
+	htmlCommentPattern = regexp.MustCompile(`(?s)<!--.*?-->`)
+	htmlImgPattern     = regexp.MustCompile(`(?i)<img\b([^>]*)>`)
+	htmlSrcPattern     = regexp.MustCompile(`(?i)\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
+)
+
+// orderAttachmentsInBody groups file attachments first, then orders inline
+// parts (CID images and remote images) by the first <img> that references
+// them. Parts the body does not show keep their relative order at the end of
+// the inline group. An empty body leaves the grouped order unchanged.
+func orderAttachmentsInBody(atts []Attachment, htmlBody string) []Attachment {
+	grouped := orderAttachments(atts)
+	if strings.TrimSpace(htmlBody) == "" {
+		return grouped
+	}
+	split := fileAttachmentPrefix(grouped)
+	if split >= len(grouped) {
+		return grouped
+	}
+	ranks := inlineImageRanks(htmlBody)
+	if len(ranks) == 0 {
+		return grouped
+	}
+
+	type rankedAttachment struct {
+		att  Attachment
+		rank int
+	}
+	inline := grouped[split:]
+	items := make([]rankedAttachment, len(inline))
+	for i, att := range inline {
+		rank := attachmentNotInBody
+		for _, key := range attachmentAppearanceKeys(att) {
+			if r, ok := ranks[key]; ok && r < rank {
+				rank = r
+			}
+		}
+		items[i] = rankedAttachment{att: att, rank: rank}
+	}
+	for i := 1; i < len(items); i++ {
+		if items[i].rank < items[i-1].rank {
+			sort.SliceStable(items, func(a, b int) bool {
+				return items[a].rank < items[b].rank
+			})
+			out := make([]Attachment, len(grouped))
+			copy(out, grouped[:split])
+			for j, item := range items {
+				out[split+j] = item.att
+			}
+			return out
+		}
+	}
+	return grouped
+}
+
+func stripHiddenHTML(htmlBody string) string {
+	htmlBody = htmlHeadPattern.ReplaceAllString(htmlBody, "")
+	htmlBody = htmlStylePattern.ReplaceAllString(htmlBody, "")
+	htmlBody = htmlScriptPattern.ReplaceAllString(htmlBody, "")
+	return htmlCommentPattern.ReplaceAllString(htmlBody, "")
+}
+
+// inlineImageRanks maps match keys to the first <img> that produced them,
+// in document order. Head, style, script, and comments are ignored.
+func inlineImageRanks(htmlBody string) map[string]int {
+	matches := htmlImgPattern.FindAllStringSubmatch(stripHiddenHTML(htmlBody), -1)
+	ranks := make(map[string]int)
+	rank := 0
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		keys := srcAppearanceKeys(imgSrcValue(match[1]))
+		if len(keys) == 0 {
+			continue
+		}
+		fresh := false
+		for _, key := range keys {
+			if _, ok := ranks[key]; ok {
+				continue
+			}
+			ranks[key] = rank
+			fresh = true
+		}
+		if fresh {
+			rank++
+		}
+	}
+	return ranks
+}
+
+func imgSrcValue(attrs string) string {
+	sub := htmlSrcPattern.FindStringSubmatch(attrs)
+	if len(sub) < 4 {
+		return ""
+	}
+	for _, part := range sub[1:] {
+		if part != "" {
+			return part
+		}
+	}
+	return ""
+}
+
+func srcAppearanceKeys(src string) []string {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return nil
+	}
+	lower := strings.ToLower(src)
+	switch {
+	case strings.HasPrefix(lower, "cid:"):
+		return cidAppearanceKeys(src[4:])
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		return urlAppearanceKeys(src)
+	default:
+		return nil
+	}
+}
+
+func attachmentAppearanceKeys(att Attachment) []string {
+	id := strings.TrimSpace(att.ContentId)
+	if isHTTPURL(id) {
+		return urlAppearanceKeys(id)
+	}
+	keys := cidAppearanceKeys(id)
+	if name := strings.ToLower(strings.TrimSpace(att.Name)); name != "" {
+		keys = append(keys, name)
+	}
+	return uniqueStrings(keys)
+}
+
+func cidAppearanceKeys(raw string) []string {
+	s := strings.TrimSpace(raw)
+	s = strings.Trim(s, "<>")
+	s = html.UnescapeString(s)
+	if dec, err := url.PathUnescape(s); err == nil {
+		s = dec
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	keys := []string{strings.ToLower(s)}
+	if i := strings.Index(s, "@"); i > 0 {
+		name := strings.ToLower(strings.TrimSpace(s[:i]))
+		if name != "" && name != keys[0] {
+			keys = append(keys, name)
+		}
+	}
+	return keys
+}
+
+func urlAppearanceKeys(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	canon := html.UnescapeString(raw)
+	if dec, err := url.PathUnescape(canon); err == nil {
+		canon = dec
+	}
+	return uniqueStrings([]string{raw, canon, strings.ToLower(raw), strings.ToLower(canon)})
+}
+
+func isHTTPURL(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func uniqueStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
 type GraphClient struct {
 	client *http.Client
 }

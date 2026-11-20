@@ -691,7 +691,7 @@ func fetchMessageDetailCmd(gc *GraphClient, msgID string, shouldMarkAsRead bool)
 			remoteAtts := extractRemoteImages(msg.Body.Content)
 			atts = append(atts, remoteAtts...)
 		}
-		atts = orderAttachments(atts)
+		atts = orderAttachmentsInBody(atts, msg.Body.Content)
 
 		msg.Attachments = atts
 		if len(atts) > 0 {
@@ -1736,10 +1736,11 @@ func (m *mainModel) updateFolderUnreadCount(messageID string, isRead bool, wasRe
 	m.updateFavoritesFolderCounts()
 }
 
-// storeOrderedAttachments groups file attachments before inline parts and
-// writes that slice onto the in-memory copies of msgID.
-func (m *mainModel) storeOrderedAttachments(msgID string, atts []Attachment) []Attachment {
-	ordered := orderAttachments(atts)
+// storeOrderedAttachments groups file attachments before inline parts, orders
+// those inline parts by their first <img> in htmlBody, and writes that slice
+// onto the in-memory copies of msgID.
+func (m *mainModel) storeOrderedAttachments(msgID string, atts []Attachment, htmlBody string) []Attachment {
+	ordered := orderAttachmentsInBody(atts, htmlBody)
 	for i := range m.messages {
 		if m.messages[i].ID == msgID {
 			m.messages[i].Attachments = ordered
@@ -1774,7 +1775,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 	// 1. Check if the body content is already loaded in the memory model
 	if am.Body.Content != "" {
 		m.detailMessage = am
-		m.attachments = m.storeOrderedAttachments(am.ID, am.Attachments)
+		m.attachments = m.storeOrderedAttachments(am.ID, am.Attachments, am.Body.Content)
 		m = m.updateViewportSize()
 		m.detailViewport.SetContent(m.renderedDetailBody())
 		m.detailViewport.GotoTop()
@@ -1810,7 +1811,7 @@ func (m mainModel) loadMessageDetail(am *Message) (mainModel, tea.Cmd) {
 		}
 		if err == nil && cached != nil && cached.Body.Content != "" {
 			m.detailMessage = cached
-			ordered := orderAttachments(cached.Attachments)
+			ordered := orderAttachmentsInBody(cached.Attachments, cached.Body.Content)
 			cached.Attachments = ordered
 			m.attachments = ordered
 			m = m.updateViewportSize()
@@ -2145,7 +2146,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
-					msg.Messages[i].Attachments = orderAttachments(cached.Attachments)
+					msg.Messages[i].Attachments = orderAttachmentsInBody(cached.Attachments, cached.Body.Content)
 				}
 			}
 		}
@@ -2183,7 +2184,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Messages[i].Body.Content == "" && m.config.UseSQLite == 1 && m.db != nil {
 				if cached, err := m.db.GetMessage(newMsg.ID); err == nil && cached != nil && cached.Body.Content != "" {
 					msg.Messages[i].Body = cached.Body
-					msg.Messages[i].Attachments = orderAttachments(cached.Attachments)
+					msg.Messages[i].Attachments = orderAttachmentsInBody(cached.Attachments, cached.Body.Content)
 				}
 			}
 		}
@@ -2272,7 +2273,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messageDetailFetchedMsg:
 		// Make sure it matches selected message
 		if am := m.activeMessage(); am != nil && am.ID == msg.Message.ID {
-			msg.Attachments = orderAttachments(msg.Attachments)
+			msg.Attachments = orderAttachmentsInBody(msg.Attachments, msg.Message.Body.Content)
 			msg.Message.Attachments = msg.Attachments
 			m.detailMessage = msg.Message
 			m.attachments = msg.Attachments
@@ -2322,11 +2323,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case attachmentsFetchedMsg:
 		if am := m.activeMessage(); am != nil && am.ID == msg.MessageID {
+			body := ""
 			if m.detailMessage != nil && m.detailMessage.ID == msg.MessageID {
-				remoteAtts := extractRemoteImages(m.detailMessage.Body.Content)
+				body = m.detailMessage.Body.Content
+				remoteAtts := extractRemoteImages(body)
 				msg.Attachments = append(msg.Attachments, remoteAtts...)
 			}
-			msg.Attachments = orderAttachments(msg.Attachments)
+			msg.Attachments = orderAttachmentsInBody(msg.Attachments, body)
 			m.attachments = msg.Attachments
 			m.selectedAttach = 0
 			m = m.updateViewportSize()
@@ -6558,7 +6561,7 @@ func (m mainModel) renderHelpContent() string {
 		"  [D]                 Move entire thread to Deleted Items",
 		"  [U]                 Undelete / Restore to Inbox",
 		"  [m]                 Move message to specified folder",
-		"  [a]                 Open attachments (files, then inline)",
+		"  [a]                 Files first, inline images in body order",
 		"  [y]                 Yank/Copy options (msg, subject, URLs)",
 		"  [h]                 Toggle showing URLs next to link labels",
 		"  [o]                 Open YouTrack / GitLab / GitHub links in TUI",

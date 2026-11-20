@@ -766,6 +766,90 @@ func TestOrderAttachmentsFilesBeforeInline(t *testing.T) {
 	}
 }
 
+func TestOrderAttachmentsInBodyReadingOrder(t *testing.T) {
+	in := []Attachment{
+		{Name: "image001.png", ContentId: "image001.png@01DC001", IsInline: true},
+		{Name: "image004.png", ContentId: "image004.png@01DC004", IsInline: true},
+		{Name: "image005.png", ContentId: "image005.png@01DC005", IsInline: true},
+		{Name: "image006.png", ContentId: "image006.png@01DC006", IsInline: true},
+		{Name: "image007.png", ContentId: "image007.png@01DC007", IsInline: true},
+		{Name: "image003.png", ContentId: "image003.png@01DC003", IsInline: true},
+		{Name: "image008.png", ContentId: "image008.png@01DC008", IsInline: true},
+		{Name: "notes.csv"},
+	}
+	body := `
+		<img src="cid:image007.png@01DC007" alt="image007.png">
+		<img src="cid:image003.png@01DC003" alt="image003.png">
+		<img src="cid:image001.png@01DC001">
+		<img src="cid:image008.png@01DC008">
+		<blockquote>
+			<img src="cid:image004.png@01DC004">
+			<img src="cid:image005.png@01DC005">
+			<img src="cid:image006.png@01DC006">
+		</blockquote>`
+	got := orderAttachmentsInBody(in, body)
+	want := []string{"notes.csv", "image007.png", "image003.png", "image001.png", "image008.png", "image004.png", "image005.png", "image006.png"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("got[%d] = %q, want %q", i, got[i].Name, name)
+		}
+	}
+	if in[0].Name != "image001.png" {
+		t.Fatal("orderAttachmentsInBody mutated its input")
+	}
+	if fileAttachmentPrefix(got) != 1 {
+		t.Errorf("fileAttachmentPrefix = %d, want 1", fileAttachmentPrefix(got))
+	}
+}
+
+func TestOrderAttachmentsInBodyMatchesFilenameAndSkipsHidden(t *testing.T) {
+	in := []Attachment{
+		{Name: "image001.png", ContentId: "image001.png@01DC001", IsInline: true},
+		{Name: "image007.png", ContentId: "image007.png@01DC007", IsInline: true},
+		{Name: "orphan.png", ContentId: "orphan@01DC", IsInline: true},
+		{Name: "logo.png", ContentId: "https://cdn.example/logo.png", IsInline: true},
+	}
+	body := `
+		<head><img src="cid:image001.png@01DC001"></head>
+		<!-- <img src="cid:image001.png@01DC001"> -->
+		<img src="cid:image007.png">
+		<img src="https://cdn.example/logo.png">
+		<img src="CID:image001.PNG%4001DC001">`
+	got := orderAttachmentsInBody(in, body)
+	want := []string{"image007.png", "logo.png", "image001.png", "orphan.png"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("got[%d] = %q, want %q", i, got[i].Name, name)
+		}
+	}
+
+	again := orderAttachmentsInBody(got, body)
+	if len(again) != len(got) || &again[0] != &got[0] {
+		t.Fatal("expected the original slice when inline images are already in body order")
+	}
+}
+
+func TestOrderAttachmentsInBodyEmptyHTMLKeepsGroupedOrder(t *testing.T) {
+	in := []Attachment{
+		{Name: "image001.png", IsInline: true},
+		{Name: "nas.csv"},
+		{Name: "image006.png", IsInline: true},
+	}
+	got := orderAttachmentsInBody(in, "   ")
+	want := []string{"nas.csv", "image001.png", "image006.png"}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("got[%d] = %q, want %q", i, got[i].Name, name)
+		}
+	}
+}
+
 func TestOrderAttachmentsAlreadyGrouped(t *testing.T) {
 	in := []Attachment{
 		{Name: "a.csv"},
