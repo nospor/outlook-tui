@@ -1,4 +1,19 @@
 
+## [0.9.6] - 2026-11-20
+
+### Features
+
+- *(tui)* List inline images in the order they appear ([ed4844a](https://github.com/nospor/outlook-tui/commit/ed4844acbb4867c5611051b6aabe3805d76d0c51))
+
+            Graph returns inline parts in stored order, which follows Outlook's
+            image001 naming rather than the message. Sort that group by the first
+            <img> in the body so the attachments pane and the Ctrl+G header match
+            reading order.
+
+### Miscellaneous Tasks
+
+- Update CHANGELOG.md for v0.9.5 [skip ci] ([6feff0a](https://github.com/nospor/outlook-tui/commit/6feff0ab2e8886c017a28d530d903fd9fbfd51bf))
+
 ## [0.9.5] - 2026-11-17
 
 ### Features
